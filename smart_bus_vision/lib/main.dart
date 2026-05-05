@@ -14,10 +14,7 @@ class SmartBusVisionApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Smart Bus Vision',
-      theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
       home: const LiveDetectionPage(),
     );
   }
@@ -86,8 +83,9 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
       guideText = '$direction $distance에 이동을 방해할 수 있는 물체가 있습니다.';
       detectedText = riskResults
           .take(3)
-          .map((r) =>
-              '${r.className} ${(r.confidence * 100).toStringAsFixed(0)}%')
+          .map(
+            (r) => '${r.className} ${(r.confidence * 100).toStringAsFixed(0)}%',
+          )
           .join(' / ');
     });
   }
@@ -114,12 +112,11 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
 
   @override
   Widget build(BuildContext context) {
-    final modelId = YOLO.defaultOfficialModel() ?? 'yolo26n';
+    const modelId =
+        'https://github.com/ultralytics/yolo-flutter-app/releases/download/v0.2.0/yolo26n_int8.tflite';
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Smart Bus Vision PoC'),
-      ),
+      appBar: AppBar(title: const Text('Smart Bus Vision PoC')),
       body: Stack(
         children: [
           YOLOView(
@@ -159,18 +156,12 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
                   const SizedBox(height: 8),
                   Text(
                     '탐지: $detectedText',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'FPS: ${fps.toStringAsFixed(1)}',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 13),
                   ),
                 ],
               ),
