@@ -47,6 +47,11 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
   };
 
   void _handleResults(List<YOLOResult> results) {
+    debugPrint('YOLO_RESULT_COUNT: ${results.length}');
+
+    for (final r in results) {
+      debugPrint('YOLO_RESULT: ${r.className} / ${r.confidence}');
+    }
     // 안내가 너무 자주 바뀌면 사용자가 혼란스러우므로 0.7초 정도로 제한
     final now = DateTime.now();
     if (now.difference(_lastGuideUpdate).inMilliseconds < 700) {
@@ -56,7 +61,7 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
 
     final riskResults = results.where((result) {
       final className = result.className.toLowerCase();
-      return result.confidence >= 0.35 && riskClasses.contains(className);
+      return result.confidence >= 0.20 && riskClasses.contains(className);
     }).toList();
 
     if (riskResults.isEmpty) {
@@ -124,6 +129,8 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
             controller: controller,
             onResult: _handleResults,
             onPerformanceMetrics: (metrics) {
+              debugPrint('YOLO_FPS: ${metrics.fps}');
+
               setState(() {
                 fps = metrics.fps;
               });
