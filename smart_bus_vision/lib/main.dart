@@ -117,8 +117,7 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
 
   @override
   Widget build(BuildContext context) {
-    const modelId =
-        'https://github.com/ultralytics/yolo-flutter-app/releases/download/v0.2.0/yolo26n_int8.tflite';
+    const modelId = 'yolo11n';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Smart Bus Vision PoC')),
@@ -126,11 +125,23 @@ class _LiveDetectionPageState extends State<LiveDetectionPage> {
         children: [
           YOLOView(
             modelPath: modelId,
+            task: YOLOTask.detect,
             controller: controller,
-            onResult: _handleResults,
+            useGpu: false,
+            confidenceThreshold: 0.25,
+            showOverlays: true,
+            onResult: (results) {
+              debugPrint('==== YOLO CALLBACK CALLED ====');
+              debugPrint('YOLO_RESULT_COUNT: ${results.length}');
+
+              for (final r in results) {
+                debugPrint('YOLO_RESULT: ${r.className} / ${r.confidence}');
+              }
+
+              _handleResults(results);
+            },
             onPerformanceMetrics: (metrics) {
               debugPrint('YOLO_FPS: ${metrics.fps}');
-
               setState(() {
                 fps = metrics.fps;
               });
