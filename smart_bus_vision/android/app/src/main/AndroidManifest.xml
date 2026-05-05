@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.CAMERA" /> <!-- Android 카메라 권한 추가 -->
+
     <application
         android:label="smart_bus_vision"
         android:name="${applicationName}"
@@ -43,3 +45,4 @@
         </intent>
     </queries>
 </manifest>
+
