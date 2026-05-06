@@ -1,0 +1,50 @@
+# MOBI CODEOWNERS
+# 공통 계약/문서/협업 설정은 4인 전체 리뷰 대상이다.
+
+/packages/shared_contracts/ @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/module_ownership.json @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/.github/ @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/ @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/scripts/ @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/future_modules/ @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/README.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/.env.example @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/AGENT_REQUIRED_READING.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/프로젝트\ 4월분\ 개발에\ 관한\ 공통\ 프롬프트(AI\ 절대필독!).md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/충돌\ 이슈.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/공통\ 진행사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/CONTRIBUTING.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/BRANCH_STRATEGY.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/COMMIT_CONVENTION.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/PULL_REQUEST_RULES.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/ARCHITECTURE.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/API_CONTRACTS.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/DATA_SCHEMA.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/MODULE_OWNERSHIP.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/SETUP.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/ENVIRONMENT_VARIABLES.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/PACKAGE_MANIFEST.txt @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/FINAL_FILE_LIST.txt @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/PATCH_NOTES.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/architecture_validation_result.txt @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/선행작업의존성\ 정리.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/심현석의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/윤현섭의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/안준환의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/김도성의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/심현석_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/심현석_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/윤현섭_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/윤현섭_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/안준환_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/안준환_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/김도성_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/김도성_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+
+/apps/passenger_app/ @Yoonhsub
+/apps/driver_app/ @Yoonhsub
+/packages/mobile_sensors/ @ajh1206
+/backend/api/ @loremipsum0116
+/infrastructure/firebase/ @loremipsum0116
+/services/public_data/ @doseong13
+/ai_vision/ @doseong13
