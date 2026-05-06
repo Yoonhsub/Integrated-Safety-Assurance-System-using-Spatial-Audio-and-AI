@@ -7,8 +7,36 @@
       "arrivalMinutes": 3,
       "remainingStops": 2,
       "lowFloor": true,
+      "congestion": "NORMAL",
+      "updatedAt": "2026-04-01T00:00:00+00:00"
+    },
+    {
+      "routeId": "MOCK-105",
+      "busNo": "105",
+      "arrivalMinutes": 7,
+      "remainingStops": 5,
+      "lowFloor": false,
+      "congestion": "HIGH",
+      "updatedAt": "2026-04-01T00:00:00+00:00"
+    },
+    {
+      "routeId": "MOCK-B3",
+      "busNo": "B3",
+      "arrivalMinutes": 12,
+      "remainingStops": null,
+      "lowFloor": true,
       "congestion": "UNKNOWN",
+      "updatedAt": "2026-04-01T00:00:00+00:00"
+    },
+    {
+      "routeId": "MOCK-747",
+      "busNo": "747",
+      "arrivalMinutes": 0,
+      "remainingStops": 0,
+      "lowFloor": false,
+      "congestion": "LOW",
       "updatedAt": "2026-04-01T00:00:00+00:00"
     }
   ]
 }
+
