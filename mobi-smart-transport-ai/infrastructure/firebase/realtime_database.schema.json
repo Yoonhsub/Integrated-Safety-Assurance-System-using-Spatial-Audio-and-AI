@@ -1,0 +1,114 @@
+{
+  "users": {
+    "$userId": {
+      "role": "passenger | driver | admin",
+      "displayName": "string",
+      "userType": "visually_impaired | elderly | general | unknown",
+      "currentLocation": {
+        "lat": "number",
+        "lng": "number",
+        "updatedAt": "datetime"
+      },
+      "createdAt": "datetime",
+      "updatedAt": "datetime"
+    }
+  },
+  "drivers": {
+    "$driverId": {
+      "busNo": "string",
+      "routeId": "string",
+      "currentLocation": {
+        "lat": "number",
+        "lng": "number",
+        "updatedAt": "datetime"
+      },
+      "status": "ACTIVE | INACTIVE | UNKNOWN",
+      "updatedAt": "datetime"
+    }
+  },
+  "busStops": {
+    "$stopId": {
+      "name": "string",
+      "lat": "number",
+      "lng": "number",
+      "description": "string | null"
+    }
+  },
+  "geofences": {
+    "$stopId": {
+      "safeZone": [
+        {
+          "lat": "number",
+          "lng": "number"
+        }
+      ],
+      "warningZones": [
+        {
+          "name": "string",
+          "polygon": [
+            {
+              "lat": "number",
+              "lng": "number"
+            }
+          ]
+        }
+      ],
+      "dangerZones": [
+        {
+          "name": "string",
+          "polygon": [
+            {
+              "lat": "number",
+              "lng": "number"
+            }
+          ]
+        }
+      ],
+      "updatedAt": "datetime"
+    }
+  },
+  "busArrivals": {
+    "$stopId": {
+      "$routeId": {
+        "routeId": "string",
+        "busNo": "string",
+        "arrivalMinutes": "integer",
+        "remainingStops": "integer | null",
+        "lowFloor": "boolean",
+        "congestion": "LOW | NORMAL | HIGH | UNKNOWN",
+        "updatedAt": "datetime"
+      }
+    }
+  },
+  "rideRequests": {
+    "$requestId": {
+      "userId": "string",
+      "stopId": "string",
+      "routeId": "string",
+      "busNo": "string",
+      "targetDriverId": "string | null",
+      "status": "WAITING | NOTIFIED | ACCEPTED | ARRIVED | COMPLETED | CANCELLED",
+      "createdAt": "datetime",
+      "updatedAt": "datetime | null"
+    }
+  },
+  "fcmTokens": {
+    "$ownerType": {
+      "$ownerId": {
+        "token": "string",
+        "platform": "android | ios | web | unknown",
+        "updatedAt": "datetime"
+      }
+    }
+  },
+  "systemLogs": {
+    "$logId": {
+      "type": "string",
+      "level": "INFO | WARNING | ERROR",
+      "message": "string",
+      "relatedUserId": "string | null",
+      "relatedRequestId": "string | null",
+      "createdAt": "datetime"
+    }
+  }
+}

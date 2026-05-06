@@ -1,0 +1,42 @@
+{
+  "geofence_status": [
+    "SAFE",
+    "WARNING",
+    "DANGER",
+    "OUT_OF_AREA",
+    "UNKNOWN"
+  ],
+  "ride_request_status": [
+    "WAITING",
+    "NOTIFIED",
+    "ACCEPTED",
+    "ARRIVED",
+    "COMPLETED",
+    "CANCELLED"
+  ],
+  "beacon_signal_level": [
+    "VERY_CLOSE",
+    "CLOSE",
+    "MEDIUM",
+    "FAR",
+    "LOST"
+  ],
+  "congestion_level": [
+    "LOW",
+    "NORMAL",
+    "HIGH",
+    "UNKNOWN"
+  ],
+  "future_head_tracking_status": [
+    "NOT_AVAILABLE",
+    "CALIBRATING",
+    "ACTIVE",
+    "ERROR"
+  ],
+  "direction_accuracy": [
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "UNKNOWN"
+  ]
+}

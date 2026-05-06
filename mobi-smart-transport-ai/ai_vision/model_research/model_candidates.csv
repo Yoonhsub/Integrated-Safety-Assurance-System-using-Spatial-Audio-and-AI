@@ -1,0 +1,5 @@
+model,family,target_runtime,expected_role,status
+YOLOv8n,YOLO,TFLite/ONNX Mobile,object detection,research
+YOLOv11n,YOLO,TFLite/ONNX Mobile,object detection,research
+MobileNet,MobileNet,TFLite,classification/backbone,research
+EfficientDet-Lite,EfficientDet,TFLite,object detection,research

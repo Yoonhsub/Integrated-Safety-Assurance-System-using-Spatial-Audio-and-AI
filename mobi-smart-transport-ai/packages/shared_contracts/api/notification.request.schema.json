@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NotificationRequest",
+  "type": "object",
+  "required": [
+    "type",
+    "title",
+    "body"
+  ],
+  "properties": {
+    "targetUserId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "targetDriverId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "SAFETY_ALERT",
+        "RIDE_REQUEST",
+        "SYSTEM"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "targetUserId"
+      ],
+      "properties": {
+        "targetUserId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "targetDriverId": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "required": [
+        "targetDriverId"
+      ],
+      "properties": {
+        "targetUserId": {
+          "type": "null"
+        },
+        "targetDriverId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    }
+  ]
+}

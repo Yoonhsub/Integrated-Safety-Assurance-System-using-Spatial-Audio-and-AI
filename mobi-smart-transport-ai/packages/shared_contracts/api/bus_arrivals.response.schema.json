@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BusArrivalsResponse",
+  "type": "object",
+  "required": [
+    "stopId",
+    "arrivals"
+  ],
+  "properties": {
+    "stopId": {
+      "type": "string"
+    },
+    "arrivals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "routeId",
+          "busNo",
+          "arrivalMinutes",
+          "lowFloor",
+          "congestion",
+          "updatedAt"
+        ],
+        "properties": {
+          "routeId": {
+            "type": "string"
+          },
+          "busNo": {
+            "type": "string"
+          },
+          "arrivalMinutes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingStops": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "lowFloor": {
+            "type": "boolean"
+          },
+          "congestion": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "NORMAL",
+              "HIGH",
+              "UNKNOWN"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

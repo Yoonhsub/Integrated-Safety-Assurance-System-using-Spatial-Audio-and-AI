@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HeadTrackingEventFutureContract",
+  "type": "object",
+  "required": [
+    "yaw",
+    "pitch",
+    "roll",
+    "timestamp"
+  ],
+  "properties": {
+    "yaw": {
+      "type": "number"
+    },
+    "pitch": {
+      "type": "number"
+    },
+    "roll": {
+      "type": "number"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceDeviceId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

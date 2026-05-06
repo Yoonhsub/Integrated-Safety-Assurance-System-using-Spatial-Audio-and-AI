@@ -1,0 +1,15 @@
+name: mobi_driver_app
+description: MOBI Driver App skeleton.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+
+flutter:
+  uses-material-design: true

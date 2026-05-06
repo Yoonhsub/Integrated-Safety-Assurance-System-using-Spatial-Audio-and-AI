@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NotificationResponse",
+  "type": "object",
+  "required": [
+    "accepted",
+    "detail"
+  ],
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "messageId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

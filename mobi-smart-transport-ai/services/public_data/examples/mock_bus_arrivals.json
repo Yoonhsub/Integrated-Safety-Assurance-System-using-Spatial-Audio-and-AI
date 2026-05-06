@@ -1,0 +1,14 @@
+{
+  "stopId": "mock-stop-001",
+  "arrivals": [
+    {
+      "routeId": "MOCK-502",
+      "busNo": "502",
+      "arrivalMinutes": 3,
+      "remainingStops": 2,
+      "lowFloor": true,
+      "congestion": "UNKNOWN",
+      "updatedAt": "2026-04-01T00:00:00+00:00"
+    }
+  ]
+}

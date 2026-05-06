@@ -1,0 +1,134 @@
+{
+  "version": "2026-04-architecture-v1",
+  "ownership_policy": "각 팀원 또는 해당 팀원의 AI 에이전트는 자기 소유 경로 외 파일을 임의 수정하지 않는다. 공통 계약 영역 수정은 충돌 이슈 기록 후 합의가 필요하다. 단, limited_update_exceptions에 명시된 docs/rw/공통 진행사항.md와 docs/rw/선행작업의존성 정리.md의 자기 담당 기록/상태 최신화는 제한적으로 허용한다.",
+  "owners": {
+    "윤현섭": {
+      "github": "Yoonhsub",
+      "owned_paths": [
+        "apps/passenger_app/**",
+        "apps/driver_app/**"
+      ],
+      "primary_responsibility": "Flutter 사용자/기사 앱 UI, STT/TTS, 접근성, API 렌더링"
+    },
+    "안준환": {
+      "github": "ajh1206",
+      "owned_paths": [
+        "packages/mobile_sensors/**"
+      ],
+      "primary_responsibility": "BLE 비콘, RSSI 거리 추정, 스마트폰 방향 센서. 4월에는 헤드트래킹 제외"
+    },
+    "심현석": {
+      "github": "loremipsum0116",
+      "owned_paths": [
+        "backend/api/**",
+        "infrastructure/firebase/**"
+      ],
+      "primary_responsibility": "FastAPI, Firebase RTDB, FCM, 지오펜싱, 기사-승객 매칭"
+    },
+    "김도성": {
+      "github": "doseong13",
+      "owned_paths": [
+        "services/public_data/**",
+        "ai_vision/**"
+      ],
+      "primary_responsibility": "공공데이터 API, 버스 정보 표준화, 저상버스 필터링, AI 비전 준비"
+    },
+    "공통_아키텍처": {
+      "github": "architecture-owner",
+      "owned_paths": [
+        "packages/shared_contracts/**",
+        ".github/**",
+        "future_modules/**",
+        "scripts/**",
+        "docs/**",
+        "docs/rw/README.md",
+        "module_ownership.json",
+        "docs/read/AGENT_REQUIRED_READING.md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/rw/충돌 이슈.md",
+        "docs/rw/공통 진행사항.md",
+        "docs/read/CONTRIBUTING.md",
+        "docs/read/BRANCH_STRATEGY.md",
+        "docs/read/COMMIT_CONVENTION.md",
+        "docs/read/PULL_REQUEST_RULES.md",
+        "docs/rw/ARCHITECTURE.md",
+        "docs/rw/API_CONTRACTS.md",
+        "docs/rw/DATA_SCHEMA.md",
+        "docs/rw/MODULE_OWNERSHIP.md",
+        "docs/rw/SETUP.md",
+        "docs/rw/ENVIRONMENT_VARIABLES.md",
+        "docs/read/PACKAGE_MANIFEST.txt",
+        "docs/read/FINAL_FILE_LIST.txt",
+        "docs/rw/PATCH_NOTES.md",
+        "docs/read/심현석의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/read/김도성의 에이전트 필독사항.md",
+        "docs/rw/심현석_디버그 리포트.md",
+        "docs/rw/심현석_최종 개발 보고서.md",
+        "docs/rw/윤현섭_디버그 리포트.md",
+        "docs/rw/윤현섭_최종 개발 보고서.md",
+        "docs/rw/안준환_디버그 리포트.md",
+        "docs/rw/안준환_최종 개발 보고서.md",
+        "docs/rw/김도성_디버그 리포트.md",
+        "docs/rw/김도성_최종 개발 보고서.md",
+        ".env.example",
+        "docs/rw/선행작업의존성 정리.md",
+        "docs/read/architecture_validation_result.txt"
+      ],
+      "primary_responsibility": "공통 계약, 저장소 운영 규칙, 향후 확장 프레임"
+    }
+  },
+  "protected_paths": [
+    "packages/shared_contracts/**",
+    ".github/**",
+    "future_modules/**",
+    "scripts/**",
+    "docs/**",
+    "docs/rw/README.md",
+    "module_ownership.json",
+    "docs/read/AGENT_REQUIRED_READING.md",
+    "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+    "docs/rw/충돌 이슈.md",
+    "docs/rw/공통 진행사항.md",
+    "docs/read/CONTRIBUTING.md",
+    "docs/read/BRANCH_STRATEGY.md",
+    "docs/read/COMMIT_CONVENTION.md",
+    "docs/read/PULL_REQUEST_RULES.md",
+    "docs/rw/ARCHITECTURE.md",
+    "docs/rw/API_CONTRACTS.md",
+    "docs/rw/DATA_SCHEMA.md",
+    "docs/rw/MODULE_OWNERSHIP.md",
+    "docs/rw/SETUP.md",
+    "docs/rw/ENVIRONMENT_VARIABLES.md",
+    "docs/read/PACKAGE_MANIFEST.txt",
+    "docs/read/FINAL_FILE_LIST.txt",
+    "docs/rw/PATCH_NOTES.md",
+    "docs/read/심현석의 에이전트 필독사항.md",
+    "docs/read/윤현섭의 에이전트 필독사항.md",
+    "docs/read/안준환의 에이전트 필독사항.md",
+    "docs/read/김도성의 에이전트 필독사항.md",
+    "docs/rw/심현석_디버그 리포트.md",
+    "docs/rw/심현석_최종 개발 보고서.md",
+    "docs/rw/윤현섭_디버그 리포트.md",
+    "docs/rw/윤현섭_최종 개발 보고서.md",
+    "docs/rw/안준환_디버그 리포트.md",
+    "docs/rw/안준환_최종 개발 보고서.md",
+    "docs/rw/김도성_디버그 리포트.md",
+    "docs/rw/김도성_최종 개발 보고서.md",
+    ".env.example",
+    "docs/rw/선행작업의존성 정리.md",
+    "docs/read/architecture_validation_result.txt"
+  ],
+  "ownership_source_of_truth": "module_ownership.json",
+  "limited_update_exceptions": {
+    "docs/rw/공통 진행사항.md": {
+      "allowed": "각 에이전트는 자기 팀원 기록 공간만 수정할 수 있다.",
+      "forbidden": "다른 팀원 기록 공간, 문서 구조, 공통 규칙은 단독 수정하지 않는다."
+    },
+    "docs/rw/선행작업의존성 정리.md": {
+      "allowed": "각 에이전트는 자신이 완료한 선행 섹션의 상태와 산출물 정보만 제한적으로 최신화할 수 있다.",
+      "forbidden": "의존성 구조, 후행 조건, 타 팀원 섹션 상태는 단독 수정하지 않는다."
+    }
+  }
+}

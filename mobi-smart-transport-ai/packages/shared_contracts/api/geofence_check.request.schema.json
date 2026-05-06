@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GeofenceCheckRequest",
+  "type": "object",
+  "required": [
+    "userId",
+    "stopId",
+    "lat",
+    "lng"
+  ],
+  "properties": {
+    "userId": {
+      "type": "string"
+    },
+    "stopId": {
+      "type": "string"
+    },
+    "lat": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90
+    },
+    "lng": {
+      "type": "number",
+      "minimum": -180,
+      "maximum": 180
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

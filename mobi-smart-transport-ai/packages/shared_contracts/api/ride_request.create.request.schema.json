@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RideRequestCreateRequest",
+  "type": "object",
+  "required": [
+    "userId",
+    "stopId",
+    "routeId",
+    "busNo"
+  ],
+  "properties": {
+    "userId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "stopId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "routeId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "busNo": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "targetDriverId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "\\S"
+    }
+  },
+  "additionalProperties": false
+}

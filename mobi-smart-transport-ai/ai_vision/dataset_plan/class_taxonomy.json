@@ -1,0 +1,39 @@
+{
+  "classes": [
+    {
+      "id": "bus",
+      "ko": "버스",
+      "description": "접근 중이거나 정차 중인 버스"
+    },
+    {
+      "id": "bus_door",
+      "ko": "버스 문",
+      "description": "승객 승하차 문"
+    },
+    {
+      "id": "bus_stop",
+      "ko": "버스 정류장",
+      "description": "정류장 표지판/승강장 구조물"
+    },
+    {
+      "id": "roadway",
+      "ko": "차도",
+      "description": "보행자가 진입하면 위험한 차도 영역"
+    },
+    {
+      "id": "sidewalk",
+      "ko": "보도",
+      "description": "안전한 보행 구역"
+    },
+    {
+      "id": "obstacle",
+      "ko": "장애물",
+      "description": "기둥, 표지판, 불법 주정차 등 이동 방해물"
+    },
+    {
+      "id": "tactile_paving",
+      "ko": "점자블록",
+      "description": "시각장애인 보행 유도 블록"
+    }
+  ]
+}

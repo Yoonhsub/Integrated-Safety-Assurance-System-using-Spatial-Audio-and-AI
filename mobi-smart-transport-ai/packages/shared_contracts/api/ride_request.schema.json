@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RideRequest",
+  "type": "object",
+  "required": [
+    "requestId",
+    "userId",
+    "stopId",
+    "routeId",
+    "busNo",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "userId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "stopId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "routeId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "busNo": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "targetDriverId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "WAITING",
+        "NOTIFIED",
+        "ACCEPTED",
+        "ARRIVED",
+        "COMPLETED",
+        "CANCELLED"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

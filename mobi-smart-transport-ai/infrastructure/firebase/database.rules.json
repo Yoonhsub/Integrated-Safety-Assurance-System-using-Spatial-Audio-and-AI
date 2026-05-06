@@ -1,0 +1,55 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false,
+        "currentLocation": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()"
+        }
+      }
+    },
+    "drivers": {
+      "$driverId": {
+        ".read": "auth != null",
+        ".write": false,
+        "currentLocation": {
+          ".write": "auth != null && auth.uid === $driverId",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()"
+        }
+      }
+    },
+    "busStops": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "geofences": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "busArrivals": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "rideRequests": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "fcmTokens": {
+      "$ownerType": {
+        "$ownerId": {
+          ".read": "auth != null && auth.uid === $ownerId && ($ownerType === 'users' || $ownerType === 'drivers')",
+          ".write": "auth != null && auth.uid === $ownerId && ($ownerType === 'users' || $ownerType === 'drivers')",
+          ".validate": "newData.hasChildren(['token', 'platform', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('token').isString() && newData.child('platform').isString() && (newData.child('platform').val() === 'android' || newData.child('platform').val() === 'ios' || newData.child('platform').val() === 'web' || newData.child('platform').val() === 'unknown') && newData.child('updatedAt').isString()"
+        }
+      }
+    },
+    "systemLogs": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
