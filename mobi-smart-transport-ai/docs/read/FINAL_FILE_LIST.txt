@@ -1,0 +1,124 @@
+.env.example
+.github/CODEOWNERS
+.github/pull_request_template.md
+.gitignore
+ai_vision/README.md
+ai_vision/dataset_plan/class_taxonomy.json
+ai_vision/model_research/model_candidates.csv
+ai_vision/pipelines/README.md
+apps/driver_app/README.md
+apps/driver_app/lib/main.dart
+apps/driver_app/lib/src/app.dart
+apps/driver_app/lib/src/pages/home_page.dart
+apps/driver_app/lib/src/services/backend_api_client.dart
+apps/driver_app/pubspec.yaml
+apps/passenger_app/README.md
+apps/passenger_app/lib/main.dart
+apps/passenger_app/lib/src/app.dart
+apps/passenger_app/lib/src/pages/home_page.dart
+apps/passenger_app/lib/src/services/backend_api_client.dart
+apps/passenger_app/pubspec.yaml
+backend/api/README.md
+backend/api/app/__init__.py
+backend/api/app/api/__init__.py
+backend/api/app/api/routes/__init__.py
+backend/api/app/api/routes/bus_info_gateway.py
+backend/api/app/api/routes/driver_ride_requests.py
+backend/api/app/api/routes/geofence.py
+backend/api/app/api/routes/notifications.py
+backend/api/app/api/routes/ride_requests.py
+backend/api/app/main.py
+backend/api/app/schemas/__init__.py
+backend/api/app/schemas/base.py
+backend/api/app/schemas/bus_info.py
+backend/api/app/schemas/geofence.py
+backend/api/app/schemas/notification.py
+backend/api/app/schemas/ride_request.py
+backend/api/app/services/__init__.py
+backend/api/app/services/bus_info_gateway_service.py
+backend/api/app/services/fcm_service.py
+backend/api/app/services/firebase_client.py
+backend/api/app/services/geofence_service.py
+backend/api/app/services/ride_request_service.py
+backend/api/requirements.txt
+backend/api/tests/test_api_contract_validation.py
+backend/api/tests/test_health.py
+docs/00_원본_모비_프로젝트_계획서.docx
+docs/01_요구사항명세서.docx
+docs/01_요구사항명세서.md
+docs/01_요구사항명세서_legacy.md
+docs/02_4월_개인별_구현범위_수정안.md
+docs/agent_required_reading/00_원본_모비_프로젝트_계획서.docx
+docs/agent_required_reading/01_요구사항명세서.docx
+docs/agent_required_reading/01_요구사항명세서.md
+docs/agent_required_reading/01_요구사항명세서_legacy.md
+docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md
+docs/read/AGENT_REQUIRED_READING.md
+docs/read/BRANCH_STRATEGY.md
+docs/read/COMMIT_CONVENTION.md
+docs/read/CONTRIBUTING.md
+docs/read/FINAL_FILE_LIST.txt
+docs/read/PACKAGE_MANIFEST.txt
+docs/read/PULL_REQUEST_RULES.md
+docs/read/architecture_validation_result.txt
+docs/read/김도성의 에이전트 필독사항.md
+docs/read/심현석의 에이전트 필독사항.md
+docs/read/안준환의 에이전트 필독사항.md
+docs/read/윤현섭의 에이전트 필독사항.md
+docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md
+docs/rw/API_CONTRACTS.md
+docs/rw/ARCHITECTURE.md
+docs/rw/DATA_SCHEMA.md
+docs/rw/ENVIRONMENT_VARIABLES.md
+docs/rw/MODULE_OWNERSHIP.md
+docs/rw/PATCH_NOTES.md
+docs/rw/README.md
+docs/rw/SETUP.md
+docs/rw/공통 진행사항.md
+docs/rw/김도성_디버그 리포트.md
+docs/rw/김도성_최종 개발 보고서.md
+docs/rw/선행작업의존성 정리.md
+docs/rw/심현석_디버그 리포트.md
+docs/rw/심현석_최종 개발 보고서.md
+docs/rw/안준환_디버그 리포트.md
+docs/rw/안준환_최종 개발 보고서.md
+docs/rw/윤현섭_디버그 리포트.md
+docs/rw/윤현섭_최종 개발 보고서.md
+docs/rw/충돌 이슈.md
+future_modules/README.md
+future_modules/head_tracking/README.md
+future_modules/head_tracking/contracts/head_tracking_event.schema.json
+future_modules/spatial_audio/README.md
+infrastructure/firebase/README.md
+infrastructure/firebase/database.rules.json
+infrastructure/firebase/firebase.example.json
+infrastructure/firebase/realtime_database.schema.json
+module_ownership.json
+packages/mobile_sensors/README.md
+packages/mobile_sensors/lib/mobi_mobile_sensors.dart
+packages/mobile_sensors/lib/src/beacon_distance_estimator.dart
+packages/mobile_sensors/lib/src/beacon_scanner.dart
+packages/mobile_sensors/lib/src/beacon_signal.dart
+packages/mobile_sensors/lib/src/direction_sensor.dart
+packages/mobile_sensors/pubspec.yaml
+packages/shared_contracts/README.md
+packages/shared_contracts/api/bus_arrivals.response.schema.json
+packages/shared_contracts/api/driver_ride_requests.response.schema.json
+packages/shared_contracts/api/geofence_check.request.schema.json
+packages/shared_contracts/api/geofence_check.response.schema.json
+packages/shared_contracts/api/notification.request.schema.json
+packages/shared_contracts/api/notification.response.schema.json
+packages/shared_contracts/api/ride_request.create.request.schema.json
+packages/shared_contracts/api/ride_request.schema.json
+packages/shared_contracts/api/ride_request.status_update.request.schema.json
+packages/shared_contracts/events/event_types.json
+scripts/print_tree.py
+scripts/validate_architecture.py
+services/public_data/README.md
+services/public_data/examples/mock_bus_arrivals.json
+services/public_data/public_data_client/__init__.py
+services/public_data/public_data_client/bus_arrivals_service.py
+services/public_data/public_data_client/data_go_kr_client.py
+services/public_data/public_data_client/low_floor_filter.py
+services/public_data/public_data_client/schemas.py
+services/public_data/requirements.txt
