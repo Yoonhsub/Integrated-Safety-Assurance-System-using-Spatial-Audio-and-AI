@@ -105,6 +105,8 @@ POST /geofence/check
 
 - 최근 위치는 기존 공식 경로인 `/users/{userId}/currentLocation`에 저장한다.
 - 상태 전이 이벤트는 기존 공식 경로인 `/systemLogs/{logId}`에 `GEOFENCE_ALERT` 타입으로 저장한다.
-- 섹션 4에서는 신규 RTDB top-level path를 추가하지 않았다. 최근 상태는 `GeofenceService`의 내부 상태 캐시로 전이 여부를 판별하고, 영속 이벤트는 `/systemLogs`에 남긴다.
-- 실제 FCM 알림 전송은 섹션 6 범위이므로 섹션 4에서는 호출하지 않는다.
+- 섹션 5 검토에서 동일 사용자·정류장에 같은 경고 상태가 반복될 경우 중복 이벤트를 만들지 않도록 보정했다. 최초 경고 상태 또는 이전 상태와 현재 상태가 달라진 경우에만 이벤트를 남긴다.
+- 이벤트 level은 `DANGER` → `ERROR`, `WARNING`/`OUT_OF_AREA` → `WARNING`, 그 외 상태 전이 → `INFO`로 기록한다.
+- 섹션 4~5에서는 신규 RTDB top-level path를 추가하지 않았다. 최근 상태는 `GeofenceService`의 내부 상태 캐시로 전이 여부를 판별하고, 영속 이벤트는 `/systemLogs`에 남긴다.
+- 실제 FCM 알림 전송은 섹션 6 범위이므로 섹션 4~5에서는 호출하지 않는다.
 

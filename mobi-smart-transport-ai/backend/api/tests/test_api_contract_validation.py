@@ -139,8 +139,31 @@ def test_geofence_danger_status_creates_transition_event() -> None:
 
     event = get_firebase_client().get(f"/systemLogs/{body['eventId']}")
     assert event["type"] == "GEOFENCE_ALERT"
+    assert event["level"] == "ERROR"
     assert event["relatedUserId"] == "user-danger"
     assert "current=DANGER" in event["message"]
+
+
+def test_geofence_does_not_duplicate_event_for_unchanged_alert_status() -> None:
+    first_response = client.post(
+        "/geofence/check",
+        json={"userId": "user-repeat", "stopId": "stop-test", "lat": 36.0030, "lng": 127.0030},
+    )
+    second_response = client.post(
+        "/geofence/check",
+        json={"userId": "user-repeat", "stopId": "stop-test", "lat": 36.0030, "lng": 127.0030},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["status"] == "DANGER"
+    assert first_response.json()["eventId"]
+    assert second_response.json()["status"] == "DANGER"
+    assert second_response.json()["eventId"] is None
+
+    system_logs = get_firebase_client().get("/systemLogs")
+    assert isinstance(system_logs, dict)
+    assert len(system_logs) == 1
 
 
 def test_geofence_warning_and_out_of_area_statuses() -> None:

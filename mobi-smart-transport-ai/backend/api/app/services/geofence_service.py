@@ -172,9 +172,10 @@ class GeofenceService:
 
     @staticmethod
     def _should_create_event(previous_status: GeofenceStatus | None, status: GeofenceStatus) -> bool:
-        if previous_status != status and previous_status is not None:
-            return True
-        return status in {GeofenceStatus.WARNING, GeofenceStatus.DANGER, GeofenceStatus.OUT_OF_AREA}
+        alert_statuses = {GeofenceStatus.WARNING, GeofenceStatus.DANGER, GeofenceStatus.OUT_OF_AREA}
+        if previous_status is None:
+            return status in alert_statuses
+        return previous_status != status
 
     def _create_transition_event(
         self,
@@ -195,13 +196,21 @@ class GeofenceService:
             "/systemLogs",
             {
                 "type": "GEOFENCE_ALERT",
-                "level": "WARNING" if status == GeofenceStatus.WARNING else "INFO",
+                "level": self._event_level_for(status),
                 "message": message,
                 "relatedUserId": user_id,
                 "relatedRequestId": None,
                 "createdAt": evaluated_at.isoformat(),
             },
         )
+
+    @staticmethod
+    def _event_level_for(status: GeofenceStatus) -> str:
+        if status == GeofenceStatus.DANGER:
+            return "ERROR"
+        if status in {GeofenceStatus.WARNING, GeofenceStatus.OUT_OF_AREA}:
+            return "WARNING"
+        return "INFO"
 
     @staticmethod
     def _message_for(hit: ZoneHit) -> str:
