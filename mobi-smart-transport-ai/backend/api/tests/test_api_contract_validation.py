@@ -198,3 +198,121 @@ def test_geofence_unknown_status_when_stop_has_no_geofence_data() -> None:
     assert body["shouldSpeak"] is False
     assert body["shouldVibrate"] is False
     assert body["eventId"] is None
+
+# Section 6 FCM notification behavior tests
+from app.api.routes.notifications import _service as notification_service
+from app.services.fcm_service import FcmOwnerType
+
+
+def test_notification_send_returns_missing_token_when_target_has_no_fcm_record() -> None:
+    get_firebase_client().clear_mock_store()
+
+    response = client.post(
+        "/notifications/send",
+        json={
+            "targetUserId": "user-without-token",
+            "type": "SAFETY_ALERT",
+            "title": "안전 경고",
+            "body": "테스트 알림입니다.",
+            "data": {"stopId": "stop-test"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted"] is False
+    assert body["messageId"] is None
+    assert "/fcmTokens/users/user-without-token" in body["detail"]
+
+
+def test_notification_send_uses_official_user_token_path_and_mock_transport() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    notification_service.save_token(
+        owner_type=FcmOwnerType.USER,
+        owner_id="user-token",
+        token="test-user-fcm-token",
+        platform="android",
+    )
+
+    response = client.post(
+        "/notifications/send",
+        json={
+            "targetUserId": "user-token",
+            "type": "SAFETY_ALERT",
+            "title": "안전 경고",
+            "body": "위험 구역에 접근 중입니다.",
+            "data": {"stopId": "stop-test", "geofenceStatus": "DANGER"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["messageId"].startswith("mock-fcm-users-user-token-")
+    assert "Mock FCM send accepted" in body["detail"]
+    assert firebase.get("/fcmTokens/users/user-token")["token"] == "test-user-fcm-token"
+    assert firebase.get("/users/user-token/fcmToken") is None
+
+
+def test_notification_send_uses_official_driver_token_path_and_mock_transport() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    notification_service.save_token(
+        owner_type=FcmOwnerType.DRIVER,
+        owner_id="driver-token",
+        token="test-driver-fcm-token",
+        platform="web",
+    )
+
+    response = client.post(
+        "/notifications/send",
+        json={
+            "targetDriverId": "driver-token",
+            "type": "RIDE_REQUEST",
+            "title": "탑승 요청",
+            "body": "502번 버스 탑승 요청이 도착했습니다.",
+            "data": {"requestId": "request001", "busNo": "502"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["messageId"].startswith("mock-fcm-drivers-driver-token-")
+    assert firebase.get("/fcmTokens/drivers/driver-token")["platform"] == "web"
+    assert firebase.get("/drivers/driver-token/fcmToken") is None
+
+
+def test_fcm_service_helper_methods_create_standard_notification_payloads() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    notification_service.save_token(
+        owner_type=FcmOwnerType.USER,
+        owner_id="helper-user",
+        token="helper-user-token",
+    )
+    notification_service.save_token(
+        owner_type=FcmOwnerType.DRIVER,
+        owner_id="helper-driver",
+        token="helper-driver-token",
+    )
+
+    safety_result = notification_service.send_safety_alert(
+        user_id="helper-user",
+        stop_id="stop-test",
+        geofence_status="DANGER",
+    )
+    ride_result = notification_service.send_ride_request_notification(
+        driver_id="helper-driver",
+        request_id="request-helper",
+        user_id="helper-user",
+        stop_id="stop-test",
+        route_id="route502",
+        bus_no="502",
+    )
+
+    assert safety_result.accepted is True
+    assert safety_result.messageId and safety_result.messageId.startswith("mock-fcm-users-helper-user-")
+    assert ride_result.accepted is True
+    assert ride_result.messageId and ride_result.messageId.startswith("mock-fcm-drivers-helper-driver-")

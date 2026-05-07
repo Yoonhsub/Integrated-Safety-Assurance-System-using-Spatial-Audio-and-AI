@@ -110,3 +110,66 @@ POST /geofence/check
 - 섹션 4~5에서는 신규 RTDB top-level path를 추가하지 않았다. 최근 상태는 `GeofenceService`의 내부 상태 캐시로 전이 여부를 판별하고, 영속 이벤트는 `/systemLogs`에 남긴다.
 - 실제 FCM 알림 전송은 섹션 6 범위이므로 섹션 4~5에서는 호출하지 않는다.
 
+
+## 섹션 6 기준 FCM 토큰·알림 구조
+
+### 엔드포인트
+
+```txt
+POST /notifications/send
+```
+
+요청 본문은 `NotificationRequest`를 따른다.
+
+```json
+{
+  "targetUserId": "user001",
+  "targetDriverId": null,
+  "type": "SAFETY_ALERT",
+  "title": "안전 경고",
+  "body": "위험 구역에 접근 중입니다. 뒤로 물러나세요.",
+  "data": {
+    "stopId": "stop001",
+    "geofenceStatus": "DANGER"
+  }
+}
+```
+
+응답 본문은 `NotificationResponse`를 따른다.
+
+```json
+{
+  "accepted": true,
+  "messageId": "mock-fcm-users-user001-...",
+  "detail": "Mock FCM send accepted. Real Firebase Messaging was not used."
+}
+```
+
+### 토큰 저장 원칙
+
+- 공식 FCM 토큰 저장 경로는 `/fcmTokens/{ownerType}/{ownerId}` 하나만 사용한다.
+- `ownerType`은 `users` 또는 `drivers`만 허용한다.
+- `/users/{userId}/fcmToken`, `/drivers/{driverId}/fcmToken` 같은 중복 저장 필드는 만들지 않는다.
+- Flutter 앱은 Firebase Auth 로그인 후 자기 `auth.uid`와 동일한 `ownerId` 경로에 직접 토큰을 등록한다.
+- 백엔드는 `FcmService`에서 해당 토큰을 조회해 단일 대상 알림을 전송한다.
+
+### mock 전송 원칙
+
+- `FCM_ENABLED=false`이거나 Firebase Admin SDK가 mock mode이면 실제 Firebase Messaging을 호출하지 않는다.
+- 토큰이 존재하는 경우 mock message id를 포함한 `accepted=true` 응답을 반환한다.
+- 토큰이 없으면 `accepted=false`와 누락된 `/fcmTokens/...` 경로를 detail에 반환한다.
+- 실제 FCM 인증정보가 없어도 import와 테스트가 실패하지 않아야 한다.
+
+### 서비스 helper
+
+`app.services.fcm_service.FcmService`는 다음 helper를 제공한다.
+
+```txt
+save_token(owner_type, owner_id, token, platform)
+get_user_token(user_id)
+get_driver_token(driver_id)
+send_safety_alert(user_id, stop_id, geofence_status)
+send_ride_request_notification(driver_id, request_id, user_id, stop_id, route_id, bus_no)
+```
+
+섹션 6에서는 지오펜싱/rideRequests 흐름에 직접 강결합하지 않고, 섹션 8에서 rideRequests 파이프라인을 만들 때 `send_ride_request_notification`을 연결할 수 있도록 service method까지만 준비한다.
