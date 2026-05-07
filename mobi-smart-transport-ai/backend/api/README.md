@@ -60,3 +60,51 @@ Remove-Item Env:PYTHONDONTWRITEBYTECODE
 Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
 ```
 
+## 섹션 4 기준 지오펜싱 API 구조
+
+### 엔드포인트
+
+```txt
+POST /geofence/check
+```
+
+요청 본문은 `GeofenceCheckRequest`를 따른다.
+
+```json
+{
+  "userId": "user001",
+  "stopId": "stop001",
+  "lat": 36.6281,
+  "lng": 127.4562,
+  "timestamp": "2026-04-18T14:32:00+09:00"
+}
+```
+
+응답 본문은 `GeofenceCheckResponse`를 따른다.
+
+```json
+{
+  "status": "SAFE",
+  "message": "안전 구역 안에 있습니다.",
+  "shouldSpeak": false,
+  "shouldVibrate": false,
+  "eventId": null
+}
+```
+
+### 판별 원칙
+
+- 상태 enum은 `SAFE`, `WARNING`, `DANGER`, `OUT_OF_AREA`, `UNKNOWN`만 사용한다.
+- RTDB `/geofences/{stopId}`가 있으면 해당 polygon 데이터를 우선 사용한다.
+- RTDB 데이터가 없으면 개발/테스트용 `MOCK_GEOFENCES` fixture를 사용한다.
+- danger zone, warning zone, safe zone 순서로 판별한다.
+- safe zone은 존재하지만 어느 zone에도 포함되지 않으면 `OUT_OF_AREA`로 판정한다.
+- geofence 데이터 자체가 없으면 `UNKNOWN`으로 판정한다.
+
+### 저장 구조
+
+- 최근 위치는 기존 공식 경로인 `/users/{userId}/currentLocation`에 저장한다.
+- 상태 전이 이벤트는 기존 공식 경로인 `/systemLogs/{logId}`에 `GEOFENCE_ALERT` 타입으로 저장한다.
+- 섹션 4에서는 신규 RTDB top-level path를 추가하지 않았다. 최근 상태는 `GeofenceService`의 내부 상태 캐시로 전이 여부를 판별하고, 영속 이벤트는 `/systemLogs`에 남긴다.
+- 실제 FCM 알림 전송은 섹션 6 범위이므로 섹션 4에서는 호출하지 않는다.
+
