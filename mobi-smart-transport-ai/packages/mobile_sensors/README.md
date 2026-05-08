@@ -42,8 +42,11 @@
 ```dart
 export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
+export 'src/beacon_proximity_tracker.dart';
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
+export 'src/bone_conduction_audio_cue.dart';
+export 'src/beacon_audio_cue_factory.dart';
 ```
 
 앱 또는 다른 패키지는 내부 파일을 직접 import하기보다 아래처럼 패키지 entrypoint를 사용하는 것을 권장합니다.
@@ -252,6 +255,51 @@ print(cue.toJson());
 - 이 패키지는 실제 TTS 재생, 블루투스 이어폰 연결 제어, 오디오 권한 처리, 앱 UI 버튼을 구현하지 않습니다.
 - 헤드트래킹을 제외했기 때문에 머리 방향 변화에 따라 소리 방향이 실시간 보정되는 HRTF 기반 3D 공간음향은 구현하지 않습니다.
 - 현재 구현은 비콘 거리 상태에 따라 어떤 안내를 낼지 결정하는 데이터 계약입니다.
+
+
+## 추가 섹션 16 - 비콘 상태 기반 오디오 cue 생성기
+
+`BeaconAudioCueFactory`는 `BeaconSignal`과 선택적인 `BeaconProximitySnapshot`을 입력받아 `BoneConductionAudioCue`를 생성하는 helper입니다. 이 단계는 골전도 이어폰에서 실제 소리를 재생하는 구현이 아니라, Flutter 앱의 TTS/알림음/오디오 모듈이 사용할 수 있는 안내 데이터 생성 책임만 분리합니다.
+
+주요 역할은 다음과 같습니다.
+
+- 단일 `BeaconSignal`을 거리 단계별 안내 cue로 변환
+- `BeaconProximityTracker`의 `APPROACHING`, `MOVING_AWAY`, `STABLE`, `UNKNOWN` 추세를 cue에 반영
+- 비콘 신호가 사라졌을 때 사용할 lost cue 생성
+- `Stream<BeaconSignal>`을 `Stream<BoneConductionAudioCue>`로 변환하는 파이프라인 제공
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final tracker = BeaconProximityTracker();
+const cueFactory = BeaconAudioCueFactory();
+
+await for (final signal in scanner.scan(targetBeaconId: 'MOBI_BEACON_001')) {
+  final snapshot = tracker.addSignal(signal);
+  final cue = cueFactory.createCue(signal, proximitySnapshot: snapshot);
+  print(cue.toJson());
+}
+```
+
+stream 변환 형태로도 사용할 수 있습니다.
+
+```dart
+final cueStream = cueFactory.createCueStream(
+  scanner.scan(targetBeaconId: 'MOBI_BEACON_001'),
+  tracker: tracker,
+);
+
+await for (final cue in cueStream) {
+  print(cue.message);
+}
+```
+
+주의할 점은 다음과 같습니다.
+
+- 이 factory는 실제 TTS 재생, Bluetooth 오디오 연결, 이어폰 출력 제어를 수행하지 않습니다.
+- 헤드트래킹을 제외했기 때문에 머리 방향 기준의 HRTF/3D 공간음향 보정은 구현하지 않습니다.
+- 현재 구현은 비콘 거리 상태와 접근 추세에 따라 어떤 안내를 낼지 결정하는 데이터 생성 계층입니다.
+- 실제 앱에서 이 cue를 음성으로 읽거나 알림음으로 재생하는 작업은 Flutter 앱 또는 오디오 담당 영역에서 처리해야 합니다.
 
 ## 현재 구현 상태
 
