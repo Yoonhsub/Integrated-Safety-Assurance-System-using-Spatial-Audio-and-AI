@@ -133,16 +133,103 @@ class LiveBusArrivalsProvider:
         )
 
     def _call_arrivals_api(self, stop_id: str):  # pragma: no cover - skeleton
-        """실제 도착 정보 API 호출 (섹션 8 또는 10에서 구현).
+        """실제 도착 정보 API 호출 (섹션 10 boilerplate, 본격 활성화는 명세 확보 후).
 
-        구현 시:
-        - ``self.client.city_code``가 비어 있지 않으면 TAGO 호출 (cityCode/nodeId).
-        - 비어 있으면 서울 BIS 등 단일 도시 BIS 호출.
-        - 호출 실패는 ``PublicDataNetworkError`` (이미 ``DataGoKrClient.get``이 변환).
-        - 응답이 비면 호출자(get_arrivals)가 ``PublicDataEmptyResponseError`` 또는
-          빈 arrivals 정책에 따라 처리.
+        본 메서드는 4월 단계에서 **호출 본체가 stub으로 유지**된다. 그 이유는:
+
+        1. 서울 BIS ``getArrInfoByRouteAll``의 응답 필드명은 README 섹션 2에서 1차 출처로
+           확인했지만, 4월 김도성 환경에서 인증키를 즉시 확보할 보장이 없다. 공공데이터포털
+           인증키 발급 자체는 정상화되었으나(국가정보자원관리원 화재 후 위기경보 '경계'→'주의'
+           하향, 대구센터 PPP 이전으로 복구 진행 중), 캡스톤 학생 환경에서 발급 대기·트래픽
+           제약(개발계정 1일 1,000건)을 감수하기보다 mock 모드를 4월 MVP 기본으로 둔다.
+        2. TAGO ``ArvlInfoInqireService``의 ``vehicletp`` / 혼잡도 필드 명세는 활용신청
+           명세서 수령 후에 확정 가능.
+
+        본 boilerplate가 보여주는 것:
+        - 호출 시그니처(URL path / 매개변수 / 응답 형식)가 운영 환경에서 어떻게 생겨야 하는지.
+        - ``self.client.city_code`` 분기로 TAGO/서울 BIS 중 어느 endpoint를 부를지 결정.
+        - 응답 파싱(XML → ``list[dict]``)은 ``_normalize_arrivals``가 받는 raw_items 형식과
+          연결.
+
+        명세 확보 후 활성화 절차:
+        1. ``PUBLIC_DATA_API_KEY`` 환경변수에 발급받은 서비스키 설정 (코드/ZIP에 키 포함 금지).
+        2. ``PUBLIC_DATA_USE_MOCK=false`` 로 mock 모드 해제.
+        3. 본 메서드의 ``raise NotImplementedError`` 줄을 제거하고 그 아래 boilerplate
+           코드를 활성화 (현재는 ``return`` 직전에서 멈춤).
+
+        Returns:
+            list[dict]: 서울 BIS getArrInfoByRouteAll 응답 형식의 raw items 리스트.
+                각 dict는 ``rtNm`` / ``busRouteAbrv`` / ``exps1`` / ``staOrd`` /
+                ``busType1`` / ``reride_Num1`` 등의 키를 가질 수 있다 (서울 BIS 명세 기준).
+                ``_normalize_arrivals``의 입력으로 그대로 전달된다.
+
+        Raises:
+            NotImplementedError: 4월 단계 기본. 명세 확보 후 활성화 시 제거.
+            PublicDataNetworkError: 활성화 후 네트워크/HTTP 실패 시 (DataGoKrClient.get이 변환).
         """
-        raise NotImplementedError
+        # 4월 단계: 활성화 직전 단계에서 명시적으로 멈춘다.
+        # 본 raise를 제거하고 아래 boilerplate를 풀어 사용한다.
+        raise NotImplementedError(
+            "_call_arrivals_api boilerplate is intentionally inactive in April. "
+            "Activate by obtaining a service key, setting PUBLIC_DATA_USE_MOCK=false, "
+            "and removing this raise. See docstring for the activation procedure."
+        )
+
+        # ------------------------------------------------------------------
+        # boilerplate (참고용 — 명세 확보 후 본 raise를 제거하고 활성화)
+        # ------------------------------------------------------------------
+        # 1. city_code 분기로 endpoint 결정
+        # if self.client.city_code:
+        #     # TAGO ArvlInfoInqireService — 청주/대전 등 다도시 표준 (명세 확보 후)
+        #     path = "/1613000/ArvlInfoInqireService/getSttnAcctoArvlPrearngeInfoList"
+        #     params: dict[str, str] = {
+        #         "cityCode": self.client.city_code,
+        #         "nodeId":   stop_id,
+        #         "_type":    "json",
+        #         "numOfRows": "30",
+        #         "pageNo":   "1",
+        #     }
+        # else:
+        #     # 서울 BIS getArrInfoByRouteAll — 서울 단일 도시 (인증키 확보 후)
+        #     # 주의: 서울 BIS의 base URL은 공공데이터포털 표준과 다를 수 있다.
+        #     # DataGoKrClient.base_url 또는 별도 클라이언트 검토 필요.
+        #     path = "/B553961/getArrInfoByRouteAll"  # 실제 path는 활용신청서 확인
+        #     params = {
+        #         "stId":     stop_id,
+        #         "resultType": "json",  # 또는 "xml"
+        #     }
+        #
+        # # 2. 호출 — DataGoKrClient.get이 PublicDataNetworkError로 자동 변환
+        # response = self.client.get(path, params=params)
+        #
+        # # 3. 응답 파싱 — XML/JSON 분기
+        # content_type = response.headers.get("content-type", "").lower()
+        # if "json" in content_type:
+        #     payload = response.json()
+        #     # 서울 BIS / TAGO 모두 응답 envelope 구조가 다르다. 두 형식 모두 처리:
+        #     # - TAGO:    payload["response"]["body"]["items"]["item"]
+        #     # - 서울 BIS: payload["msgBody"]["itemList"]
+        #     items = (
+        #         payload.get("response", {}).get("body", {}).get("items", {}).get("item")
+        #         or payload.get("msgBody", {}).get("itemList")
+        #         or []
+        #     )
+        # else:
+        #     # XML 파싱 — stdlib만으로 처리 가능
+        #     # import xml.etree.ElementTree as ET
+        #     # root = ET.fromstring(response.text)
+        #     # items = [
+        #     #     {child.tag: child.text for child in item}
+        #     #     for item in root.findall(".//itemList") + root.findall(".//item")
+        #     # ]
+        #     items = []  # 활성화 시 위 코드 풀어 사용
+        #
+        # # 4. 단일 item이 dict로 반환되는 경우(공공데이터 표준)도 list로 정규화
+        # if isinstance(items, dict):
+        #     items = [items]
+        #
+        # # 5. _normalize_arrivals가 받는 raw_items 형식으로 반환
+        # return items
 
     def _normalize_arrivals(
         self,
