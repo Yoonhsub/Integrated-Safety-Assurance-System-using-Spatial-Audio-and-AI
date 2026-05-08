@@ -177,6 +177,36 @@ DirectionAccuracy.unknown -> UNKNOWN
 
 실제 플랫폼 센서 연동에서는 센서 결과를 `DirectionReading`으로 변환하되, 권한 안내 화면·방향 표시 UI·공간음향 연동은 각각 Flutter 앱 또는 future module 담당 영역에서 처리해야 합니다.
 
+
+## 추가 섹션 13 - 실제 BLE 비콘 스캔 연동 준비
+
+`FlutterBlueBeaconScanner`는 `flutter_blue_plus`의 scan result를 `BeaconSignal` stream으로 변환하는 실제 BLE scanner 준비 구현체입니다. 이 구현체는 앱 화면을 만들지 않고, 패키지 내부에서 다음 흐름만 담당합니다.
+
+- `FlutterBluePlus.startScan(timeout: scanTimeout)`으로 BLE 스캔 시작
+- scan result의 광고 이름 또는 remote id를 `beaconId`로 변환
+- 비콘별 `RssiMovingAverageSmoother` 적용
+- `BeaconDistanceEstimator`로 거리 추정 및 `signalLevel` 분류
+- `targetBeaconId`가 주어지면 해당 비콘만 통과
+- `stop()` 호출 시 `FlutterBluePlus.stopScan()`으로 스캔 중지
+
+```dart
+final scanner = FlutterBlueBeaconScanner(
+  scanTimeout: const Duration(seconds: 10),
+  smoothingWindowSize: 5,
+);
+
+await for (final signal in scanner.scan(targetBeaconId: 'MOBI_BEACON_001')) {
+  print(signal.toJson());
+}
+```
+
+주의할 점은 다음과 같습니다.
+
+- Android/iOS BLE 권한 요청 화면, manifest/plist 설정, Bluetooth 활성화 안내 UI는 Flutter 앱 담당 영역입니다.
+- 이 패키지는 스캔 결과를 모델로 변환하는 역할만 담당합니다.
+- 비콘 제조사별 UUID/manufacturer data 규칙이 확정되면 `BeaconIdResolver`를 주입해 `beaconId` 추출 방식을 바꿀 수 있습니다.
+- 실기기 테스트 전에는 수신 RSSI와 거리값을 확정 현장값처럼 사용하면 안 됩니다.
+
 ## 현재 구현 상태
 
 현재 패키지는 GitHub-ready 스캐폴딩 단계입니다. 따라서 `UnimplementedBeaconScanner`와 `UnimplementedDirectionSensor`가 `Stream.empty()`를 반환하는 것은 오류가 아닙니다. 실제 BLE 스캔, 권한 처리, 현장 RSSI 보정값, 플랫폼별 센서 연결은 이후 구현 섹션에서 담당 범위 안에서 순차적으로 보강합니다.
