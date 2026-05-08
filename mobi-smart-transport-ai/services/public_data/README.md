@@ -114,7 +114,8 @@ packages/shared_contracts/api/bus_arrivals.response.schema.json
 원칙:
 - 원본 코드값(예: `"1"`)을 그대로 노출하지 않고 boolean으로만 normalize한다.
 - 원본이 `"굴절(2)"`인 경우 — 4월 시점에는 저상이 아니므로 `lowFloor = false` (단, 굴절도 저상형이 있으면 향후 별도 검토. 현재는 서울 BIS 코드표대로 분리).
-- 원본 응답이 vehicletp/busType 자체를 제공하지 않으면 `lowFloor = false`가 아니라 — 김도성 normalize는 `mock-only` 모드를 사용하고 실제 호출에서는 `lowFloor=False`로 단정하지 않는다. 데이터 부재 시 노출 정책은 섹션 6에서 확정한다.
+- 원본 응답에 `busType`/`vehicletp` 필드 자체가 없거나 알 수 없는 코드인 경우 — **섹션 6에서 안전 기본값 `lowFloor = false`로 흡수하는 정책으로 확정**. 이유: `NormalizedBusArrival.lowFloor`는 shared schema가 필수 boolean으로 강제하여 미상 표현이 불가능하므로 두 값 중 하나로 결정해야 한다. 저상이 확실한 경우만 우선시하고 그 외는 일반으로 간주하면 "저상이 아닌 차량을 저상으로 잘못 표시"하는 위험이 없다 — 교통약자에게는 false negative가 false positive보다 안전.
+- 위 정책은 `services/public_data/public_data_client/normalize.py`의 `map_vehicle_type_to_low_floor(..., default=False)` 호출로 강제된다.
 
 ### 5. 혼잡도 정보 제공 여부
 
