@@ -98,6 +98,7 @@ packages/mobile_sensors/README.md
 packages/mobile_sensors/lib/mobi_mobile_sensors.dart
 packages/mobile_sensors/lib/src/beacon_distance_estimator.dart
 packages/mobile_sensors/lib/src/beacon_scanner.dart
+packages/mobile_sensors/lib/src/beacon_proximity_tracker.dart
 packages/mobile_sensors/lib/src/beacon_signal.dart
 packages/mobile_sensors/lib/src/direction_sensor.dart
 packages/mobile_sensors/pubspec.yaml

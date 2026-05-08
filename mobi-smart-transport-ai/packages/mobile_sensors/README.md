@@ -258,3 +258,32 @@ dart analyze
 - `apps/passenger_app/**`, `apps/driver_app/**` 화면 구현은 직접 수정하지 않습니다.
 - `future_modules/head_tracking/**`, `future_modules/spatial_audio/**`는 4월 실제 구현 대상이 아닙니다.
 - shared contract enum 변경이 필요하면 직접 수정하지 않고 충돌 이슈로 기록한 뒤 팀원 협의를 요청합니다.
+
+## 추가 섹션 14 - RSSI 안정화 및 가까워짐/멀어짐 판단
+
+`BeaconProximityTracker`는 `BeaconSignal`의 최근 값을 비콘별로 보관하고, 거리 변화 또는 RSSI 변화량을 바탕으로 사용자가 목표 비콘에 가까워지는지 판단하는 helper입니다. 이 기능은 실제 공간음향 렌더링이 아니라, 골전도 이어폰 안내나 로그 기반 검증에서 사용할 수 있는 접근 추세 힌트를 제공하기 위한 패키지 내부 구조입니다.
+
+판단 기준은 다음과 같습니다.
+
+- `estimatedDistanceMeters`가 이전 값보다 작아지면 `APPROACHING`으로 판단합니다.
+- `estimatedDistanceMeters`가 이전 값보다 커지면 `MOVING_AWAY`로 판단합니다.
+- 거리 변화가 `distanceStableThresholdMeters` 이하이면 `STABLE`로 판단합니다.
+- 거리값이 없을 때는 RSSI 변화량을 fallback으로 사용합니다.
+- 최근 감지 시간이 `maxSignalAge`를 넘거나 signal level이 `LOST`이면 `UNKNOWN`으로 판단합니다.
+
+```dart
+final tracker = BeaconProximityTracker(
+  distanceStableThresholdMeters: 0.4,
+  rssiStableThreshold: 3,
+  maxSignalAge: const Duration(seconds: 5),
+);
+
+final snapshot = tracker.addSignal(signal);
+print(snapshot.toJson());
+```
+
+주의할 점은 다음과 같습니다.
+
+- RSSI는 벽, 사람, 스마트폰 기종, 비콘 설치 위치에 따라 흔들릴 수 있으므로 `APPROACHING`/`MOVING_AWAY`는 정밀 위치 판정이 아니라 안내용 힌트입니다.
+- `distanceStableThresholdMeters`, `rssiStableThreshold`, `maxSignalAge`는 현장 테스트 후 조정해야 합니다.
+- 이 패키지는 가까워짐/멀어짐 상태를 계산할 뿐, 실제 TTS 재생이나 골전도 이어폰 연결 제어는 Flutter 앱 또는 오디오 담당 모듈에서 처리해야 합니다.
