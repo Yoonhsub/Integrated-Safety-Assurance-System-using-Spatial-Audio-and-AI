@@ -93,7 +93,23 @@ class LiveBusArrivalsProvider:
     """
 
     def __init__(self, client: DataGoKrClient | None = None):
-        self.client = client or DataGoKrClient()
+        # client는 lazy 생성한다. mock 모드에서 LiveBusArrivalsProvider 인스턴스만
+        # 만들어지고 실제 호출이 없는 흔한 경우, httpx.Client 같은 부작용을 만들지 않기 위함이다.
+        # _get_client()가 처음 호출될 때 비로소 DataGoKrClient(=httpx.Client)가 만들어진다.
+        self._client_override = client
+        self._lazy_client: DataGoKrClient | None = None
+
+    def _get_client(self) -> DataGoKrClient:
+        if self._client_override is not None:
+            return self._client_override
+        if self._lazy_client is None:
+            self._lazy_client = DataGoKrClient()
+        return self._lazy_client
+
+    @property
+    def client(self) -> DataGoKrClient:
+        """기존 ``self.client`` 접근 호환을 위한 lazy property."""
+        return self._get_client()
 
     def get_arrivals(self, stop_id: str) -> NormalizedBusArrivalsResponse:
         # 1. 서비스키 빠른 실패 (PublicDataServiceKeyMissingError)
@@ -138,11 +154,23 @@ class BusArrivalsService:
         use_mock: bool | None = None,
     ):
         self.mock_provider = mock_provider or MockBusArrivalsProvider()
-        # live_provider는 lazy 생성하지 않고 명시적으로 받거나 기본 인스턴스를 만든다.
-        # mock 모드라면 live는 사용되지 않지만, 인스턴스 생성 자체는 부작용이 없으므로 OK.
-        self.live_provider = live_provider or LiveBusArrivalsProvider()
+        # live_provider도 lazy 생성한다. mock 모드에서 BusArrivalsService를 만들 때
+        # ``LiveBusArrivalsProvider`` → ``DataGoKrClient`` → ``httpx.Client`` 체인이 즉시
+        # 만들어져 사용되지 않을 file descriptor를 잡는 부작용을 막는다.
+        # ``self.live_provider`` 접근 시점에 비로소 인스턴스가 만들어진다.
+        self._live_provider_override = live_provider
+        self._lazy_live_provider: LiveBusArrivalsProvider | None = None
         # 명시 인자가 우선. 미지정이면 호출 시점마다 환경변수를 평가해 hot reload를 허용.
         self._use_mock_override = use_mock
+
+    @property
+    def live_provider(self) -> LiveBusArrivalsProvider:
+        """real 모드에서 처음 사용될 때만 ``LiveBusArrivalsProvider``를 만든다."""
+        if self._live_provider_override is not None:
+            return self._live_provider_override
+        if self._lazy_live_provider is None:
+            self._lazy_live_provider = LiveBusArrivalsProvider()
+        return self._lazy_live_provider
 
     @property
     def use_mock(self) -> bool:
