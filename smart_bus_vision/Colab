@@ -158,3 +158,68 @@ results = best_model.predict(
     name="new_bus_door_test"
 )
 
+11. 영상 테스트
+
+# 버스 영상 파일을 업로드한다.
+# 실제 앱은 정지 이미지가 아니라 카메라 프레임을 연속 처리하므로 영상 테스트가 필요하다.
+uploaded = files.upload()
+
+# 업로드된 영상 파일명 가져오기
+video_name = list(uploaded.keys())[0]
+
+# 영상의 각 프레임에 대해 bus_door 탐지를 수행한다.
+# 결과는 박스가 표시된 영상으로 저장된다.
+results = best_model.predict(
+    source=video_name,
+    conf=0.5,
+    save=True,
+    name="bus_door_video_test"
+)
+
+12. 모바일 적용을 위한 TFLite 변환
+
+# 학습된 PyTorch 모델(best.pt)을 모바일 환경에서 사용할 수 있는 TFLite 형식으로 변환한다.
+# Flutter 앱에서 on-device inference를 하기 위한 단계이다.
+
+export_path = best_model.export(
+    format="tflite",
+    imgsz=640
+)
+
+# 변환된 파일 경로 출력
+print(export_path)
+
+13. 변환된 TFLite 파일 경로 확인
+
+# Colab 환경에서 생성된 .tflite 파일을 검색한다.
+!find . -name "*.tflite"
+
+# ./runs/detect/bus_door_yolo/weights/best_saved_model/best_float32.tflite
+
+14. TFLite 모델 테스트
+
+# 변환된 TFLite 모델을 다시 불러와서 정상적으로 예측되는지 확인한다.
+# 아래 경로는 find 결과에 맞게 수정해야 한다.
+tflite_model = YOLO("./runs/detect/bus_door_yolo/weights/best_saved_model/best_float32.tflite")
+
+# 새로운 이미지를 업로드하여 TFLite 모델로 예측 테스트
+uploaded = files.upload()
+
+# 업로드된 이미지 파일명 가져오기
+filename = list(uploaded.keys())[0]
+
+# TFLite 모델로 예측 수행
+# best.pt와 비교해서 성능이 크게 떨어지지 않는지 확인한다.
+results = tflite_model.predict(
+    source=filename,
+    conf=0.5,
+    save=True,
+    name="tflite_single_test"
+)
+
+15. TFLite 파일 다운로드
+
+# 변환된 TFLite 모델 파일을 로컬 PC로 다운로드한다.
+# 다운로드한 파일은 Flutter 프로젝트의 assets/models 폴더에 넣어 사용할 수 있다.
+
+files.download("./runs/detect/bus_door_yolo/weights/best_saved_model/best_float32.tflite")

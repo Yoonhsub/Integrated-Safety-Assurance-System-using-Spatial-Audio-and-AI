@@ -43,3 +43,29 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+
+# Environment
+.env
+*.env
+
+# Dataset
+datasets/
+roboflow/
+*/train/
+*/valid/
+*/test/
+
+# YOLO outputs
+runs/
+
+# Model files
+*.pt
+*.onnx
+*.tflite
+
+# IDE
+.vscode/settings.json
+
