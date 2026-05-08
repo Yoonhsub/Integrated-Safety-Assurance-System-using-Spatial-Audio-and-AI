@@ -207,6 +207,52 @@ await for (final signal in scanner.scan(targetBeaconId: 'MOBI_BEACON_001')) {
 - 비콘 제조사별 UUID/manufacturer data 규칙이 확정되면 `BeaconIdResolver`를 주입해 `beaconId` 추출 방식을 바꿀 수 있습니다.
 - 실기기 테스트 전에는 수신 RSSI와 거리값을 확정 현장값처럼 사용하면 안 됩니다.
 
+
+## 추가 섹션 15 - 골전도 이어폰용 오디오 안내 cue 모델
+
+`BoneConductionAudioCue`는 BLE 비콘 거리 상태를 골전도 이어폰 또는 앱 오디오 모듈에서 사용할 수 있는 짧은 안내 데이터로 바꾸기 위한 모델입니다. 이 모델은 실제 소리를 재생하지 않고, 앱의 TTS/알림음/진동/향후 오디오 모듈이 소비할 수 있는 cue 계약만 제공합니다.
+
+주요 필드는 다음과 같습니다.
+
+- `cueId`: 앱 또는 로그에서 cue를 구분하기 위한 ID
+- `beaconId`: 안내 대상 비콘 ID
+- `message`: TTS 또는 로그에서 사용할 짧은 안내 문장
+- `signalLevel`: cue 생성에 사용된 `VERY_CLOSE`, `CLOSE`, `MEDIUM`, `FAR`, `LOST` 단계
+- `estimatedDistanceMeters`: RSSI 기반 추정 거리, 추정 불가 시 `null`
+- `proximityTrend`: `APPROACHING`, `MOVING_AWAY`, `STABLE`, `UNKNOWN` 중 하나, 판단하지 않았다면 `null`
+- `urgency`: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` 안내 긴급도
+- `repeatIntervalMs`: 반복 안내 권장 간격
+- `shouldRepeat`: 반복 안내 대상 여부
+- `createdAt`: cue 생성 시각
+
+기본 cue 예시는 다음과 같습니다.
+
+```txt
+VERY_CLOSE -> 탑승 위치에 거의 도착했습니다.
+CLOSE      -> 버스 문이 가까이에 있습니다.
+MEDIUM     -> 조금 더 앞으로 이동하세요.
+FAR        -> 목표 위치와 아직 떨어져 있습니다.
+LOST       -> 비콘 신호가 약합니다. 주변을 다시 확인하세요.
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final cue = BoneConductionAudioCue.fromBeaconSignal(
+  signal,
+  proximityTrend: BeaconProximityTrend.approaching,
+);
+
+print(cue.toJson());
+```
+
+주의할 점은 다음과 같습니다.
+
+- 골전도 이어폰은 현재 단계에서 일반 블루투스 오디오 출력 장치로 취급합니다.
+- 이 패키지는 실제 TTS 재생, 블루투스 이어폰 연결 제어, 오디오 권한 처리, 앱 UI 버튼을 구현하지 않습니다.
+- 헤드트래킹을 제외했기 때문에 머리 방향 변화에 따라 소리 방향이 실시간 보정되는 HRTF 기반 3D 공간음향은 구현하지 않습니다.
+- 현재 구현은 비콘 거리 상태에 따라 어떤 안내를 낼지 결정하는 데이터 계약입니다.
+
 ## 현재 구현 상태
 
 현재 패키지는 GitHub-ready 스캐폴딩 단계입니다. 따라서 `UnimplementedBeaconScanner`와 `UnimplementedDirectionSensor`가 `Stream.empty()`를 반환하는 것은 오류가 아닙니다. 실제 BLE 스캔, 권한 처리, 현장 RSSI 보정값, 플랫폼별 센서 연결은 이후 구현 섹션에서 담당 범위 안에서 순차적으로 보강합니다.
