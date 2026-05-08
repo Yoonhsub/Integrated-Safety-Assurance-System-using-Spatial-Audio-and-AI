@@ -1,5 +1,7 @@
-model,family,target_runtime,expected_role,status
-YOLOv8n,YOLO,TFLite/ONNX Mobile,object detection,research
-YOLOv11n,YOLO,TFLite/ONNX Mobile,object detection,research
-MobileNet,MobileNet,TFLite,classification/backbone,research
-EfficientDet-Lite,EfficientDet,TFLite,object detection,research
+model,family,input_size,coco_map_baseline,target_runtime,expected_role,license,inference_location_candidate,status,notes
+YOLOv8n,YOLO,640,37.3,TFLite/ONNX Mobile,object detection,AGPL-3.0,on-device or backend,research,"Ultralytics 공식 — coco val2017 mAP@0.5:0.95 = 37.3. AGPL-3.0이라 상업화 시 별도 라이선스 필요. 캡스톤 학생 사용은 OK."
+YOLOv11n,YOLO,640,39.5,TFLite/ONNX Mobile,object detection,AGPL-3.0,on-device or backend,research,"Ultralytics 공식 — coco val2017 mAP@0.5:0.95 = 39.5 (YOLOv8n 대비 +2.2). C3k2/C2PSA 도입으로 효율성 개선. 라이선스는 v8과 동일."
+MobileNetV2,MobileNet,224,N/A,TFLite,classification/backbone,Apache 2.0,on-device,research,"분류용 backbone — depthwise separable conv 기반 모바일 최적. 단독으로는 detection 안 함. SSD-MobileNetV2로 결합 시 detection 가능."
+EfficientDet-Lite0,EfficientDet,320,N/A,TFLite,object detection,Apache 2.0,on-device,research,"TensorFlow 공식 mobile detection — 가장 가벼움(< 10 MB). 모바일 단독 추론에 가장 적합 후보. 단 학습 인프라가 TF 중심이라 PyTorch 팀에는 추가 학습 비용."
+EfficientDet-Lite1,EfficientDet,384,N/A,TFLite,object detection,Apache 2.0,on-device,research,"Lite0보다 정확도↑·크기↑ trade-off. 정확도가 부족할 때 단계적 상승 후보."
+
