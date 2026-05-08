@@ -1,0 +1,73 @@
+Architecture validation result
+
+Status: PASS
+
+Executed checks:
+- python scripts/validate_architecture.py: PASS
+- JSON parse: PASS
+- Python AST parse: PASS
+- backend pytest: 5 passed
+- Pydantic constraint smoke: PASS
+- FastAPI OpenAPI smoke: PASS
+- generated/ignored file scan: PASS
+- ZIP integrity: PASS
+- v9 minor consistency cleanup checks: PASS
+
+Backend pytest command:
+cd backend/api
+PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p no:cacheprovider
+
+Windows PowerShell equivalent:
+cd backend/api
+$env:PYTHONDONTWRITEBYTECODE="1"
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
+python -m pytest -q -p no:cacheprovider
+Remove-Item Env:PYTHONDONTWRITEBYTECODE
+Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+
+Notes:
+- .docx files are included only as reference/submission artifacts and are excluded from consistency analysis.
+- Korean filename encoding issues are intentionally excluded from consistency patch scope.
+- Functional stubs, future_modules, and ai_vision placeholders are not treated as consistency defects.
+- Section 7 carryover correction: validation timestamp invariant and docx reference/contract policy checks.
+
+
+Section 8 validation additions:
+- Role/scope priority includes docs/rw/선행작업의존성 정리.md before docs/02.
+- Common protected document limited-update exceptions are documented.
+- Agent required-reading files include limited docs/rw/선행작업의존성 정리.md update permission.
+- Sensor output wording does not imply 안준환 can modify Flutter app UI.
+
+Section 10 validation additions:
+- Backend pytest metadata reflects 5 passed tests.
+- docs/read/CONTRIBUTING.md no longer describes branch/PR/commit rules as temporary fallbacks.
+- docs/rw/SETUP.md includes both Unix/macOS/Linux and Windows PowerShell pytest commands.
+
+Section 12 validation additions:
+- Passenger README is passenger-specific and documents geofence, bus arrivals, ride request, accessibility/STT/TTS, and mobile_sensors policy.
+- Driver README is driver-specific and documents FCM, driver ride request list, status update, and passenger-only dependency boundaries.
+
+
+Section 14 validation additions:
+- Public-data normalized Pydantic models forbid extra fields and require explicit `congestion`.
+- Public-data README points to `packages/shared_contracts/api/bus_arrivals.response.schema.json` as the official output contract.
+- docs/02 copies use `BusArrivalsService.get_arrivals(stop_id)` and no longer use "최종 응답 wrapper" wording.
+- SRS geofence request/response examples use two clean JSON code blocks and keep `eventId` prose outside JSON.
+
+
+Section 16 validation additions:
+- Spatial audio README explicitly excludes actual HRTF/3D rendering from April implementation and keeps only a future placeholder/contract frame.
+- AI vision README explicitly excludes April model training/inference code and Flutter/backend real-time integration.
+- SRS FR-020/FR-021 sensor output wording no longer implies 안준환 may modify Flutter app UI directly.
+- Head-tracking README documents `future_head_tracking_status` as a reserved future-only enum that is not emitted by April app/backend code.
+
+Section 18 validation additions:
+- docs/read/FINAL_FILE_LIST.txt is validated bidirectionally against the actual packaged source file set.
+- Generated/ignored file scan now covers `.DS_Store`, `.env`, archives, logs, `node_modules/`, `.dart_tool/`, `build/`, `.firebase/`, and `.gcloud/`; `.env.example` remains allowed.
+- PR template headings now align with docs/read/PULL_REQUEST_RULES.md required PR body sections.
+- CODEOWNERS owner-specific and common/protected reviewer mappings are validated against `module_ownership.json` expectations.
+
+Section 20 validation additions:
+- `/users/{uid}/currentLocation` and `/drivers/{driverId}/currentLocation` Firebase rules both require exact `lat`, `lng`, `updatedAt` children, numeric coordinate values, coordinate bounds, and string `updatedAt`.
+- AI Vision wording across top-level and docs/02 documents explicitly excludes April model training/inference code and Flutter/backend real-time integration.
+- Final package still excludes `.docx` content analysis, Korean filename encoding issues, mock/stub/TODO incompleteness, and future placeholder existence from defect scope.

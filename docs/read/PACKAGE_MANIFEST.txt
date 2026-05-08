@@ -1,0 +1,66 @@
+# Package Manifest
+
+이 패키지는 GitHub 업로드 및 4개 AI 에이전트 병렬 개발을 위한 필수 파일 묶음이다.
+
+주의:
+- `.docx` 파일은 분석/정합성 검토 대상에서 제외한다.
+- 최종 포함 파일 목록은 `docs/read/FINAL_FILE_LIST.txt`를 기준으로 한다.
+- 이 manifest는 패키지 목적과 사용 방법을 설명하며, 실제 파일 존재 여부는 `scripts/validate_architecture.py`로 검증한다.
+
+## Current validation
+
+```txt
+Architecture validation: PASS
+JSON parse: PASS
+Python AST parse: PASS
+backend pytest: 5 passed
+Pydantic constraint smoke: PASS
+FastAPI OpenAPI smoke: PASS
+generated/ignored file scan: PASS
+ZIP integrity: PASS
+v9 minor consistency cleanup checks: PASS
+```
+- Section 7 carryover correction: validation timestamp invariant and docx reference/contract policy checks.
+
+
+[Section 8 role/ownership patch]
+- docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md: role/scope priority includes docs/rw/선행작업의존성 정리.md.
+- docs/read/CONTRIBUTING.md: role/scope/section priority includes docs/rw/선행작업의존성 정리.md.
+- module_ownership.json and docs/rw/MODULE_OWNERSHIP.md: limited update exceptions for docs/rw/공통 진행사항.md and docs/rw/선행작업의존성 정리.md.
+- Team agent required-reading files: limited docs/rw/선행작업의존성 정리.md update permission added.
+- docs/02 and docs/agent_required_reading/02: sensor output wording limited to package examples/logs, not app UI ownership.
+
+[Section 10 core documentation patch]
+- docs/rw/SETUP.md: backend pytest expected output updated from 1 passed to 5 passed and Windows PowerShell example added.
+- docs/read/CONTRIBUTING.md: obsolete temporary branch/PR/commit rule wording replaced with summary-rule wording.
+- docs/read/PACKAGE_MANIFEST.txt and docs/read/architecture_validation_result.txt: pytest result metadata updated to 5 passed.
+
+[Section 12 Flutter README clarity patch]
+- apps/passenger_app/README.md: passenger-only purpose, API targets, accessibility/STT/TTS scope, and mobile_sensors dependency policy clarified.
+- apps/driver_app/README.md: driver-only purpose, FCM/ride request scope, API targets, and passenger-only dependency boundary clarified.
+- validate_architecture.py: section 12 app-specific README invariants added.
+
+
+[Section 14 backend/public-data contract patch]
+- services/public_data/public_data_client/schemas.py: normalized models now forbid extra fields and require explicit `congestion`.
+- docs/02 and docs/agent_required_reading/02: bus-arrival method name aligned to `BusArrivalsService.get_arrivals(stop_id)` and wrapper wording removed.
+- docs/01_요구사항명세서.md: geofence request/response JSON blocks cleaned up; `eventId` explanation moved outside JSON.
+- services/public_data/README.md: official shared schema output contract documented.
+
+
+[Section 16 sensors/future-modules scope patch]
+- future_modules/spatial_audio/README.md: actual HRTF/3D rendering is explicitly outside April implementation; only future placeholder/contract frame is preserved.
+- ai_vision/README.md: actual model training/inference code and Flutter/backend real-time integration are explicitly outside April scope.
+- docs/01_요구사항명세서.md: FR-020/FR-021 sensor output wording now limits 안준환 work to package examples/logs and preserves Flutter UI ownership for 윤현섭.
+- future_modules/head_tracking/README.md: `future_head_tracking_status` documented as a reserved future-only enum.
+
+[Section 18 operations/packaging validation patch]
+- scripts/validate_architecture.py: docs/read/FINAL_FILE_LIST.txt validation is now bidirectional and fails on both missing listed files and unlisted packaged files.
+- scripts/validate_architecture.py: generated/ignored file scanning now covers common ignored directories/files from .gitignore, including archives, local env files, Flutter/Node/Firebase/GCloud build/cache paths, and logs.
+- .github/pull_request_template.md: PR body structure now mirrors docs/read/PULL_REQUEST_RULES.md required sections, including 담당 범위 확인, 충돌 이슈, 문서 최신화, and 병합 전 주의사항.
+- scripts/validate_architecture.py: CODEOWNERS alignment checks added for owner-specific paths and common 4-reviewer protected paths.
+
+[Section 20 final consistency patch]
+- infrastructure/firebase/database.rules.json: `/users/{uid}/currentLocation` validation now matches strict user/driver location schema policy.
+- docs/rw/ARCHITECTURE.md, docs/rw/SETUP.md, docs/rw/ENVIRONMENT_VARIABLES.md, docs/01, docs/02, and docs/agent_required_reading/02: AI Vision April scope now explicitly excludes actual model training/inference code and Flutter/backend real-time integration.
+- scripts/validate_architecture.py: final section 20 invariants added for strict currentLocation rules and AI Vision scope wording.
