@@ -183,9 +183,9 @@ DirectionAccuracy.unknown -> UNKNOWN
 
 `flutter_blue_plus`는 BLE 스캔 구현 준비를 위한 의존성입니다. 실제 앱 UI에서 스캔 버튼, 권한 안내 화면, 결과 화면을 붙이는 작업은 Flutter 앱 담당 영역입니다.
 
-## 패키지 내부 사용 예시
+## 패키지 내부 사용 예시와 smoke 검증
 
-아래 예시는 앱 UI 구현이 아니라 모델 계약과 거리 추정 로직 확인용입니다.
+아래 예시는 앱 UI 구현이 아니라 모델 계약과 거리 추정 로직 확인용입니다. 실제 앱 화면, 권한 안내, 버튼, 결과 렌더링은 Flutter 앱 담당 영역에서 처리해야 합니다.
 
 ```dart
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
@@ -210,6 +210,16 @@ void main() {
   print(signal.toJson());
   print(direction.toJson());
 }
+```
+
+Dart SDK가 있는 환경에서는 아래 흐름을 별도 로컬 scratch 파일이나 Dart REPL 수준에서 확인할 수 있습니다. 정식 저장 파일을 추가하지 않는 이유는 이번 섹션의 목적이 앱 UI 구현이 아니라 public API 사용 경계와 smoke 검증 방법을 문서화하는 것이기 때문입니다.
+
+확인 대상은 `MockBeaconScanner`, `RssiMovingAverageSmoother`, `BeaconDistanceEstimator`, `DirectionReading`, `MockDirectionSensor`입니다. 따라서 Flutter 사용자 앱 UI를 수정하거나 `apps/passenger_app/**`에 센서 화면을 붙이는 작업이 아닙니다.
+
+```bash
+cd packages/mobile_sensors
+dart pub get
+dart analyze
 ```
 
 ## 협업 경계
