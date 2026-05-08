@@ -29,7 +29,12 @@ from .exceptions import (
     PublicDataNetworkError,
     PublicDataServiceKeyMissingError,
 )
-from .low_floor_filter import prioritize_low_floor
+from .low_floor_filter import filter_low_floor_only, prioritize_low_floor
+from .normalize import (
+    map_reride_to_congestion,
+    map_vehicle_type_to_low_floor,
+    seconds_to_arrival_minutes,
+)
 from .schemas import (
     CongestionLevel,
     NormalizedBusArrival,
@@ -43,6 +48,11 @@ __all__ = [
     "NormalizedBusArrivalsResponse",
     "CongestionLevel",
     "prioritize_low_floor",
+    "filter_low_floor_only",
+    # Normalize helpers (단위 테스트와 다른 provider 구현이 재사용)
+    "map_vehicle_type_to_low_floor",
+    "map_reride_to_congestion",
+    "seconds_to_arrival_minutes",
     # Exceptions
     "PublicDataError",
     "PublicDataServiceKeyMissingError",

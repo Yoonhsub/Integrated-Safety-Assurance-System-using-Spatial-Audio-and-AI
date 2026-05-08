@@ -115,33 +115,112 @@ class LiveBusArrivalsProvider:
         # 1. 서비스키 빠른 실패 (PublicDataServiceKeyMissingError)
         self.client.require_service_key()
 
-        # 2. 실제 endpoint 호출 — 섹션 6에서 구현.
-        # 현재 단계에서는 명시적 NotImplementedError로 mock 미사용 시 실수를 막는다.
-        # 호출자(BusArrivalsService)는 PUBLIC_DATA_USE_MOCK=false 일 때만 이 경로에 진입한다.
+        # 2. 실제 endpoint 호출 — 4월 단계는 명세 미확보(TAGO) + 신규 인증키 발급 불가(서울 BIS)
+        # 운영 환경이라 호출 본체를 stub으로 유지한다. 명세서 확보 후 섹션 8 또는 10에서
+        # _call_arrivals_api 본체를 구현하면 본 메서드는 다음 흐름으로 동작한다:
+        #
+        #     raw_items = self._call_arrivals_api(stop_id)
+        #     if not raw_items:
+        #         raise PublicDataEmptyResponseError(...)  # 또는 빈 응답 정책
+        #     normalized = self._normalize_arrivals(raw_items)
+        #     return NormalizedBusArrivalsResponse(stopId=stop_id, arrivals=normalized)
         raise NotImplementedError(
-            "LiveBusArrivalsProvider.get_arrivals is not implemented yet. "
-            "Implement this in 섹션 6 by calling DataGoKrClient with the appropriate "
-            "endpoint (e.g. TAGO ArvlInfoInqireService) and normalizing the raw response "
-            "into NormalizedBusArrivalsResponse. Until then, set PUBLIC_DATA_USE_MOCK=true."
+            "LiveBusArrivalsProvider.get_arrivals call body is not implemented yet. "
+            "Activate by implementing _call_arrivals_api against the operative API "
+            "(TAGO ArvlInfoInqireService once the field spec is confirmed, or 서울 BIS "
+            "getArrInfoByRouteAll once an authentication key is available). "
+            "Until then, set PUBLIC_DATA_USE_MOCK=true."
         )
 
-    # 섹션 6에서 구현할 helper들의 예고 시그니처 (각자 placeholder).
     def _call_arrivals_api(self, stop_id: str):  # pragma: no cover - skeleton
-        """실제 도착 정보 API 호출. 섹션 6에서 구현.
+        """실제 도착 정보 API 호출 (섹션 8 또는 10에서 구현).
 
-        TAGO 또는 지자체 BIS 중 어떤 endpoint를 사용할지는 ``city_code``와
-        활용신청 명세서 확보 여부에 따라 결정한다 (services/public_data/README.md 섹션 2 참고).
+        구현 시:
+        - ``self.client.city_code``가 비어 있지 않으면 TAGO 호출 (cityCode/nodeId).
+        - 비어 있으면 서울 BIS 등 단일 도시 BIS 호출.
+        - 호출 실패는 ``PublicDataNetworkError`` (이미 ``DataGoKrClient.get``이 변환).
+        - 응답이 비면 호출자(get_arrivals)가 ``PublicDataEmptyResponseError`` 또는
+          빈 arrivals 정책에 따라 처리.
         """
         raise NotImplementedError
 
-    def _normalize_arrivals(self, raw):  # pragma: no cover - skeleton
-        """원본 응답 → ``list[NormalizedBusArrival]`` 변환. 섹션 6에서 구현.
+    def _normalize_arrivals(
+        self,
+        raw_items: list[dict],
+    ) -> list[NormalizedBusArrival]:
+        """원본 응답 항목 list → 표준 ``NormalizedBusArrival`` list 변환.
 
-        - busType: "0"=일반→False, "1"=저상→True, "2"=굴절→False
-        - reride_Num: "0"=UNKNOWN, "3"=LOW, "4"=NORMAL, "5"=HIGH
-        - 필드 부재 시 congestion=UNKNOWN, lowFloor 기본 정책은 섹션 6에서 확정
+        매핑 규칙(서울 BIS ``getArrInfoByRouteAll`` 응답 필드 기준 — 1차 출처는
+        ``services/public_data/README.md`` 섹션 2 참조):
+
+        - ``rtNm`` 또는 ``busRouteId`` → ``routeId`` (없으면 빈 문자열로 두지 않고 호출자 책임)
+        - ``busRouteAbrv`` 또는 ``rtNm`` → ``busNo`` (안내용 노선명 우선)
+        - ``exps1`` 초 → ``arrivalMinutes`` (``round(seconds / 60)``)
+        - ``staOrd`` 또는 별도 필드 → ``remainingStops`` (없으면 ``None``)
+        - ``busType1`` "1" → ``lowFloor=True``, "0"/"2" → ``False``, 그 외 → ``False`` (안전 기본)
+        - ``reride_Num1`` → ``congestion`` (0/3/4/5 → UNKNOWN/LOW/NORMAL/HIGH, 그 외 → UNKNOWN)
+        - ``updatedAt`` → 호출 시점의 timezone-aware UTC datetime을 일괄 적용
+          (서울 BIS는 응답에 별도 timestamp를 정확히 제공하지 않아 호출 시점을 사용)
+
+        본 메서드는 ``raw_items``의 각 dict가 위 키를 갖는다고 가정한다. 키 누락 시:
+        - 필수 필드 누락 → ``KeyError``를 호출자에 전파 (호출자가 ``PublicDataEmptyResponseError``로 변환)
+        - 선택 필드 누락 → 안전 기본값으로 흡수
+
+        TAGO ``ArvlInfoInqireService``의 응답 필드명은 활용신청 명세서 확인 후
+        본 메서드의 키 set을 조건 분기로 확장한다. 4월 단계에서는 서울 BIS 키 셋을 가정.
         """
-        raise NotImplementedError
+        from datetime import datetime, timezone
+
+        from .normalize import (
+            map_reride_to_congestion,
+            map_vehicle_type_to_low_floor,
+            seconds_to_arrival_minutes,
+        )
+
+        now = datetime.now(timezone.utc)
+        results: list[NormalizedBusArrival] = []
+        for item in raw_items:
+            # 노선 식별 — DB관리용 rtNm을 routeId로, 안내용 busRouteAbrv를 busNo로
+            route_id = str(item.get("rtNm") or item.get("busRouteId") or "")
+            bus_no = str(item.get("busRouteAbrv") or item.get("rtNm") or route_id or "")
+
+            # 도착 예정 시간 — 첫번째 도착예정 차량 exps1 사용
+            raw_secs = item.get("exps1")
+            if raw_secs is None:
+                # 일부 응답에서 exps1 대신 다른 필드명일 수 있음 (kals1 등). 그 외는 0 처리.
+                raw_secs = item.get("kals1") or 0
+            arrival_minutes = seconds_to_arrival_minutes(raw_secs)
+
+            # 남은 정류장 수 (서울 BIS는 도착예정 차량 기준 staOrd 또는 nstnId 거리 — 4월은 옵션)
+            remaining_stops = item.get("staOrd")
+            if remaining_stops is not None:
+                try:
+                    remaining_stops = int(remaining_stops)
+                    if remaining_stops < 0:
+                        remaining_stops = None
+                except (TypeError, ValueError):
+                    remaining_stops = None
+
+            # 저상버스 — 미상은 False로 흡수 (README §4 정책: 저상이 확실한 경우만 True)
+            low_floor = map_vehicle_type_to_low_floor(item.get("busType1"), default=False)
+            assert low_floor is not None  # default=False라 None은 나오지 않음
+
+            # 혼잡도 — 미제공이면 UNKNOWN
+            congestion = map_reride_to_congestion(item.get("reride_Num1"))
+
+            results.append(
+                NormalizedBusArrival(
+                    routeId=route_id,
+                    busNo=bus_no,
+                    arrivalMinutes=arrival_minutes,
+                    remainingStops=remaining_stops,
+                    lowFloor=low_floor,
+                    congestion=congestion,
+                    updatedAt=now,
+                )
+            )
+
+        return results
 
 
 class BusArrivalsService:
@@ -184,14 +263,24 @@ class BusArrivalsService:
         반환값은 ``packages/shared_contracts/api/bus_arrivals.response.schema.json``
         ``BusArrivalsResponse`` 계약을 따른다.
 
+        빈 응답 정책 (섹션 6 확정):
+        - real provider가 ``PublicDataEmptyResponseError``를 raise하면 본 메서드가
+          이를 catch하여 빈 ``arrivals`` 정상 응답으로 변환한다. 호출자(UI/백엔드)는
+          "현재 운행 중인 버스가 없는 정류장"을 빈 list로 자연스럽게 처리할 수 있다.
+        - 그 외 ``PublicDataError`` 계열(``ServiceKeyMissing``/``Network``)은 호출자에
+          그대로 전파한다.
+
         예외:
         - ``PublicDataServiceKeyMissingError`` : real 모드인데 서비스키 미설정
-        - ``PublicDataNetworkError``           : real 모드 호출 실패 (섹션 6 이후)
-        - ``PublicDataEmptyResponseError``     : 결과가 비어 normalize 불가 (섹션 6 이후 정책 확정 시)
+        - ``PublicDataNetworkError``           : real 모드 호출 실패
         """
         if self.use_mock:
             return self.mock_provider.get_arrivals(stop_id)
-        return self.live_provider.get_arrivals(stop_id)
+        try:
+            return self.live_provider.get_arrivals(stop_id)
+        except PublicDataEmptyResponseError:
+            # 빈 응답을 정상 출력으로 변환. 호출자는 빈 arrivals를 자연스럽게 처리.
+            return self.empty_response(stop_id)
 
     @staticmethod
     def empty_response(stop_id: str) -> NormalizedBusArrivalsResponse:
