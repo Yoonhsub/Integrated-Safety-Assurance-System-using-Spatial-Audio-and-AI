@@ -22,13 +22,13 @@ class HomePage extends StatelessWidget {
               SizedBox(height: 24),
               _StatusCard(
                 title: '음성 안내 상태',
-                description: '아직 음성 안내가 시작되지 않았습니다.',
+                description: '음성 안내 기능은 다음 섹션에서 STT/TTS wrapper와 함께 연결됩니다.',
                 icon: Icons.volume_up_outlined,
               ),
               SizedBox(height: 16),
               _StatusCard(
                 title: '안전 상태',
-                description: '안전 상태 정보는 이후 geofence 구현 경계 확정 후 연결됩니다.',
+                description: '안전 상태 정보는 geofence API 계약 확정 후 표시됩니다.',
                 icon: Icons.shield_outlined,
               ),
               SizedBox(height: 16),
@@ -40,7 +40,7 @@ class HomePage extends StatelessWidget {
               SizedBox(height: 16),
               _StatusCard(
                 title: '탑승 요청 상태',
-                description: '탑승 요청 상태는 rideRequests 구조 확정 후 표시됩니다.',
+                description: '탑승 요청 상태는 rideRequests 파이프라인 확정 후 표시됩니다.',
                 icon: Icons.accessible_forward_outlined,
               ),
             ],
@@ -93,7 +93,7 @@ class _VoiceActionButton extends StatelessWidget {
           onPressed: () {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('음성 입력 기능은 다음 섹션에서 연결됩니다.'),
+                content: Text('음성 입력 기능은 Section 04에서 STT/TTS wrapper와 함께 연결됩니다.'),
               ),
             );
           },
