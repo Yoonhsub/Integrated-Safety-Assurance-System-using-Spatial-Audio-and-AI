@@ -1,39 +1,91 @@
 {
+  "version": "0.2.0",
+  "owner": "김도성",
+  "scope_phase": "2학기 본구현",
+  "april_phase_note": "4월 단계에서는 본 taxonomy를 데이터 수집·라벨링 기준으로만 사용하며, 학습/추론 코드는 작성하지 않는다.",
+  "annotation_format": {
+    "primary": "bbox",
+    "rationale": "교통약자 보행/승차 안전 안내 목적상 객체 위치만 정확하면 충분하고, 모바일 경량 모델(YOLO/EfficientDet-Lite 계열)도 bbox만 학습한다.",
+    "future_extension": "차도/보도/점자블록 같은 면적 클래스는 2학기 후반 segmentation 도입을 별도 검토할 수 있다 (정책 미확정)."
+  },
   "classes": [
     {
       "id": "bus",
       "ko": "버스",
-      "description": "접근 중이거나 정차 중인 버스"
+      "description": "접근 중이거나 정차 중인 버스 (차체 전체)",
+      "priority": "high",
+      "label_rule": "차체 외곽 bbox. 차량 전체가 보이지 않으면 보이는 부분 기준. 다른 차량(트럭/승용차)과 혼동될 경우 라벨링 제외.",
+      "ambiguous_neighbors": ["truck", "shuttle_van"],
+      "avg_per_image_hint": "0~2"
     },
     {
       "id": "bus_door",
       "ko": "버스 문",
-      "description": "승객 승하차 문"
+      "description": "승객 승하차 문 (앞문/중문 모두 동일 클래스)",
+      "priority": "high",
+      "label_rule": "버스 차체 안의 문 영역 bbox. 닫힘/열림 구분하지 않음 (4월 범위에서는 단일 클래스). 후방 비상문은 라벨링 제외.",
+      "ambiguous_neighbors": ["bus"],
+      "avg_per_image_hint": "0~2"
     },
     {
       "id": "bus_stop",
       "ko": "버스 정류장",
-      "description": "정류장 표지판/승강장 구조물"
+      "description": "정류장 표지판/승강장 구조물",
+      "priority": "high",
+      "label_rule": "정류장 표지판이 명확히 식별되는 경우 표지판 + 인접 승강장 bbox. 표지판이 가려져 있으면 라벨링 제외.",
+      "ambiguous_neighbors": ["traffic_sign"],
+      "avg_per_image_hint": "0~1"
     },
     {
       "id": "roadway",
       "ko": "차도",
-      "description": "보행자가 진입하면 위험한 차도 영역"
+      "description": "보행자가 진입하면 위험한 차도 영역 (asphalt, 차선 포함)",
+      "priority": "high",
+      "label_rule": "차량이 통행하는 도로면 bbox. 횡단보도 위쪽 도로면도 포함. 4월 단계에서는 segmentation이 아닌 bbox로 근사.",
+      "ambiguous_neighbors": ["sidewalk", "crosswalk"],
+      "avg_per_image_hint": "1"
     },
     {
       "id": "sidewalk",
       "ko": "보도",
-      "description": "안전한 보행 구역"
+      "description": "안전한 보행 구역 (보도블록, 인도)",
+      "priority": "medium",
+      "label_rule": "보도면 bbox. 차도와 분리 명확한 경우만 라벨링. 경계가 모호하면 라벨링 제외하고 차도를 우선.",
+      "ambiguous_neighbors": ["roadway", "tactile_paving"],
+      "avg_per_image_hint": "0~2"
     },
     {
       "id": "obstacle",
       "ko": "장애물",
-      "description": "기둥, 표지판, 불법 주정차 등 이동 방해물"
+      "description": "기둥, 표지판, 불법 주정차 차량, 가로수 보호대 등 보행 동선상 이동 방해물",
+      "priority": "medium",
+      "label_rule": "보도/차도 구분 없이 보행자 동선을 막을 수 있는 고정/반고정 객체 bbox. 사람·자전거 같은 동적 객체는 본 클래스에서 제외.",
+      "ambiguous_neighbors": ["bus_stop", "tactile_paving"],
+      "avg_per_image_hint": "0~3"
     },
     {
       "id": "tactile_paving",
       "ko": "점자블록",
-      "description": "시각장애인 보행 유도 블록"
+      "description": "시각장애인 보행 유도 블록 (선형/점형 모두 포함)",
+      "priority": "high",
+      "label_rule": "점자블록 영역 bbox. 노란색이 명확히 보이는 경우 한정. 마모/오염되어 색이 거의 안 보이면 라벨링 제외.",
+      "ambiguous_neighbors": ["sidewalk"],
+      "avg_per_image_hint": "0~2"
     }
+  ],
+  "non_classes": [
+    {
+      "id": "person",
+      "reason": "초상권/개인정보 보호 — 데이터 수집 시 사람 얼굴은 블러 처리하며, person 자체를 학습 클래스로 두지 않는다."
+    },
+    {
+      "id": "license_plate",
+      "reason": "개인정보(차량번호) 보호 — 수집 시 번호판은 블러 처리하며, 학습 클래스로 두지 않는다."
+    }
+  ],
+  "policy_notes": [
+    "어노테이터가 동의어·모호 케이스에서 자기 판단으로 새 클래스를 만들지 않는다. 새 클래스 후보가 나오면 labeling_standards.md의 '미정 케이스 보고' 절차를 따른다.",
+    "동일 객체가 여러 클래스에 해당할 수 있는 경우 (예: 버스 정류장 표지판이 obstacle 동선을 막는 경우) bus_stop이 우선이며, obstacle은 라벨링하지 않는다 — 우선순위 high인 클래스를 항상 우선.",
+    "본 taxonomy의 7개 클래스 외 객체(자동차, 자전거, 신호등 등)는 4월 범위에서 라벨링 대상이 아니다. 단 데이터 수집 단계에서 영상에 등장하는 것은 정상이다 (배경 처리)."
   ]
 }
