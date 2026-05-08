@@ -132,8 +132,13 @@ packages/shared_contracts/api/bus_arrivals.response.schema.json
 
 ### 6. 인증키 발급 환경 변동 (운영 메모)
 
-- 서울 열린데이터광장 페이지 안내: **국가정보자원관리원 화재(2025-09-26)로 인해 신규 인증키 발급은 불가** — 기존 인증키는 사용 가능. 출처: `https://data.seoul.go.kr/dataList/OA-1095/F/1/datasetView.do`
-- 위 영향으로 4월 MVP 단계에서는 **mock-first 전략**(`PUBLIC_DATA_USE_MOCK=true` 기본값)이 더더욱 합리적이다. 실 키 확보 가능 여부는 별도 충돌 이슈가 아니라 운영 의제로 둔다.
+- 2026-05 시점 갱신: 국가정보자원관리원 화재(2025-09-26) 이후 복구가 진행되어 위기경보가 '경계' → '주의'로 하향되었고, 화재 직접 피해 96개 시스템은 대구센터 PPP 클라우드로 이전된 후 복구 완료(11월 시점 709개 중 696개, 98.2%). **공공데이터포털(data.go.kr) 인증키 발급 절차는 정상 작동**(개발계정 1일 평균 1,000건 트래픽, 자동승인/심의승인 두 가지). 서울 열린데이터광장(data.seoul.go.kr) 인증키 신청 페이지도 정상.
+- 그럼에도 불구하고 4월 MVP 단계에서는 **mock-first 전략**(`PUBLIC_DATA_USE_MOCK=true` 기본값)이 여전히 합리적이다. 이유:
+  - 캡스톤 학생 환경에서 발급 신청 → 승인 → 활용까지의 시간 비용이 4월 MVP 일정과 맞지 않을 수 있다.
+  - 개발계정 1일 1,000건 트래픽 제약은 시연 단계에서는 충분하지만, 자동 단위 테스트가 빈번히 호출하는 패턴에서는 부담이 된다.
+  - 상업화·외부 서비스화 시점에 별도 운영계정 신청·심의 승인 절차가 추가로 필요할 수 있다.
+- 실 키 확보 후 활성화 절차는 `services/public_data/public_data_client/bus_arrivals_service.py`의 `LiveBusArrivalsProvider._call_arrivals_api` docstring에 정리되어 있다. 4월에는 호출 본체를 stub으로 유지하되 boilerplate가 함께 들어 있어, 실 키 확보 시 즉시 활성화 가능한 형태이다.
+- 본 항목은 충돌 이슈가 아니라 운영 의제로 둔다.
 
 ### 7. 환경변수 (정의 위치: `docs/rw/ENVIRONMENT_VARIABLES.md`)
 
@@ -141,8 +146,8 @@ packages/shared_contracts/api/bus_arrivals.response.schema.json
 |---|---|---|
 | `PUBLIC_DATA_API_KEY` | 공공데이터포털 인증키 | `DataGoKrClient.__init__` |
 | `PUBLIC_DATA_BASE_URL` | API 기본 URL (기본 `https://apis.data.go.kr`) | `DataGoKrClient.__init__` |
-| `PUBLIC_DATA_CITY_CODE` | TAGO 도시코드 (예: 청주/충북 33) | **확인 필요** — 섹션 4에서 클라이언트 호출에 통합 |
-| `PUBLIC_DATA_USE_MOCK` | mock 응답 사용 여부 (기본 `true`) | **확인 필요** — 섹션 4에서 BusArrivalsService에 mock/real 분기 추가 |
+| `PUBLIC_DATA_CITY_CODE` | TAGO 도시코드 (예: 청주/충북 33) | `DataGoKrClient.__init__` (섹션 4에서 통합 완료) |
+| `PUBLIC_DATA_USE_MOCK` | mock 응답 사용 여부 (기본 `true`) | `BusArrivalsService` (섹션 4에서 통합 완료) |
 
 `PUBLIC_DATA_CITY_CODE`와 `PUBLIC_DATA_USE_MOCK`는 docs에는 정의되어 있지만 4월 18일 시점 코드에서 아직 사용되지 않는다. 섹션 4의 명시 목표("환경변수 사용 방식 정리", "mock mode와 real mode 경계 정리")에서 통합한다.
 
