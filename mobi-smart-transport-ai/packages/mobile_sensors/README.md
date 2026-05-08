@@ -97,6 +97,45 @@ BeaconSignalLevel.lost      -> LOST
 
 실제 `flutter_blue_plus` 연동에서는 스캔 결과를 `BeaconSignal`로 변환하되, 권한 안내 화면·스캔 버튼·결과 표시 UI는 Flutter 앱 담당 영역에서 처리해야 합니다.
 
+
+## RSSI 거리 추정과 smoothing 기준
+
+`BeaconDistanceEstimator`는 RSSI 값을 기반으로 초기 거리 추정값과 신호 레벨을 계산합니다. 이 계산은 현장 보정 전 기본 구조이며, 실제 서비스에서는 비콘 제조사, 설치 위치, 스마트폰 기종, 벽·사람 간섭에 따라 보정이 필요합니다.
+
+기본 파라미터 의미는 다음과 같습니다.
+
+- `txPower`: 기준 거리 1m에서 측정되는 RSSI 값입니다. 기본값 `-59`는 예시 기준값이며 비콘별 실측 보정이 필요합니다.
+- `pathLossExponent`: RSSI가 거리 증가에 따라 약해지는 정도를 나타내는 환경 계수입니다. 기본값 `2.0`은 개방 공간에 가까운 초기값이며 실내 환경에 따라 달라질 수 있습니다.
+- `estimateMeters(rssi)`: RSSI 기반 추정 거리를 meter 단위로 반환합니다. RSSI가 0 이상처럼 BLE 신호로 보기 어려운 값이면 추정 불가로 보고 `null`을 반환합니다.
+- `classify(rssi)`: RSSI를 `VERY_CLOSE`, `CLOSE`, `MEDIUM`, `FAR`, `LOST` 중 하나로 분류합니다.
+
+기본 RSSI 분류 기준은 다음과 같습니다. 이 기준은 확정 현장값이 아니라 초기 skeleton 기준입니다.
+
+```txt
+rssi >= -55  -> VERY_CLOSE
+rssi >= -67  -> CLOSE
+rssi >= -80  -> MEDIUM
+rssi >= -92  -> FAR
+rssi <  -92  -> LOST
+```
+
+`RssiMovingAverageSmoother`는 최근 RSSI 샘플의 단순 이동 평균을 계산합니다. 순간적으로 튀는 RSSI 값을 완화하기 위한 패키지 내부 helper이며, window 크기는 현장 테스트 후 조정할 수 있습니다.
+
+```dart
+final smoother = RssiMovingAverageSmoother(windowSize: 5);
+final smoothedRssi = smoother.addSample(-69);
+const estimator = BeaconDistanceEstimator();
+final signal = estimator.buildSignal(
+  beaconId: 'MOBI_BEACON_001',
+  rssi: smoothedRssi,
+  lastDetectedAt: DateTime.now(),
+);
+
+print(signal.toJson());
+```
+
+앱 화면에서 가까움/멀어짐을 어떻게 보여줄지는 Flutter 앱 담당 영역입니다. 이 패키지는 값 계산과 모델 변환만 담당합니다.
+
 ## DirectionReading 계약
 
 공식 JSON 구조는 다음과 같습니다.
