@@ -73,3 +73,88 @@ results = model.train(
     batch=16,
     name="bus_door_yolo"
 )
+
+6. 학습된 모델 불러오기
+
+# 학습 결과 중 가장 성능이 좋았던 best.pt 모델을 불러온다.
+# 이후 검증, 이미지 예측, TFLite 변환에 사용한다.
+best_model = YOLO("runs/detect/bus_door_yolo/weights/best.pt")
+
+# 현재 Colab 환경에서 생성된 best.pt 파일 경로를 검색한다.
+!find runs/detect -name best.pt
+
+7. 모델 성능 검증
+
+# validation 데이터셋을 기준으로 모델 성능을 평가한다.
+# mAP50, mAP50-95, Precision, Recall 등을 확인할 수 있다.
+
+metrics = best_model.val(
+    data=f"{dataset.location}/data.yaml",
+    imgsz=640
+)
+
+# mAP50: IoU 0.5 기준 평균 정밀도
+print("mAP50:", metrics.box.map50)
+
+# mAP50-95: IoU 0.5~0.95 범위에서의 평균 정밀도
+print("mAP50-95:", metrics.box.map)
+
+# Precision: 모델이 탐지했다고 한 것 중 실제로 맞은 비율
+print("Precision:", metrics.box.mp)
+
+# Recall: 실제 객체 중 모델이 놓치지 않고 잡은 비율
+print("Recall:", metrics.box.mr)
+
+8. 검증 이미지 전체 예측
+
+# valid/images 폴더에 있는 검증 이미지 전체에 대해 예측을 수행한다.
+# conf=0.5는 confidence score가 0.5 이상인 탐지만 표시한다.
+# save=True로 설정하면 박스가 그려진 결과 이미지가 저장된다.
+
+best_model.predict(
+    source=f"{dataset.location}/valid/images",
+    conf=0.5,
+    save=True,
+    name="valid_prediction_test"
+)
+
+# 저장 경로 runs/detect/valid_prediction_test
+
+9. 새로운 이미지 업로드 후 테스트
+
+# 학습에 사용하지 않은 새로운 버스 이미지를 업로드한다.
+uploaded = files.upload()
+
+# 업로드된 파일명 중 첫 번째 파일명을 가져온다.
+filename = list(uploaded.keys())[0]
+
+# 새로운 이미지에 대해 bus_door 탐지를 수행한다.
+# 실제 환경 일반화 성능을 확인하기 위한 테스트이다.
+results = best_model.predict(
+    source=filename,
+    conf=0.5,
+    save=True,
+    name="new_image_test"
+)
+
+10. 여러 장의 새 이미지 한 번에 테스트
+
+# 새로운 테스트 이미지를 모아둘 폴더 생성
+os.makedirs("new_test_images", exist_ok=True)
+
+# 여러 장의 이미지를 업로드
+uploaded = files.upload()
+
+# 업로드한 이미지를 new_test_images 폴더로 이동
+for filename in uploaded.keys():
+    os.rename(filename, f"new_test_images/{filename}")
+
+# 폴더 전체를 대상으로 예측 수행
+# 여러 이미지에서 모델이 안정적으로 출입문을 잡는지 확인한다.
+results = best_model.predict(
+    source="new_test_images",
+    conf=0.5,
+    save=True,
+    name="new_bus_door_test"
+)
+
