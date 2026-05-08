@@ -1,4 +1,4 @@
-from public_data_client.schemas import NormalizedBusArrival
+from .schemas import NormalizedBusArrival
 
 
 def prioritize_low_floor(arrivals: list[NormalizedBusArrival]) -> list[NormalizedBusArrival]:
