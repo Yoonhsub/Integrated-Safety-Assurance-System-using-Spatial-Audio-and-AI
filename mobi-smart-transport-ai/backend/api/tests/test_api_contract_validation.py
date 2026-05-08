@@ -551,3 +551,63 @@ def test_driver_ride_request_list_filters_by_driver_and_sorts_newest_first() -> 
     assert all(item["targetDriverId"] == "ride-driver-filter" for item in requests)
     assert other_response.json()["requestId"] not in {item["requestId"] for item in requests}
 
+
+# Section 10 bus info gateway behavior tests
+
+
+def test_bus_info_gateway_returns_public_data_mock_for_matching_stop() -> None:
+    get_firebase_client().clear_mock_store()
+
+    response = client.get("/bus-info/stops/mock-stop-001/arrivals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stopId"] == "mock-stop-001"
+    assert len(body["arrivals"]) == 1
+    arrival = body["arrivals"][0]
+    assert arrival["routeId"] == "MOCK-502"
+    assert arrival["busNo"] == "502"
+    assert arrival["arrivalMinutes"] == 3
+    assert arrival["remainingStops"] == 2
+    assert arrival["lowFloor"] is True
+    assert arrival["congestion"] == "UNKNOWN"
+    assert "updatedAt" in arrival
+
+
+def test_bus_info_gateway_prefers_firebase_bus_arrivals_cache() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    firebase.set(
+        "/busArrivals/stop-cached",
+        {
+            "stopId": "stop-cached",
+            "arrivals": [
+                {
+                    "routeId": "CACHE-105",
+                    "busNo": "105",
+                    "arrivalMinutes": 1,
+                    "remainingStops": 0,
+                    "lowFloor": False,
+                    "congestion": "LOW",
+                    "updatedAt": "2026-04-18T14:32:00+09:00",
+                }
+            ],
+        },
+    )
+
+    response = client.get("/bus-info/stops/stop-cached/arrivals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stopId"] == "stop-cached"
+    assert body["arrivals"][0]["routeId"] == "CACHE-105"
+    assert body["arrivals"][0]["congestion"] == "LOW"
+
+
+def test_bus_info_gateway_returns_empty_response_for_unknown_stop() -> None:
+    get_firebase_client().clear_mock_store()
+
+    response = client.get("/bus-info/stops/unknown-stop/arrivals")
+
+    assert response.status_code == 200
+    assert response.json() == {"stopId": "unknown-stop", "arrivals": []}

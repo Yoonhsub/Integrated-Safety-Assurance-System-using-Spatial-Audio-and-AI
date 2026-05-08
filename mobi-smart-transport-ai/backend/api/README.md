@@ -242,3 +242,52 @@ GET /drivers/{driverId}/ride-requests
 - RTDB 저장 구조는 계속 `/rideRequests/{requestId}`이며 value 내부에는 `requestId`를 중복 저장하지 않는다.
 
 이번 검토에서는 `shared_contracts`, Firebase schema/rules, Flutter UI, public_data 영역을 수정하지 않았다.
+
+## Section 10 — bus_info_gateway 공공데이터 연동 인터페이스
+
+섹션 10에서는 김도성 `services/public_data` 모듈을 직접 수정하지 않고, FastAPI 쪽 gateway 경계만 구현했다.
+
+### 엔드포인트
+
+```txt
+GET /bus-info/stops/{stopId}/arrivals
+```
+
+응답은 `packages/shared_contracts/api/bus_arrivals.response.schema.json`과 같은 표준 필드만 사용한다.
+
+```json
+{
+  "stopId": "mock-stop-001",
+  "arrivals": [
+    {
+      "routeId": "MOCK-502",
+      "busNo": "502",
+      "arrivalMinutes": 3,
+      "remainingStops": 2,
+      "lowFloor": true,
+      "congestion": "UNKNOWN",
+      "updatedAt": "2026-04-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+### 조회 순서
+
+1. `/busArrivals/{stopId}`에 저장된 Firebase RTDB cache를 먼저 조회한다.
+2. cache가 없으면 `services/public_data/examples/mock_bus_arrivals.json`을 읽기 전용 fallback으로 사용한다.
+3. cache와 mock 모두 해당 `stopId`를 제공하지 않으면 `{"stopId": stopId, "arrivals": []}`를 반환한다.
+
+### 범위 제한
+
+- 공공데이터 API 직접 호출을 구현하지 않는다.
+- `services/public_data/**` 파일은 수정하지 않는다.
+- 저상버스 여부, 혼잡도, provider-specific raw field를 backend에서 새로 계산하지 않는다.
+- shared schema에 없는 필드는 응답에 추가하지 않는다.
+- 김도성 섹션 6, 7 표준화 완료 전까지 실제 provider 연동은 TODO 상태로 둔다.
+
+### Firebase gateway 인터페이스
+
+- gateway cache 경로는 `/busArrivals/{stopId}`이다.
+- cache payload는 `BusArrivalsResponse`와 같은 normalized shape를 사용한다.
+- backend service는 이미 normalized된 응답을 저장·조회할 수 있지만, raw public data normalize는 김도성 담당 범위이다.
