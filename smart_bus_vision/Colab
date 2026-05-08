@@ -1,0 +1,52 @@
+1. 라이브러리 import
+
+# YOLO 모델 학습, 검증, 예측, 변환에 사용
+from ultralytics import YOLO
+
+# Roboflow 데이터셋 다운로드에 사용
+from roboflow import Roboflow
+
+# Colab에서 이미지/영상 파일 업로드 및 다운로드에 사용
+from google.colab import files
+
+# 파일 경로 탐색 및 폴더 생성에 사용
+import os
+import glob
+
+2. Roboflow 데이터셋 다운로드
+
+# Colab Secrets에 저장된 Roboflow API Key를 불러온다.
+# GitHub에 API Key가 노출되지 않도록 코드에 직접 작성하지 않는다.
+from google.colab import userdata
+
+ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY")
+
+# Roboflow 객체 생성
+rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+
+# Roboflow workspace와 project 지정
+# workspace, project 이름은 본인 Roboflow 프로젝트에 맞게 수정 가능
+project = rf.workspace("oseongs-workspace-lmlnu").project("bus_door_detection")
+
+# 사용할 데이터셋 버전 선택
+# Roboflow에서 Generate한 버전 번호와 맞춰야 한다.
+version = project.version(5)
+
+# YOLOv8 형식으로 데이터셋 다운로드
+# 다운로드 후 train, valid 폴더와 data.yaml 파일이 생성된다.
+dataset = version.download("yolov8")
+
+
+# Colab Secrets에 아래와 같이 등록
+
+Name: ROBOFLOW_API_KEY
+Value: 본인 Roboflow API Key
+
+3. 데이터셋 구조 확인
+
+# 다운로드된 데이터셋 위치 확인
+print("Dataset location:", dataset.location)
+
+# data.yaml 파일이 있는지 확인
+# YOLO 학습 시 이 data.yaml 파일을 사용한다.
+!ls {dataset.location}
