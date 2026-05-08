@@ -231,3 +231,14 @@ GET /drivers/{driverId}/ride-requests
 - 기사 앱 UI는 구현하지 않는다.
 - 공공데이터 API 구현과 버스 도착 정보 산출은 섞지 않는다.
 - shared contracts와 Firebase schema/rules는 기존 계약이 충분하므로 수정하지 않는다.
+
+## Section 9 — rideRequests 검토 및 회귀 테스트 보강
+
+섹션 9에서는 섹션 8의 rideRequests 파이프라인을 재검토했다. 코드 구조는 유지하되, 다음 회귀 테스트를 추가해 후속 Flutter 기사 앱 연동 시 데이터 계약이 흔들리지 않도록 했다.
+
+- `PATCH /ride-requests/{requestId}/status`가 shared schema에 없는 status 값을 거부하는지 확인한다.
+- `GET /drivers/{driverId}/ride-requests`가 `targetDriverId` 기준으로 다른 기사 요청을 제외하는지 확인한다.
+- 기사별 요청 목록이 최신 생성 요청부터 반환되는지 확인한다.
+- RTDB 저장 구조는 계속 `/rideRequests/{requestId}`이며 value 내부에는 `requestId`를 중복 저장하지 않는다.
+
+이번 검토에서는 `shared_contracts`, Firebase schema/rules, Flutter UI, public_data 영역을 수정하지 않았다.

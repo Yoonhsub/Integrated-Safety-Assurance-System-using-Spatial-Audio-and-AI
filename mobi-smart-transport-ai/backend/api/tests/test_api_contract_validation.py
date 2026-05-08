@@ -481,3 +481,73 @@ def test_ride_request_get_unknown_request_returns_404() -> None:
     response = client.get("/ride-requests/missing-request")
 
     assert response.status_code == 404
+
+def test_ride_request_status_update_rejects_unknown_status() -> None:
+    response = client.patch(
+        "/ride-requests/request-invalid-status/status",
+        json={"status": "BOARDING"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_driver_ride_request_list_filters_by_driver_and_sorts_newest_first() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    notification_service.save_token(
+        owner_type=FcmOwnerType.DRIVER,
+        owner_id="ride-driver-filter",
+        token="ride-driver-filter-token",
+    )
+    notification_service.save_token(
+        owner_type=FcmOwnerType.DRIVER,
+        owner_id="ride-driver-other",
+        token="ride-driver-other-token",
+    )
+
+    first_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-filter-1",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+            "targetDriverId": "ride-driver-filter",
+        },
+    )
+    second_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-filter-2",
+            "stopId": "stop-test",
+            "routeId": "route503",
+            "busNo": "503",
+            "targetDriverId": "ride-driver-filter",
+        },
+    )
+    other_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-filter-3",
+            "stopId": "stop-test",
+            "routeId": "route999",
+            "busNo": "999",
+            "targetDriverId": "ride-driver-other",
+        },
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert other_response.status_code == 200
+
+    list_response = client.get("/drivers/ride-driver-filter/ride-requests")
+
+    assert list_response.status_code == 200
+    requests = list_response.json()["requests"]
+    assert [item["requestId"] for item in requests] == [
+        second_response.json()["requestId"],
+        first_response.json()["requestId"],
+    ]
+    assert all(item["targetDriverId"] == "ride-driver-filter" for item in requests)
+    assert other_response.json()["requestId"] not in {item["requestId"] for item in requests}
+
