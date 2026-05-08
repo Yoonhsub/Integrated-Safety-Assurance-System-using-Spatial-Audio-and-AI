@@ -611,3 +611,57 @@ def test_bus_info_gateway_returns_empty_response_for_unknown_stop() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"stopId": "unknown-stop", "arrivals": []}
+
+
+
+def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None:
+    from datetime import datetime, timezone
+
+    from app.schemas.bus_info import BusArrival, BusArrivalsResponse, CongestionLevel
+    from app.services.bus_info_gateway_service import BusInfoGatewayService
+
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    service = BusInfoGatewayService()
+    service.save_arrivals(
+        BusArrivalsResponse(
+            stopId="stop-save",
+            arrivals=[
+                BusArrival(
+                    routeId="SAVE-777",
+                    busNo="777",
+                    arrivalMinutes=5,
+                    remainingStops=3,
+                    lowFloor=True,
+                    congestion=CongestionLevel.NORMAL,
+                    updatedAt=datetime(2026, 4, 18, 5, 32, tzinfo=timezone.utc),
+                )
+            ],
+        )
+    )
+
+    stored = firebase.get("/busArrivals/stop-save")
+
+    assert set(stored.keys()) == {"stopId", "arrivals"}
+    assert stored["stopId"] == "stop-save"
+    assert len(stored["arrivals"]) == 1
+    assert set(stored["arrivals"][0].keys()) == {
+        "routeId",
+        "busNo",
+        "arrivalMinutes",
+        "remainingStops",
+        "lowFloor",
+        "congestion",
+        "updatedAt",
+    }
+    assert "rawData" not in stored["arrivals"][0]
+    assert "busType" not in stored["arrivals"][0]
+    assert "reride_Num" not in stored["arrivals"][0]
+
+    response = client.get("/bus-info/stops/stop-save/arrivals")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stopId"] == "stop-save"
+    assert body["arrivals"][0]["routeId"] == "SAVE-777"
+    assert body["arrivals"][0]["congestion"] == "NORMAL"

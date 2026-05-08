@@ -291,3 +291,42 @@ GET /bus-info/stops/{stopId}/arrivals
 - gateway cache 경로는 `/busArrivals/{stopId}`이다.
 - cache payload는 `BusArrivalsResponse`와 같은 normalized shape를 사용한다.
 - backend service는 이미 normalized된 응답을 저장·조회할 수 있지만, raw public data normalize는 김도성 담당 범위이다.
+
+
+## Section 11 — bus_info_gateway 제한적 검토 및 선행의존성 대기 기록
+
+섹션 11에서는 섹션 10의 `bus_info_gateway` 산출물을 검토했다. 김도성 섹션 6, 7이 아직 미구현 상태이므로 실제 공공데이터 provider 연동 확정은 진행하지 않았고, 다음 제한적 범위만 확인했다.
+
+### 검토 결과
+
+- `GET /bus-info/stops/{stopId}/arrivals`는 공공데이터 API를 직접 호출하지 않는다.
+- `services/public_data/**` 내부 파일을 수정하지 않는다.
+- RTDB cache 경로는 `/busArrivals/{stopId}`로 유지한다.
+- cache payload는 `BusArrivalsResponse` normalized shape만 사용한다.
+- `BusInfoGatewayService.save_arrivals()`는 provider-specific raw field를 저장하지 않는다.
+- shared schema에 없는 `rawData`, `busType`, `reride_Num` 같은 필드는 backend gateway에서 확정하지 않는다.
+- cache가 없으면 public_data mock JSON을 읽기 전용 fallback으로만 참조한다.
+
+### 조건부 완료 상태
+
+현재 `bus_info_gateway`는 shared schema와 mock/cache 기반 placeholder gateway interface로만 완료되었다. 실제 provider 연동, 저상버스 표준화 규칙, 혼잡도 표준화 규칙, public_data normalize 함수와의 직접 연결은 김도성 섹션 6, 7 완료 후 통합 검수 단계에서 재확인해야 한다.
+
+### 후속 통합 TODO
+
+- 김도성 섹션 6, 7 완료 후 `services/public_data` 표준화 함수 출력이 `BusArrivalsResponse`와 일치하는지 확인한다.
+- 추가 필드가 필요하면 backend에서 임의 확정하지 말고 shared contract 변경 PR 및 충돌 이슈 기록을 먼저 진행한다.
+- 통합 검수·패치 단계에서 public_data → backend gateway → Flutter bus card까지 DTO 정합성을 재검토한다.
+
+
+---
+
+## 섹션 12 최종 검증 요약
+
+- 최종 검증일시: 2026년 05월 08일 15시 08분 KST
+- `python scripts/validate_architecture.py`: PASS
+- backend pytest: PASS, 29 passed
+- 심현석 담당 백엔드 코어 상태: 조건부 완료
+- 완료된 핵심 범위: FastAPI/Firebase base, geofence API, FCM notification service, rideRequests pipeline
+- 조건부 완료 범위: `bus_info_gateway`
+
+`bus_info_gateway`는 현재 shared schema, RTDB `/busArrivals/{stopId}` cache, public_data mock JSON 읽기 전용 fallback 기반 placeholder/interface로 동작한다. 김도성 섹션 6~7의 public_data 표준화 산출물이 완료된 뒤 통합 검수·패치 단계에서 실제 provider 연동 정합성을 재검토해야 한다.
