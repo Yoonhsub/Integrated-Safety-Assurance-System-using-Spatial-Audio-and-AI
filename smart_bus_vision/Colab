@@ -50,3 +50,26 @@ print("Dataset location:", dataset.location)
 # data.yaml 파일이 있는지 확인
 # YOLO 학습 시 이 data.yaml 파일을 사용한다.
 !ls {dataset.location}
+
+4. COCO pretrained YOLO 모델 불러오기
+
+# COCO 데이터셋으로 사전학습된 YOLOv8n 모델을 불러온다.
+# yolov8n.pt는 nano 모델로, 비교적 가볍기 때문에 모바일 적용 가능성을 검토하기 좋다.
+model = YOLO("yolov8n.pt")
+
+5. bus_door 데이터로 파인튜닝
+
+# Roboflow에서 다운로드한 data.yaml을 이용해 bus_door 데이터셋으로 모델을 학습한다.
+# data: 학습 데이터셋 설정 파일 경로
+# epochs: 학습 반복 횟수
+# imgsz: 입력 이미지 크기
+# batch: 한 번에 학습할 이미지 개수
+# name: 학습 결과가 저장될 폴더 이름
+
+results = model.train(
+    data=f"{dataset.location}/data.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+    name="bus_door_yolo"
+)
