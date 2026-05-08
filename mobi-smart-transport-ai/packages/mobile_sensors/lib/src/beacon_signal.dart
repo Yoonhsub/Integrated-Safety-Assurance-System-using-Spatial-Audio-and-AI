@@ -49,6 +49,32 @@ class BeaconSignal {
     required this.lastDetectedAt,
   });
 
+  bool get isLost => signalLevel == BeaconSignalLevel.lost;
+
+  bool wasDetectedWithin(Duration maxAge, {DateTime? now}) {
+    final referenceTime = now ?? DateTime.now();
+    return referenceTime.difference(lastDetectedAt) <= maxAge;
+  }
+
+  BeaconSignal copyWith({
+    String? beaconId,
+    int? rssi,
+    double? estimatedDistanceMeters,
+    bool clearEstimatedDistanceMeters = false,
+    BeaconSignalLevel? signalLevel,
+    DateTime? lastDetectedAt,
+  }) {
+    return BeaconSignal(
+      beaconId: beaconId ?? this.beaconId,
+      rssi: rssi ?? this.rssi,
+      estimatedDistanceMeters: clearEstimatedDistanceMeters
+          ? null
+          : estimatedDistanceMeters ?? this.estimatedDistanceMeters,
+      signalLevel: signalLevel ?? this.signalLevel,
+      lastDetectedAt: lastDetectedAt ?? this.lastDetectedAt,
+    );
+  }
+
   Map<String, Object?> toJson() => {
         'beaconId': beaconId,
         'rssi': rssi,
@@ -57,11 +83,52 @@ class BeaconSignal {
         'lastDetectedAt': lastDetectedAt.toIso8601String(),
       };
 
-  factory BeaconSignal.fromJson(Map<String, Object?> json) => BeaconSignal(
-        beaconId: json['beaconId'] as String,
-        rssi: json['rssi'] as int,
-        estimatedDistanceMeters: (json['estimatedDistanceMeters'] as num?)?.toDouble(),
-        signalLevel: BeaconSignalLevelJson.fromJsonValue(json['signalLevel'] as String),
-        lastDetectedAt: DateTime.parse(json['lastDetectedAt'] as String),
+  factory BeaconSignal.fromJson(Map<String, Object?> json) {
+    final beaconId = json['beaconId'];
+    final rssi = json['rssi'];
+    final estimatedDistanceMeters = json['estimatedDistanceMeters'];
+    final signalLevel = json['signalLevel'];
+    final lastDetectedAt = json['lastDetectedAt'];
+
+    if (beaconId is! String || beaconId.isEmpty) {
+      throw ArgumentError('BeaconSignal.beaconId must be a non-empty string.');
+    }
+    if (rssi is! num) {
+      throw ArgumentError('BeaconSignal.rssi must be a number.');
+    }
+    if (estimatedDistanceMeters != null && estimatedDistanceMeters is! num) {
+      throw ArgumentError(
+        'BeaconSignal.estimatedDistanceMeters must be a number or null.',
       );
+    }
+    if (signalLevel is! String) {
+      throw ArgumentError('BeaconSignal.signalLevel must be a string.');
+    }
+    if (lastDetectedAt is! String) {
+      throw ArgumentError('BeaconSignal.lastDetectedAt must be an ISO-8601 string.');
+    }
+
+    return BeaconSignal(
+      beaconId: beaconId,
+      rssi: rssi.toInt(),
+      estimatedDistanceMeters: estimatedDistanceMeters == null
+          ? null
+          : (estimatedDistanceMeters as num).toDouble(),
+      signalLevel: BeaconSignalLevelJson.fromJsonValue(signalLevel),
+      lastDetectedAt: DateTime.parse(lastDetectedAt),
+    );
+  }
+
+  factory BeaconSignal.lost({
+    required String beaconId,
+    DateTime? lastDetectedAt,
+  }) {
+    return BeaconSignal(
+      beaconId: beaconId,
+      rssi: -127,
+      estimatedDistanceMeters: null,
+      signalLevel: BeaconSignalLevel.lost,
+      lastDetectedAt: lastDetectedAt ?? DateTime.now(),
+    );
+  }
 }

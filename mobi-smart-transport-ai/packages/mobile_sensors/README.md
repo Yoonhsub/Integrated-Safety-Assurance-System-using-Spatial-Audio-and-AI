@@ -84,6 +84,19 @@ BeaconSignalLevel.far       -> FAR
 BeaconSignalLevel.lost      -> LOST
 ```
 
+
+## BeaconScanner skeleton 계약
+
+`BeaconScanner`는 BLE 스캔 결과를 `Stream<BeaconSignal>` 형태로 제공하는 패키지 내부 서비스 인터페이스입니다. 이 인터페이스는 앱 화면이나 버튼을 만들지 않고, 스캔 시작·중지 lifecycle과 `targetBeaconId` 필터링 책임만 분리합니다.
+
+- `scan({String? targetBeaconId})`: 스캔 스트림을 시작하고, `targetBeaconId`가 있으면 해당 비콘 ID만 통과시킵니다.
+- `stop()`: 진행 중인 스캔을 중지하는 lifecycle hook입니다.
+- `isScanning`: scanner가 현재 스캔 중인지 확인하기 위한 상태값입니다.
+- `UnimplementedBeaconScanner`: 실제 BLE 연동 전 skeleton입니다. `Stream.empty()` 반환은 현재 단계에서 오류가 아닙니다.
+- `MockBeaconScanner`: 패키지 내부 예제·로그·smoke 검증에서 `BeaconSignal` 흐름과 `targetBeaconId` 필터링을 확인하기 위한 mock scanner입니다.
+
+실제 `flutter_blue_plus` 연동에서는 스캔 결과를 `BeaconSignal`로 변환하되, 권한 안내 화면·스캔 버튼·결과 표시 UI는 Flutter 앱 담당 영역에서 처리해야 합니다.
+
 ## DirectionReading 계약
 
 공식 JSON 구조는 다음과 같습니다.
