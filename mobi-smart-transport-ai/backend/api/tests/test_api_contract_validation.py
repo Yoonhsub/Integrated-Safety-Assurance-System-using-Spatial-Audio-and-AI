@@ -354,3 +354,130 @@ def test_fcm_service_helper_methods_create_standard_notification_payloads() -> N
     assert safety_result.messageId and safety_result.messageId.startswith("mock-fcm-users-helper-user-")
     assert ride_result.accepted is True
     assert ride_result.messageId and ride_result.messageId.startswith("mock-fcm-drivers-helper-driver-")
+
+# Section 8 rideRequests behavior tests
+
+
+def test_ride_request_create_persists_without_duplicate_request_id() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-001",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requestId"].startswith("ride-")
+    assert body["status"] == "WAITING"
+    assert body["updatedAt"] is None
+
+    stored = firebase.get(f"/rideRequests/{body['requestId']}")
+    assert stored["userId"] == "ride-user-001"
+    assert stored["targetDriverId"] is None
+    assert "requestId" not in stored
+
+
+def test_ride_request_create_notifies_driver_when_token_exists() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    notification_service.save_token(
+        owner_type=FcmOwnerType.DRIVER,
+        owner_id="ride-driver-001",
+        token="ride-driver-token",
+        platform="android",
+    )
+
+    response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-002",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+            "targetDriverId": "ride-driver-001",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["targetDriverId"] == "ride-driver-001"
+    assert body["status"] == "NOTIFIED"
+    assert body["updatedAt"] is not None
+
+    stored = firebase.get(f"/rideRequests/{body['requestId']}")
+    assert stored["status"] == "NOTIFIED"
+    assert "requestId" not in stored
+
+    list_response = client.get("/drivers/ride-driver-001/ride-requests")
+    assert list_response.status_code == 200
+    list_body = list_response.json()
+    assert list_body["driverId"] == "ride-driver-001"
+    assert [item["requestId"] for item in list_body["requests"]] == [body["requestId"]]
+
+
+def test_ride_request_create_keeps_waiting_when_driver_notification_fails() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-003",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+            "targetDriverId": "driver-without-token",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "WAITING"
+    assert body["targetDriverId"] == "driver-without-token"
+    assert firebase.get(f"/rideRequests/{body['requestId']}")["status"] == "WAITING"
+
+
+def test_ride_request_read_and_status_update_use_firebase_record() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-004",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    read_response = client.get(f"/ride-requests/{request_id}")
+    assert read_response.status_code == 200
+    assert read_response.json()["requestId"] == request_id
+    assert read_response.json()["status"] == "WAITING"
+
+    update_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+    assert update_response.status_code == 200
+    update_body = update_response.json()
+    assert update_body["status"] == "ACCEPTED"
+    assert update_body["updatedAt"] is not None
+
+    stored = firebase.get(f"/rideRequests/{request_id}")
+    assert stored["status"] == "ACCEPTED"
+    assert "requestId" not in stored
+
+
+def test_ride_request_get_unknown_request_returns_404() -> None:
+    get_firebase_client().clear_mock_store()
+
+    response = client.get("/ride-requests/missing-request")
+
+    assert response.status_code == 404

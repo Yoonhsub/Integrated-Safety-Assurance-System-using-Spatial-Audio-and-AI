@@ -194,3 +194,40 @@ send_ride_request_notification(driver_id, request_id, user_id, stop_id, route_id
 - 두 target이 동시에 들어온 알림 요청은 422로 거부한다.
 - target이 하나도 없는 알림 요청은 422로 거부한다.
 - `data` payload 값이 문자열이 아니면 422로 거부한다.
+
+## 섹션 8 기준 rideRequests 매칭 파이프라인
+
+### 엔드포인트
+
+```txt
+POST /ride-requests
+GET /ride-requests/{requestId}
+PATCH /ride-requests/{requestId}/status
+GET /drivers/{driverId}/ride-requests
+```
+
+### 저장 원칙
+
+- 공식 저장 경로는 `/rideRequests/{requestId}`이다.
+- RTDB key가 `requestId`이므로 value 내부에는 `requestId`를 중복 저장하지 않는다.
+- API 응답에서는 Flutter 앱이 사용할 수 있도록 `requestId`를 포함해 반환한다.
+- 저장 value는 `userId`, `stopId`, `routeId`, `busNo`, `targetDriverId`, `status`, `createdAt`, `updatedAt`만 포함한다.
+
+### 생성 및 알림 연결
+
+- 탑승 요청 생성 시 기본 상태는 `WAITING`이다.
+- `targetDriverId`가 있고 해당 기사 FCM 토큰이 `/fcmTokens/drivers/{driverId}`에 있으면 `FcmService.send_ride_request_notification()`을 호출한다.
+- mock 또는 실제 FCM 전송이 accepted이면 상태를 `NOTIFIED`로 갱신한다.
+- 기사 FCM 토큰이 없거나 알림 전송이 실패해도 `/rideRequests/{requestId}` 저장 자체는 실패시키지 않고 `WAITING` 상태로 유지한다.
+
+### 조회 및 상태 변경
+
+- `GET /ride-requests/{requestId}`는 RTDB value에 key의 `requestId`를 합쳐 shared `RideRequest` 응답으로 반환한다.
+- `PATCH /ride-requests/{requestId}/status`는 `WAITING`, `NOTIFIED`, `ACCEPTED`, `ARRIVED`, `COMPLETED`, `CANCELLED` enum만 허용한다.
+- `GET /drivers/{driverId}/ride-requests`는 `/rideRequests` 전체에서 `targetDriverId == driverId`인 요청만 필터링해 반환한다.
+
+### 범위 제한
+
+- 기사 앱 UI는 구현하지 않는다.
+- 공공데이터 API 구현과 버스 도착 정보 산출은 섞지 않는다.
+- shared contracts와 Firebase schema/rules는 기존 계약이 충분하므로 수정하지 않는다.
