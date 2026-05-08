@@ -150,9 +150,11 @@ print(signal.toJson());
 
 필드 원칙은 다음과 같습니다.
 
-- `headingDegrees`: 0도 이상 360도 미만 범위로 해석되는 방향값
+- `headingDegrees`: 0도 이상 360도 미만 범위로 정규화되는 방향값
 - `accuracy`: `HIGH`, `MEDIUM`, `LOW`, `UNKNOWN`
 - `updatedAt`: 갱신 시각 ISO-8601 문자열
+
+`DirectionReading.normalizeHeadingDegrees()`는 플랫폼별 센서값이 음수나 360도 이상으로 들어와도 JSON 계약이 흔들리지 않도록 값을 `[0, 360)` 범위로 맞춥니다. 센서값 자체가 없거나 정확도를 판단할 수 없는 경우에는 `DirectionAccuracy.unknown`을 사용하고, 패키지 내부 fallback 모델은 `DirectionReading.unknown()`으로 표현합니다.
 
 Dart enum 직렬화 값은 다음을 유지해야 합니다.
 
@@ -162,6 +164,18 @@ DirectionAccuracy.medium  -> MEDIUM
 DirectionAccuracy.low     -> LOW
 DirectionAccuracy.unknown -> UNKNOWN
 ```
+
+## DirectionSensor skeleton 계약
+
+`DirectionSensor`는 스마트폰 내장 나침반 또는 방향 센서 결과를 `Stream<DirectionReading>` 형태로 제공하는 패키지 내부 서비스 인터페이스입니다. 이 인터페이스는 앱 화면을 만들지 않고, 센서 구독 시작·중지 lifecycle과 heading 모델 변환 책임만 분리합니다.
+
+- `readings()`: 방향 센서값 스트림을 시작합니다.
+- `stop()`: 진행 중인 센서 구독을 중지하는 lifecycle hook입니다.
+- `isListening`: sensor가 현재 구독 중인지 확인하기 위한 상태값입니다.
+- `UnimplementedDirectionSensor`: 실제 플랫폼 센서 연동 전 skeleton입니다. `Stream.empty()` 반환은 현재 단계에서 오류가 아닙니다.
+- `MockDirectionSensor`: 패키지 내부 예제·로그·smoke 검증에서 `DirectionReading` 흐름과 heading 정규화를 확인하기 위한 mock sensor입니다.
+
+실제 플랫폼 센서 연동에서는 센서 결과를 `DirectionReading`으로 변환하되, 권한 안내 화면·방향 표시 UI·공간음향 연동은 각각 Flutter 앱 또는 future module 담당 영역에서 처리해야 합니다.
 
 ## 현재 구현 상태
 
@@ -187,7 +201,14 @@ void main() {
     lastDetectedAt: DateTime.now(),
   );
 
+  final direction = DirectionReading(
+    headingDegrees: -15,
+    accuracy: DirectionAccuracy.medium,
+    updatedAt: DateTime.now(),
+  );
+
   print(signal.toJson());
+  print(direction.toJson());
 }
 ```
 
