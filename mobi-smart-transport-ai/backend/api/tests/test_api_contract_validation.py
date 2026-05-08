@@ -56,6 +56,44 @@ def test_notification_rejects_extra_field() -> None:
     )
     assert response.status_code == 422
 
+
+def test_notification_requires_exactly_one_target() -> None:
+    multiple_targets_response = client.post(
+        "/notifications/send",
+        json={
+            "targetUserId": "user001",
+            "targetDriverId": "driver001",
+            "type": "SYSTEM",
+            "title": "알림",
+            "body": "테스트 알림입니다.",
+        },
+    )
+    assert multiple_targets_response.status_code == 422
+
+    missing_target_response = client.post(
+        "/notifications/send",
+        json={
+            "type": "SYSTEM",
+            "title": "알림",
+            "body": "테스트 알림입니다.",
+        },
+    )
+    assert missing_target_response.status_code == 422
+
+
+def test_notification_data_payload_rejects_non_string_values() -> None:
+    response = client.post(
+        "/notifications/send",
+        json={
+            "targetUserId": "user001",
+            "type": "SYSTEM",
+            "title": "알림",
+            "body": "테스트 알림입니다.",
+            "data": {"stopId": 123},
+        },
+    )
+    assert response.status_code == 422
+
 # Section 4 geofence behavior tests
 from app.api.routes.geofence import _service
 from app.services.firebase_client import get_firebase_client

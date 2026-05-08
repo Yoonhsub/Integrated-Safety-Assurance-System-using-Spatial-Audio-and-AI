@@ -173,3 +173,24 @@ send_ride_request_notification(driver_id, request_id, user_id, stop_id, route_id
 ```
 
 섹션 6에서는 지오펜싱/rideRequests 흐름에 직접 강결합하지 않고, 섹션 8에서 rideRequests 파이프라인을 만들 때 `send_ride_request_notification`을 연결할 수 있도록 service method까지만 준비한다.
+
+
+## 섹션 7 기준 FCM 검토·패치 결과
+
+섹션 7에서는 섹션 6 FCM 토큰·알림 구조를 재검토하고, 코드 구조는 유지하되 회귀 방지 테스트와 문서 기록을 보강했다.
+
+검토 결과:
+
+- 공식 토큰 경로는 계속 `/fcmTokens/{ownerType}/{ownerId}` 하나만 사용한다.
+- `ownerType`은 `users` 또는 `drivers`만 사용한다.
+- `/users/{userId}/fcmToken`, `/drivers/{driverId}/fcmToken` 중복 저장 필드는 만들지 않는다.
+- `NotificationRequest`는 `targetUserId`와 `targetDriverId` 중 정확히 하나만 허용한다.
+- `data` payload는 Firebase Messaging과 shared schema 양쪽에서 공유 가능한 `dict[str, str]` 형태로 제한한다.
+- Firebase 인증정보가 없거나 `FCM_ENABLED=false`이면 mock 전송 결과를 반환한다.
+- 섹션 7에서는 rideRequests 저장/상태 변경 파이프라인을 구현하지 않았다. 탑승 요청 생성 시 기사 알림 helper를 연결하는 작업은 섹션 8 범위로 남긴다.
+
+추가 검증:
+
+- 두 target이 동시에 들어온 알림 요청은 422로 거부한다.
+- target이 하나도 없는 알림 요청은 422로 거부한다.
+- `data` payload 값이 문자열이 아니면 422로 거부한다.
