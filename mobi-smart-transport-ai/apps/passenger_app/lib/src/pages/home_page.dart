@@ -79,26 +79,36 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 24),
               _StatusCard(
                 title: '음성 안내 상태',
+                statusLabel: _isListening ? '입력 중' : '대기 중',
                 description: _voiceStatusMessage,
                 icon: Icons.volume_up_outlined,
+                semanticHint: _isListening
+                    ? '현재 음성 입력을 기다리는 중입니다.'
+                    : '음성 입력이 시작되지 않았거나 종료된 상태입니다.',
               ),
               const SizedBox(height: 16),
               const _StatusCard(
                 title: '안전 상태',
+                statusLabel: '연결 예정',
                 description: '안전 상태 정보는 geofence API 계약 확정 후 표시됩니다.',
                 icon: Icons.shield_outlined,
+                semanticHint: '아직 실제 안전 상태 API와 연결되지 않은 안내 영역입니다.',
               ),
               const SizedBox(height: 16),
               const _StatusCard(
                 title: '버스 도착 정보',
+                statusLabel: '연결 예정',
                 description: '버스 도착 정보는 공공데이터 mock 기준 확정 후 표시됩니다.',
                 icon: Icons.directions_bus_outlined,
+                semanticHint: '아직 실제 버스 도착 정보와 연결되지 않은 안내 영역입니다.',
               ),
               const SizedBox(height: 16),
               const _StatusCard(
                 title: '탑승 요청 상태',
+                statusLabel: '요청 전',
                 description: '탑승 요청 상태는 rideRequests 파이프라인 확정 후 표시됩니다.',
                 icon: Icons.accessible_forward_outlined,
+                semanticHint: '아직 탑승 요청이 생성되지 않은 상태입니다.',
               ),
             ],
           ),
@@ -115,6 +125,7 @@ class _HeaderSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       header: true,
+      label: 'MOBI 승객 앱 홈 화면',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -185,19 +196,24 @@ class _VoiceActionButton extends StatelessWidget {
 class _StatusCard extends StatelessWidget {
   const _StatusCard({
     required this.title,
+    required this.statusLabel,
     required this.description,
     required this.icon,
+    required this.semanticHint,
   });
 
   final String title;
+  final String statusLabel;
   final String description;
   final IconData icon;
+  final String semanticHint;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
-      label: '$title, $description',
+      label: '$title, 상태 $statusLabel, $description',
+      hint: semanticHint,
       child: Card(
         elevation: 1,
         child: Padding(
@@ -211,13 +227,11 @@ class _StatusCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                    _StatusHeader(
+                      title: title,
+                      statusLabel: statusLabel,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
                       description,
                       style: Theme.of(context).textTheme.bodyLarge,
@@ -229,6 +243,56 @@ class _StatusCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _StatusHeader extends StatelessWidget {
+  const _StatusHeader({
+    required this.title,
+    required this.statusLabel,
+  });
+
+  final String title;
+  final String statusLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        Semantics(
+          label: '상태 $statusLabel',
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              child: Text(
+                statusLabel,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
