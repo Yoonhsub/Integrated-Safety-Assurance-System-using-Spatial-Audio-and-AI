@@ -10,7 +10,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final VoiceGuideService _voiceGuideService = const VoiceGuideService();
+  final VoiceGuideService _voiceGuideService = VoiceGuideService();
 
   bool _isListening = false;
   String _voiceStatusMessage = '아직 음성 안내가 시작되지 않았습니다.';
@@ -33,7 +33,17 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    final message = await _voiceGuideService.startListening();
+    final message = await _voiceGuideService.startListening(
+  onResult: (recognizedWords) {
+    if (!mounted) return;
+
+    setState(() {
+      _voiceStatusMessage = recognizedWords.isEmpty
+          ? '목적지 입력을 기다리고 있습니다.'
+          : '인식 중: $recognizedWords';
+    });
+  },
+);
 
     if (!mounted) return;
 
