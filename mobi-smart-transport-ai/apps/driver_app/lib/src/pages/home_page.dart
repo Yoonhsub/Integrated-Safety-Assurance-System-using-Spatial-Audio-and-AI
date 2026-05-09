@@ -23,6 +23,8 @@ class HomePage extends StatelessWidget {
               _RideRequestNoticeCard(),
               SizedBox(height: 16),
               _SampleRideRequestCard(),
+              SizedBox(height: 16),
+              _DriverMvpNoticeCard(),
             ],
           ),
         ),
@@ -91,7 +93,7 @@ class _RideRequestNoticeCard extends StatelessWidget {
 
 class _SampleRideRequestCard extends StatelessWidget {
   const _SampleRideRequestCard();
-
+  
   @override
   Widget build(BuildContext context) {
     return Semantics(
@@ -247,6 +249,38 @@ class _StatusHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+class _DriverMvpNoticeCard extends StatelessWidget {
+  const _DriverMvpNoticeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'MVP 안내, 현재 화면은 기사 앱 탑승 요청 흐름을 확인하기 위한 초안입니다.',
+      hint: '실제 탑승 요청 목록과 요청 처리 기능은 rideRequests 파이프라인 확정 후 연결됩니다.',
+      child: Card(
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.info_outline, size: 30),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  '현재 화면은 4월 MVP 기준의 기사 앱 UI 초안입니다. '
+                  '실제 탑승 요청 목록과 요청 처리 기능은 rideRequests 파이프라인 확정 후 연결됩니다.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -110,6 +110,8 @@ class _HomePageState extends State<HomePage> {
                 icon: Icons.accessible_forward_outlined,
                 semanticHint: '아직 탑승 요청이 생성되지 않은 상태입니다.',
               ),
+              const SizedBox(height: 16),
+              const _MvpNoticeCard(),
             ],
           ),
         ),
@@ -293,6 +295,38 @@ class _StatusHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+class _MvpNoticeCard extends StatelessWidget {
+  const _MvpNoticeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'MVP 안내, 현재 화면은 승객 앱 핵심 흐름을 확인하기 위한 초안입니다.',
+      hint: '실제 버스 도착 정보, 안전 상태, 탑승 요청 데이터는 담당 모듈 계약 확정 후 연결됩니다.',
+      child: Card(
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.info_outline, size: 30),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  '현재 화면은 4월 MVP 기준의 승객 앱 UI 초안입니다. '
+                  '버스 도착 정보, 안전 상태, 탑승 요청 데이터는 담당 모듈 계약 확정 후 연결됩니다.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
