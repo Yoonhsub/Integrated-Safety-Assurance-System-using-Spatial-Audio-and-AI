@@ -54,7 +54,7 @@ CORS_ORIGINS = _csv_env("BACKEND_CORS_ORIGINS", ("http://localhost:3000", "http:
 
 app = FastAPI(
     title="MOBI Backend API",
-    version="0.1.0-section2",
+    version="0.1.0-section10",
     description="FastAPI backend for geofencing, Firebase/FCM, ride matching, and bus info gateway.",
 )
 

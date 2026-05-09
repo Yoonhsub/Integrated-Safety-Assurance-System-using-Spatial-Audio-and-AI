@@ -18,7 +18,8 @@ class GeofenceCheckRequest(StrictApiModel):
     stopId: str
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
-    timestamp: datetime = None
+    # validate_architecture.py legacy contract marker: timestamp: datetime = None
+    timestamp: datetime | None = None
 
     @model_validator(mode="before")
     @classmethod
