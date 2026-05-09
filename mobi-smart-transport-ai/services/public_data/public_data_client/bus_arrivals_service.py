@@ -178,7 +178,13 @@ class LiveBusArrivalsProvider:
         # ------------------------------------------------------------------
         # boilerplate (참고용 — 명세 확보 후 본 raise를 제거하고 활성화)
         # ------------------------------------------------------------------
-        # 1. city_code 분기로 endpoint 결정
+        # ※ 아래는 비활성 보일러플레이트입니다. 활성화할 때는 위 raise를 제거하고
+        #    아래 코드 라인의 `# ` 접두사만 풀어 사용합니다. STEP 헤더 자체(====...)는
+        #    구분 주석이므로 그대로 둡니다.
+        #
+        # ====[ STEP 1 ]====================================================
+        #   city_code 분기로 endpoint 결정
+        # ==================================================================
         # if self.client.city_code:
         #     # TAGO ArvlInfoInqireService — 청주/대전 등 다도시 표준 (명세 확보 후)
         #     path = "/1613000/ArvlInfoInqireService/getSttnAcctoArvlPrearngeInfoList"
@@ -199,10 +205,14 @@ class LiveBusArrivalsProvider:
         #         "resultType": "json",  # 또는 "xml"
         #     }
         #
-        # # 2. 호출 — DataGoKrClient.get이 PublicDataNetworkError로 자동 변환
+        # ====[ STEP 2 ]====================================================
+        #   호출 — DataGoKrClient.get이 PublicDataNetworkError로 자동 변환
+        # ==================================================================
         # response = self.client.get(path, params=params)
         #
-        # # 3. 응답 파싱 — XML/JSON 분기
+        # ====[ STEP 3 ]====================================================
+        #   응답 파싱 — XML/JSON 분기
+        # ==================================================================
         # content_type = response.headers.get("content-type", "").lower()
         # if "json" in content_type:
         #     payload = response.json()
@@ -224,11 +234,15 @@ class LiveBusArrivalsProvider:
         #     # ]
         #     items = []  # 활성화 시 위 코드 풀어 사용
         #
-        # # 4. 단일 item이 dict로 반환되는 경우(공공데이터 표준)도 list로 정규화
+        # ====[ STEP 4 ]====================================================
+        #   단일 item이 dict로 반환되는 경우(공공데이터 표준)도 list로 정규화
+        # ==================================================================
         # if isinstance(items, dict):
         #     items = [items]
         #
-        # # 5. _normalize_arrivals가 받는 raw_items 형식으로 반환
+        # ====[ STEP 5 ]====================================================
+        #   _normalize_arrivals가 받는 raw_items 형식으로 반환
+        # ==================================================================
         # return items
 
     def _normalize_arrivals(
