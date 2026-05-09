@@ -245,6 +245,41 @@ GET /bus-info/stops/{stopId}/arrivals
 }
 ```
 
+백엔드 cache 기준:
+
+```txt
+Firebase RTDB cache path: /busArrivals/{stopId}
+Cache payload shape: BusArrivalsResponse
+```
+
+```json
+{
+  "stopId": "stop001",
+  "arrivals": [
+    {
+      "routeId": "route502",
+      "busNo": "502",
+      "arrivalMinutes": 3,
+      "remainingStops": 2,
+      "lowFloor": true,
+      "congestion": "NORMAL",
+      "updatedAt": "2026-04-18T14:32:00+09:00"
+    }
+  ]
+}
+```
+
+심현석 백엔드 인터페이스 정합성 원칙:
+
+```txt
+- `/bus-info/stops/{stopId}/arrivals` API 응답과 `/busArrivals/{stopId}` cache payload는 같은 BusArrivalsResponse 구조를 사용한다.
+- `/busArrivals/{stopId}/{routeId}` 구조는 사용하지 않는다.
+- `routeId`는 `arrivals[]` 내부 필드로 둔다.
+- backend는 RTDB cache miss 시 김도성 public_data 모듈의 `BusArrivalsService.get_arrivals(stop_id)`를 호출한다.
+- backend는 공공데이터 raw field를 직접 normalize하지 않는다.
+- public_data mock 응답과 live 응답은 모두 같은 normalized shape를 반환해야 한다.
+```
+
 선행 의존성:
 
 ```txt

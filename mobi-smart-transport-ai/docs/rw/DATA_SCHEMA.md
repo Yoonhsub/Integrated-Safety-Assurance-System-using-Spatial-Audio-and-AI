@@ -190,29 +190,78 @@ FCM 토큰 등록 책임은 Flutter 클라이언트에 있다. 각 앱은 Fireba
 경로:
 
 ```txt
-/busArrivals/{stopId}/{routeId}
+/busArrivals/{stopId}
+```
+
+설명:
+
+```txt
+busArrivals는 공공데이터 원본을 그대로 저장하는 영역이 아니라,
+심현석 백엔드 bus_info_gateway가 조회하는 정류장별 도착 정보 cache이다.
+
+저장 payload는 앱에 노출되는 표준 응답인 BusArrivalsResponse와 같은 normalized shape를 사용한다.
+즉, Firebase RTDB cache와 `GET /bus-info/stops/{stopId}/arrivals` 응답은 같은 구조를 공유한다.
 ```
 
 예시:
 
 ```json
 {
-  "routeId": "route502",
-  "busNo": "502",
-  "arrivalMinutes": 3,
-  "remainingStops": 2,
-  "lowFloor": true,
-  "congestion": "NORMAL",
-  "updatedAt": "2026-04-18T14:32:00+09:00"
+  "stopId": "stop001",
+  "arrivals": [
+    {
+      "routeId": "route502",
+      "busNo": "502",
+      "arrivalMinutes": 3,
+      "remainingStops": 2,
+      "lowFloor": true,
+      "congestion": "NORMAL",
+      "updatedAt": "2026-04-18T14:32:00+09:00"
+    },
+    {
+      "routeId": "route713",
+      "busNo": "713",
+      "arrivalMinutes": 9,
+      "remainingStops": null,
+      "lowFloor": false,
+      "congestion": "UNKNOWN",
+      "updatedAt": "2026-04-18T14:32:00+09:00"
+    }
+  ]
 }
 ```
+
+필드 설명:
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---:|---|
+| `stopId` | string | 예 | 정류장 ID. RTDB path의 `{stopId}`와 같아야 한다. |
+| `arrivals` | array | 예 | 해당 정류장의 도착 예정 버스 목록 |
+| `arrivals[].routeId` | string | 예 | 노선 ID |
+| `arrivals[].busNo` | string | 예 | 사용자에게 표시할 버스 번호 |
+| `arrivals[].arrivalMinutes` | integer | 예 | 도착 예정 분. 0 이상 |
+| `arrivals[].remainingStops` | integer/null | 아니오 | 남은 정류장 수. 제공처에서 없으면 null |
+| `arrivals[].lowFloor` | boolean | 예 | 저상버스 여부 |
+| `arrivals[].congestion` | enum | 예 | `LOW`, `NORMAL`, `HIGH`, `UNKNOWN` |
+| `arrivals[].updatedAt` | string(date-time) | 예 | 도착 정보 갱신 시각 |
 
 담당 경계:
 
 ```txt
-- 김도성: 공공데이터 API 원본 조회 및 표준화
-- 심현석: 필요 시 busArrivals 저장/전달 인터페이스
-- 윤현섭: 표준 응답 렌더링
+- 김도성: 공공데이터 API 원본 조회 및 BusArrivalsResponse normalized shape로 표준화
+- 심현석: `/busArrivals/{stopId}` cache 저장/조회 인터페이스와 `/bus-info/stops/{stopId}/arrivals` API 전달
+- 윤현섭: `/bus-info/stops/{stopId}/arrivals` 응답 또는 같은 shape의 mock 응답 렌더링
+```
+
+정합성 기준:
+
+```txt
+- `/busArrivals/{stopId}/{routeId}` 구조는 사용하지 않는다.
+- `routeId`는 `arrivals[]` 내부 필드로만 둔다.
+- backend cache에는 공공데이터 원본 필드, provider-specific raw field, rawData를 저장하지 않는다.
+- app-facing API 응답에는 stopName, source, provider metadata를 포함하지 않는다.
+- stopName은 `/busStops` 또는 앱 로컬 캐시에서 처리한다.
+- 도착 예정 순서는 `arrivals` 배열 순서로 보존한다.
 ```
 
 ---
