@@ -604,13 +604,17 @@ def test_bus_info_gateway_prefers_firebase_bus_arrivals_cache() -> None:
     assert body["arrivals"][0]["congestion"] == "LOW"
 
 
-def test_bus_info_gateway_returns_empty_response_for_unknown_stop() -> None:
+def test_bus_info_gateway_uses_public_data_service_for_uncached_stop() -> None:
     get_firebase_client().clear_mock_store()
 
     response = client.get("/bus-info/stops/unknown-stop/arrivals")
 
     assert response.status_code == 200
-    assert response.json() == {"stopId": "unknown-stop", "arrivals": []}
+    body = response.json()
+    assert body["stopId"] == "unknown-stop"
+    assert len(body["arrivals"]) == 4
+    assert body["arrivals"][0]["routeId"] == "MOCK-502"
+    assert body["arrivals"][0]["congestion"] == "NORMAL"
 
 
 

@@ -275,8 +275,8 @@ GET /bus-info/stops/{stopId}/arrivals
 ### 조회 순서
 
 1. `/busArrivals/{stopId}`에 저장된 Firebase RTDB cache를 먼저 조회한다.
-2. cache가 없으면 `services/public_data/examples/mock_bus_arrivals.json`을 읽기 전용 fallback으로 사용한다.
-3. cache와 mock 모두 해당 `stopId`를 제공하지 않으면 `{"stopId": stopId, "arrivals": []}`를 반환한다.
+2. cache가 없으면 김도성 public_data 모듈의 확정 진입점 `BusArrivalsService.get_arrivals(stop_id)`에서 표준 응답을 받는다.
+3. public_data 모듈의 mock/real 선택은 `PUBLIC_DATA_USE_MOCK` 정책을 따른다.
 
 ### 범위 제한
 
@@ -284,7 +284,7 @@ GET /bus-info/stops/{stopId}/arrivals
 - `services/public_data/**` 파일은 수정하지 않는다.
 - 저상버스 여부, 혼잡도, provider-specific raw field를 backend에서 새로 계산하지 않는다.
 - shared schema에 없는 필드는 응답에 추가하지 않는다.
-- 김도성 섹션 6, 7 표준화 완료 전까지 실제 provider 연동은 TODO 상태로 둔다.
+- 김도성 섹션 6, 7의 확정 진입점만 호출하며, real provider 활성화 여부는 public_data 모듈 정책을 따른다.
 
 ### Firebase gateway 인터페이스
 
@@ -295,7 +295,7 @@ GET /bus-info/stops/{stopId}/arrivals
 
 ## Section 11 — bus_info_gateway 제한적 검토 및 선행의존성 대기 기록
 
-섹션 11에서는 섹션 10의 `bus_info_gateway` 산출물을 검토했다. 김도성 섹션 6, 7이 아직 미구현 상태이므로 실제 공공데이터 provider 연동 확정은 진행하지 않았고, 다음 제한적 범위만 확인했다.
+섹션 11에서는 섹션 10의 `bus_info_gateway` 산출물을 검토했다. 당시 김도성 섹션 6, 7이 아직 미구현 상태였으므로 실제 public_data 진입점 연결은 통합 검수 단계로 보류했고, 다음 제한적 범위만 확인했다.
 
 ### 검토 결과
 
@@ -305,17 +305,17 @@ GET /bus-info/stops/{stopId}/arrivals
 - cache payload는 `BusArrivalsResponse` normalized shape만 사용한다.
 - `BusInfoGatewayService.save_arrivals()`는 provider-specific raw field를 저장하지 않는다.
 - shared schema에 없는 `rawData`, `busType`, `reride_Num` 같은 필드는 backend gateway에서 확정하지 않는다.
-- cache가 없으면 public_data mock JSON을 읽기 전용 fallback으로만 참조한다.
+- 선행작업의존 패치 후 cache miss 시 `BusArrivalsService.get_arrivals(stop_id)`를 호출한다.
 
-### 조건부 완료 상태
+### 선행작업의존 패치 후 상태
 
-현재 `bus_info_gateway`는 shared schema와 mock/cache 기반 placeholder gateway interface로만 완료되었다. 실제 provider 연동, 저상버스 표준화 규칙, 혼잡도 표준화 규칙, public_data normalize 함수와의 직접 연결은 김도성 섹션 6, 7 완료 후 통합 검수 단계에서 재확인해야 한다.
+김도성 섹션 6, 7 완료가 공통 진행사항과 선행작업의존성 문서에서 확인되어, `bus_info_gateway`는 더 이상 public_data mock JSON을 직접 읽지 않는다. backend는 RTDB cache 우선 정책을 유지하고, cache miss 시 김도성 public_data 표준화 서비스의 응답을 `BusArrivalsResponse`로 검증해 반환한다.
 
-### 후속 통합 TODO
+### 후속 운영 TODO
 
-- 김도성 섹션 6, 7 완료 후 `services/public_data` 표준화 함수 출력이 `BusArrivalsResponse`와 일치하는지 확인한다.
 - 추가 필드가 필요하면 backend에서 임의 확정하지 말고 shared contract 변경 PR 및 충돌 이슈 기록을 먼저 진행한다.
-- 통합 검수·패치 단계에서 public_data → backend gateway → Flutter bus card까지 DTO 정합성을 재검토한다.
+- `PUBLIC_DATA_USE_MOCK=false` 운영 활성화는 public_data 모듈의 real provider 준비 상태와 서비스키 확보 후 진행한다.
+- Flutter bus card까지의 DTO 정합성은 shared contract 기준으로 계속 회귀 검수한다.
 
 
 ---
@@ -327,6 +327,6 @@ GET /bus-info/stops/{stopId}/arrivals
 - backend pytest: PASS, 29 passed
 - 심현석 담당 백엔드 코어 상태: 조건부 완료
 - 완료된 핵심 범위: FastAPI/Firebase base, geofence API, FCM notification service, rideRequests pipeline
-- 조건부 완료 범위: `bus_info_gateway`
+- 선행작업의존 패치 완료 범위: `bus_info_gateway` public_data 진입점 연결
 
-`bus_info_gateway`는 현재 shared schema, RTDB `/busArrivals/{stopId}` cache, public_data mock JSON 읽기 전용 fallback 기반 placeholder/interface로 동작한다. 김도성 섹션 6~7의 public_data 표준화 산출물이 완료된 뒤 통합 검수·패치 단계에서 실제 provider 연동 정합성을 재검토해야 한다.
+`bus_info_gateway`는 RTDB `/busArrivals/{stopId}` cache를 우선 조회하고, cache가 없으면 김도성 public_data 모듈의 `BusArrivalsService.get_arrivals(stop_id)` 표준 응답을 반환한다. backend는 provider-specific raw field를 직접 해석하거나 `services/public_data/**`를 수정하지 않는다.
