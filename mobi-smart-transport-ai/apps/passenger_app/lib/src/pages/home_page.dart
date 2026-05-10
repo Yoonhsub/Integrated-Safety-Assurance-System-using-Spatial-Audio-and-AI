@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import '../services/backend_api_client.dart';
 import '../services/voice_guide_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -11,7 +11,30 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final VoiceGuideService _voiceGuideService = VoiceGuideService();
+  final BackendApiClient _backendApiClient = const BackendApiClient(
+  baseUrl: 'mock://passenger-app',
+);
 
+@override
+void initState() {
+  super.initState();
+  _loadPassengerHomeSnapshot();
+}
+
+Future<void> _loadPassengerHomeSnapshot() async {
+  final snapshot = await _backendApiClient.fetchPassengerHomeSnapshot();
+
+  if (!mounted) return;
+
+  setState(() {
+    _homeSnapshot = snapshot;
+    _isLoadingHomeSnapshot = false;
+  });
+}
+
+PassengerHomeSnapshot? _homeSnapshot;
+bool _isLoadingHomeSnapshot = true;
+  
   bool _isListening = false;
   String _voiceStatusMessage = '아직 음성 안내가 시작되지 않았습니다.';
 
@@ -67,6 +90,9 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final voiceButtonLabel =
         _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
+          final safetyStatus = _homeSnapshot?.safetyStatus;
+          final busArrivalStatus = _homeSnapshot?.busArrivalStatus;
+          final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
       appBar: AppBar(
@@ -97,29 +123,41 @@ class _HomePageState extends State<HomePage> {
                     : '음성 입력이 시작되지 않았거나 종료된 상태입니다.',
               ),
               const SizedBox(height: 16),
-              const _StatusCard(
+              _StatusCard(
                 title: '안전 상태',
-                statusLabel: '연결 예정',
-                description: '안전 상태 정보는 geofence API 계약 확정 후 표시됩니다.',
+                statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : safetyStatus?.statusLabel ?? 'mock 대기',
+                description: safetyStatus?.description ??
+                    '안전 상태 정보를 불러오는 중입니다.',
                 icon: Icons.shield_outlined,
-                semanticHint: '아직 실제 안전 상태 API와 연결되지 않은 안내 영역입니다.',
-              ),
+                semanticHint: safetyStatus?.semanticHint ??
+                    '실제 geofence API 연동 전 mock 안전 상태를 표시하는 영역입니다.',
+                    ),
               const SizedBox(height: 16),
-              const _StatusCard(
-                title: '버스 도착 정보',
-                statusLabel: '연결 예정',
-                description: '버스 도착 정보는 공공데이터 mock 기준 확정 후 표시됩니다.',
-                icon: Icons.directions_bus_outlined,
-                semanticHint: '아직 실제 버스 도착 정보와 연결되지 않은 안내 영역입니다.',
-              ),
+              _StatusCard(
+                 title: '버스 도착 정보',
+                 statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : busArrivalStatus?.statusLabel ?? 'mock 대기',
+                 description: busArrivalStatus?.description ??
+                    '버스 도착 정보를 불러오는 중입니다.',
+                 icon: Icons.directions_bus_outlined,
+                 semanticHint: busArrivalStatus?.semanticHint ??
+                    '실제 버스 도착 API 연동 전 mock 도착 정보를 표시하는 영역입니다.',
+),
               const SizedBox(height: 16),
-              const _StatusCard(
+              _StatusCard(
                 title: '탑승 요청 상태',
-                statusLabel: '요청 전',
-                description: '탑승 요청 상태는 rideRequests 파이프라인 확정 후 표시됩니다.',
+                statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : rideRequestStatus?.statusLabel ?? 'mock 대기',
+                description: rideRequestStatus?.description ??
+                    '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint: '아직 탑승 요청이 생성되지 않은 상태입니다.',
-              ),
+                semanticHint: rideRequestStatus?.semanticHint ??
+                    '실제 탑승 요청 API 연동 전 mock 요청 상태를 표시하는 영역입니다.',
+),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],
