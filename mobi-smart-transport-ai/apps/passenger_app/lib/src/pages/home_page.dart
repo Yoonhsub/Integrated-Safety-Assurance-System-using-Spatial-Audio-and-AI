@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import '../services/backend_api_client.dart';
 import '../services/voice_guide_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -10,7 +10,30 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final VoiceGuideService _voiceGuideService = const VoiceGuideService();
+  final VoiceGuideService _voiceGuideService = VoiceGuideService();
+  final BackendApiClient _backendApiClient = const BackendApiClient(
+    baseUrl: 'mock://passenger-app',
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPassengerHomeSnapshot();
+  }
+
+  Future<void> _loadPassengerHomeSnapshot() async {
+    final snapshot = await _backendApiClient.fetchPassengerHomeSnapshot();
+
+    if (!mounted) return;
+
+    setState(() {
+      _homeSnapshot = snapshot;
+      _isLoadingHomeSnapshot = false;
+    });
+  }
+
+  PassengerHomeSnapshot? _homeSnapshot;
+  bool _isLoadingHomeSnapshot = true;
 
   bool _isListening = false;
   String _voiceStatusMessage = '아직 음성 안내가 시작되지 않았습니다.';
@@ -26,14 +49,24 @@ class _HomePageState extends State<HomePage> {
         _voiceStatusMessage = message;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
 
       return;
     }
 
-    final message = await _voiceGuideService.startListening();
+    final message = await _voiceGuideService.startListening(
+      onResult: (recognizedWords) {
+        if (!mounted) return;
+
+        setState(() {
+          _voiceStatusMessage = recognizedWords.isEmpty
+              ? '목적지 입력을 기다리고 있습니다.'
+              : '인식 중: $recognizedWords';
+        });
+      },
+    );
 
     if (!mounted) return;
 
@@ -42,27 +75,24 @@ class _HomePageState extends State<HomePage> {
       _voiceStatusMessage = message;
     });
 
-    final guideMessage = await _voiceGuideService.speakGuide(
-      '목적지를 말씀해주세요.',
-    );
+    final guideMessage = await _voiceGuideService.speakGuide('목적지를 말씀해주세요.');
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(guideMessage)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(guideMessage)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final voiceButtonLabel =
-        _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
+    final voiceButtonLabel = _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
+    final safetyStatus = _homeSnapshot?.safetyStatus;
+    final busArrivalStatus = _homeSnapshot?.busArrivalStatus;
+    final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('MOBI 승객 앱'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('MOBI 승객 앱'), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
@@ -87,28 +117,40 @@ class _HomePageState extends State<HomePage> {
                     : '음성 입력이 시작되지 않았거나 종료된 상태입니다.',
               ),
               const SizedBox(height: 16),
-              const _StatusCard(
+              _StatusCard(
                 title: '안전 상태',
-                statusLabel: '연결 예정',
-                description: '안전 상태 정보는 geofence API 계약 확정 후 표시됩니다.',
+                statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : safetyStatus?.statusLabel ?? 'mock 대기',
+                description:
+                    safetyStatus?.description ?? '안전 상태 정보를 불러오는 중입니다.',
                 icon: Icons.shield_outlined,
-                semanticHint: '아직 실제 안전 상태 API와 연결되지 않은 안내 영역입니다.',
+                semanticHint: safetyStatus?.semanticHint ??
+                    '실제 geofence API 연동 전 mock 안전 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
-              const _StatusCard(
+              _StatusCard(
                 title: '버스 도착 정보',
-                statusLabel: '연결 예정',
-                description: '버스 도착 정보는 공공데이터 mock 기준 확정 후 표시됩니다.',
+                statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : busArrivalStatus?.statusLabel ?? 'mock 대기',
+                description:
+                    busArrivalStatus?.description ?? '버스 도착 정보를 불러오는 중입니다.',
                 icon: Icons.directions_bus_outlined,
-                semanticHint: '아직 실제 버스 도착 정보와 연결되지 않은 안내 영역입니다.',
+                semanticHint: busArrivalStatus?.semanticHint ??
+                    '실제 버스 도착 API 연동 전 mock 도착 정보를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
-              const _StatusCard(
+              _StatusCard(
                 title: '탑승 요청 상태',
-                statusLabel: '요청 전',
-                description: '탑승 요청 상태는 rideRequests 파이프라인 확정 후 표시됩니다.',
+                statusLabel: _isLoadingHomeSnapshot
+                    ? '불러오는 중'
+                    : rideRequestStatus?.statusLabel ?? 'mock 대기',
+                description:
+                    rideRequestStatus?.description ?? '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint: '아직 탑승 요청이 생성되지 않은 상태입니다.',
+                semanticHint: rideRequestStatus?.semanticHint ??
+                    '실제 탑승 요청 API 연동 전 mock 요청 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
@@ -133,9 +175,9 @@ class _HeaderSection extends StatelessWidget {
         children: [
           Text(
             '안전한 이동을 도와드릴게요',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
@@ -164,9 +206,7 @@ class _VoiceActionButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
-      hint: isListening
-          ? '두 번 탭하면 음성 입력을 종료합니다.'
-          : '두 번 탭하면 음성 입력을 시작합니다.',
+      hint: isListening ? '두 번 탭하면 음성 입력을 종료합니다.' : '두 번 탭하면 음성 입력을 시작합니다.',
       child: SizedBox(
         height: 120,
         child: ElevatedButton.icon(
@@ -178,10 +218,7 @@ class _VoiceActionButton extends StatelessWidget {
           label: Text(
             label,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
           style: ElevatedButton.styleFrom(
             minimumSize: const Size.fromHeight(120),
@@ -229,10 +266,7 @@ class _StatusCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _StatusHeader(
-                      title: title,
-                      statusLabel: statusLabel,
-                    ),
+                    _StatusHeader(title: title, statusLabel: statusLabel),
                     const SizedBox(height: 10),
                     Text(
                       description,
@@ -250,10 +284,7 @@ class _StatusCard extends StatelessWidget {
 }
 
 class _StatusHeader extends StatelessWidget {
-  const _StatusHeader({
-    required this.title,
-    required this.statusLabel,
-  });
+  const _StatusHeader({required this.title, required this.statusLabel});
 
   final String title;
   final String statusLabel;
@@ -267,29 +298,24 @@ class _StatusHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         Semantics(
           label: '상태 $statusLabel',
           child: DecoratedBox(
             decoration: BoxDecoration(
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outline,
-              ),
+              border: Border.all(color: Theme.of(context).colorScheme.outline),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Text(
                 statusLabel,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -298,6 +324,7 @@ class _StatusHeader extends StatelessWidget {
     );
   }
 }
+
 class _MvpNoticeCard extends StatelessWidget {
   const _MvpNoticeCard();
 
