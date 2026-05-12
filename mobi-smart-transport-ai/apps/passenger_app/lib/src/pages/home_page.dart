@@ -125,8 +125,7 @@ class _HomePageState extends State<HomePage> {
                 description:
                     safetyStatus?.description ?? '안전 상태 정보를 불러오는 중입니다.',
                 icon: Icons.shield_outlined,
-                semanticHint:
-                    safetyStatus?.semanticHint ??
+                semanticHint: safetyStatus?.semanticHint ??
                     '실제 geofence API 연동 전 mock 안전 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
@@ -138,8 +137,7 @@ class _HomePageState extends State<HomePage> {
                 description:
                     busArrivalStatus?.description ?? '버스 도착 정보를 불러오는 중입니다.',
                 icon: Icons.directions_bus_outlined,
-                semanticHint:
-                    busArrivalStatus?.semanticHint ??
+                semanticHint: busArrivalStatus?.semanticHint ??
                     '실제 버스 도착 API 연동 전 mock 도착 정보를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
@@ -151,8 +149,7 @@ class _HomePageState extends State<HomePage> {
                 description:
                     rideRequestStatus?.description ?? '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint:
-                    rideRequestStatus?.semanticHint ??
+                semanticHint: rideRequestStatus?.semanticHint ??
                     '실제 탑승 요청 API 연동 전 mock 요청 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),

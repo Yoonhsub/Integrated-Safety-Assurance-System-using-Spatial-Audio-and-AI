@@ -4,8 +4,8 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 class VoiceGuideService {
   VoiceGuideService({SpeechToText? speechToText, FlutterTts? flutterTts})
-    : _speechToText = speechToText ?? SpeechToText(),
-      _flutterTts = flutterTts ?? FlutterTts();
+      : _speechToText = speechToText ?? SpeechToText(),
+        _flutterTts = flutterTts ?? FlutterTts();
 
   final SpeechToText _speechToText;
   final FlutterTts _flutterTts;
