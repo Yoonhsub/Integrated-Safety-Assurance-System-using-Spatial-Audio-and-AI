@@ -25,9 +25,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('mock 탑승 요청을 확인 완료 상태로 변경했습니다.'),
-      ),
+      const SnackBar(content: Text('mock 탑승 요청을 확인 완료 상태로 변경했습니다.')),
     );
   }
 
@@ -37,10 +35,7 @@ class _HomePageState extends State<HomePage> {
         _rideRequests.length - _confirmedRequestIndexes.length;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('MOBI 기사 앱'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('MOBI 기사 앱'), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
@@ -96,9 +91,9 @@ class _HeaderSection extends StatelessWidget {
         children: [
           Text(
             '탑승 요청을 안전하게 확인하세요',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
@@ -133,9 +128,9 @@ class _RideRequestListSection extends StatelessWidget {
         children: [
           Text(
             '탑승 요청 목록',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           for (final entry in rideRequests.asMap().entries) ...[
@@ -179,30 +174,15 @@ class _MockRideRequestCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _StatusHeader(
-                title: 'mock 탑승 요청',
-                statusLabel: statusLabel,
-              ),
+              _StatusHeader(title: 'mock 탑승 요청', statusLabel: statusLabel),
               const SizedBox(height: 14),
-              _RequestInfoRow(
-                label: '승객',
-                value: request.passengerLabel,
-              ),
+              _RequestInfoRow(label: '승객', value: request.passengerLabel),
               const SizedBox(height: 8),
-              _RequestInfoRow(
-                label: '승차 위치',
-                value: request.boardingPointText,
-              ),
+              _RequestInfoRow(label: '승차 위치', value: request.boardingPointText),
               const SizedBox(height: 8),
-              _RequestInfoRow(
-                label: '목적지',
-                value: request.destinationText,
-              ),
+              _RequestInfoRow(label: '목적지', value: request.destinationText),
               const SizedBox(height: 8),
-              _RequestInfoRow(
-                label: '지원 필요 사항',
-                value: request.assistanceText,
-              ),
+              _RequestInfoRow(label: '지원 필요 사항', value: request.assistanceText),
               const SizedBox(height: 18),
               Semantics(
                 button: true,
@@ -238,10 +218,7 @@ class _MockRideRequestCard extends StatelessWidget {
 }
 
 class _RequestInfoRow extends StatelessWidget {
-  const _RequestInfoRow({
-    required this.label,
-    required this.value,
-  });
+  const _RequestInfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -300,10 +277,7 @@ class _InfoCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _StatusHeader(
-                      title: title,
-                      statusLabel: statusLabel,
-                    ),
+                    _StatusHeader(title: title, statusLabel: statusLabel),
                     const SizedBox(height: 10),
                     Text(
                       description,
@@ -321,10 +295,7 @@ class _InfoCard extends StatelessWidget {
 }
 
 class _StatusHeader extends StatelessWidget {
-  const _StatusHeader({
-    required this.title,
-    required this.statusLabel,
-  });
+  const _StatusHeader({required this.title, required this.statusLabel});
 
   final String title;
   final String statusLabel;
@@ -338,29 +309,24 @@ class _StatusHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         Semantics(
           label: '상태 $statusLabel',
           child: DecoratedBox(
             decoration: BoxDecoration(
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outline,
-              ),
+              border: Border.all(color: Theme.of(context).colorScheme.outline),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Text(
                 statusLabel,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ),
