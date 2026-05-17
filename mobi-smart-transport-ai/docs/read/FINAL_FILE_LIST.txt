@@ -4,7 +4,10 @@
 .gitignore
 ai_vision/README.md
 ai_vision/dataset_plan/class_taxonomy.json
+ai_vision/dataset_plan/data_collection_guide.md
+ai_vision/dataset_plan/labeling_standards.md
 ai_vision/model_research/model_candidates.csv
+ai_vision/model_research/model_comparison.md
 ai_vision/pipelines/README.md
 apps/driver_app/README.md
 apps/driver_app/lib/main.dart
@@ -17,6 +20,8 @@ apps/passenger_app/lib/main.dart
 apps/passenger_app/lib/src/app.dart
 apps/passenger_app/lib/src/pages/home_page.dart
 apps/passenger_app/lib/src/services/backend_api_client.dart
+apps/passenger_app/lib/src/services/voice_guide_service.dart
+apps/passenger_app/pubspec.lock
 apps/passenger_app/pubspec.yaml
 backend/api/README.md
 backend/api/app/__init__.py
@@ -59,8 +64,10 @@ docs/read/COMMIT_CONVENTION.md
 docs/read/CONTRIBUTING.md
 docs/read/FINAL_FILE_LIST.txt
 docs/read/PACKAGE_MANIFEST.txt
+docs/read/PREDEPENDENCY_PATCH_AGENT_PROMPT.md
 docs/read/PULL_REQUEST_RULES.md
 docs/read/architecture_validation_result.txt
+docs/read/섹션 추가
 docs/read/김도성의 에이전트 필독사항.md
 docs/read/심현석의 에이전트 필독사항.md
 docs/read/안준환의 에이전트 필독사항.md
@@ -72,8 +79,14 @@ docs/rw/DATA_SCHEMA.md
 docs/rw/ENVIRONMENT_VARIABLES.md
 docs/rw/MODULE_OWNERSHIP.md
 docs/rw/PATCH_NOTES.md
+docs/rw/PREDEPENDENCY_PATCH_REPORT_HYUNSEOK_BUS_INFO_GATEWAY.md
+docs/rw/PREDEPENDENCY_PATCH_REPORT_TEMPLATE.md
 docs/rw/README.md
 docs/rw/SETUP.md
+docs/rw/공통 진행사항.md
+docs/rw/김도성_디버그 리포트.md
+docs/rw/김도성_최종 개발 보고서.md
+docs/rw/선행작업의존성 정리.md
 docs/rw/공통 진행사항.md
 docs/rw/김도성_디버그 리포트.md
 docs/rw/김도성_최종 개발 보고서.md
@@ -122,6 +135,8 @@ services/public_data/examples/mock_bus_arrivals.json
 services/public_data/public_data_client/__init__.py
 services/public_data/public_data_client/bus_arrivals_service.py
 services/public_data/public_data_client/data_go_kr_client.py
+services/public_data/public_data_client/exceptions.py
 services/public_data/public_data_client/low_floor_filter.py
+services/public_data/public_data_client/normalize.py
 services/public_data/public_data_client/schemas.py
 services/public_data/requirements.txt

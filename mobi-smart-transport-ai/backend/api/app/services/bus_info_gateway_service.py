@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,4 +71,18 @@ class BusInfoGatewayService:
             data = {"stopId": fallback_stop_id, "arrivals": data}
         if isinstance(data, dict) and "stopId" not in data and fallback_stop_id:
             data = {**data, "stopId": fallback_stop_id}
+        data = self._ensure_arrival_timestamps(data)
         return BusArrivalsResponse.model_validate(data)
+
+    def _ensure_arrival_timestamps(self, data: Any) -> Any:
+        if not isinstance(data, dict) or not isinstance(data.get("arrivals"), list):
+            return data
+
+        now = datetime.now(timezone.utc)
+        arrivals = [
+            {**arrival, "updatedAt": arrival.get("updatedAt") or now}
+            if isinstance(arrival, dict)
+            else arrival
+            for arrival in data["arrivals"]
+        ]
+        return {**data, "arrivals": arrivals}

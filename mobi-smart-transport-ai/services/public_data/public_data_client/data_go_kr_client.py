@@ -37,7 +37,6 @@ from .exceptions import (
 
 load_dotenv()
 
-DEFAULT_BASE_URL = "https://apis.data.go.kr"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
 
@@ -56,7 +55,7 @@ class DataGoKrClient:
         self.base_url: str = (
             base_url
             if base_url is not None
-            else (os.getenv("PUBLIC_DATA_BASE_URL") or DEFAULT_BASE_URL)
+            else (os.getenv("PUBLIC_DATA_BASE_URL") or "https://apis.data.go.kr")
         )
         # 빈 문자열은 None으로 정규화한다 (.env.example의 ``PUBLIC_DATA_CITY_CODE=`` 케이스 대응)
         raw_city = city_code if city_code is not None else os.getenv("PUBLIC_DATA_CITY_CODE", "")
