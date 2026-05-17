@@ -21,6 +21,31 @@
 
 FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단, `oneOf`, 공백 문자열 금지, date-time format 같은 세부 검증 계약은 `packages/shared_contracts/api/*.schema.json`을 최우선 기준으로 삼는다. OpenAPI 표현과 shared JSON Schema가 충돌하면 shared JSON Schema를 따른다.
 
+## V2 통합 MVP App-Facing API 상태표
+
+이 표는 V2에서 Flutter 앱이 실제로 연결할 핵심 API를 `current`와 `V2 planned`로 구분한다.  
+상태는 2026-05-17 기준 backend route 파일 확인 결과를 따른다.
+
+| API | Status | 현재 repo 기준 | Notes |
+|---|---|---|---|
+| `GET /health` | current | `backend/api/app/main.py` | 실제 응답은 `status`, `service`에 더해 `environment`, `firebaseMode`를 포함한다. |
+| `GET /bus-info/stops/{stopId}/arrivals` | current | `backend/api/app/api/routes/bus_info_gateway.py` | app-facing bus arrivals gateway. |
+| `POST /ride-requests` | current | `backend/api/app/api/routes/ride_requests.py` | 승객 요청 생성. |
+| `GET /ride-requests/{id}` | current | 현재 path parameter 이름은 `{requestId}` | V2 문서에서는 `{id}`가 shorthand일 수 있으나 OpenAPI는 `requestId`를 기준으로 한다. |
+| `GET /driver/ride-requests` | V2 planned | 현재는 `GET /drivers/{driverId}/ride-requests`만 존재 | driver app용 aggregate endpoint가 필요하면 V2에서 alias 또는 새 route로 확정한다. |
+| `PATCH /driver/ride-requests/{id}/status` | V2 planned | 현재는 `PATCH /ride-requests/{requestId}/status`만 존재 | driver-specific status endpoint 여부는 현석 Section 5~6에서 확정한다. |
+| `POST /safety-events` | V2 planned | route 없음 | Safety Event API는 현석 Section 7, 김도성 Section 7~10, 안준환 Section 5~8에 의존한다. |
+| `GET /safety-events/recent` | V2 planned | route 없음 | 앱 mock event stream 연결 전 backend contract 확정 필요. |
+
+기존 current API 중 V2에서도 유지되는 보조 계약:
+
+```txt
+POST /geofence/check
+POST /notifications/send
+GET /drivers/{driverId}/ride-requests
+PATCH /ride-requests/{requestId}/status
+```
+
 ## 2. 공통 응답 원칙
 
 ### 2.1 성공 응답

@@ -17,6 +17,30 @@
 
 ---
 
+## V2 mock/live 전환 기준
+
+V2에서는 각자 만든 mock-first 모듈을 앱-백엔드 중심으로 연결하므로, mock/live 여부를 섹션 결과에 반드시 기록한다.
+
+| 변수 | Status | 기본 방향 | 담당 |
+|---|---|---|---|
+| `APP_ENV` | current | `development`, `test`, `production` 중 하나로 실행 환경 표시 | 공통 |
+| `PUBLIC_DATA_USE_MOCK` | current | 기본은 `true`; live API 검증 섹션에서만 `false` 사용 | 김도성/현석 |
+| `PUBLIC_DATA_BASE_URL` | current | live public data provider를 사용할 때 `https://apis.data.go.kr` 기준 | 김도성 |
+| `FIREBASE_USE_MOCK` | V2 planned | Firebase Admin SDK 대신 mock Firebase client를 강제할 때 사용 | 현석 |
+| `FCM_USE_MOCK` | V2 planned | 실제 FCM 전송 대신 mock message id 반환을 강제할 때 사용 | 현석 |
+| `API_BASE_URL` | current dart-define | Flutter 앱이 호출할 FastAPI base URL | 윤현섭 |
+| `USE_MOCK_DATA` | current dart-define | Flutter 앱 내부 mock data 사용 여부 | 윤현섭 |
+
+주의:
+
+```txt
+- FIREBASE_USE_MOCK, FCM_USE_MOCK은 V2 환경변수 정리 섹션에서 .env.example 반영 여부까지 확정한다.
+- 현재 문서 최신화 작업은 기능 코드나 환경파일 구현을 변경하지 않는다.
+- 실행하지 않은 live 검증은 PASS로 기록하지 않는다.
+```
+
+---
+
 ## 2. 공통 환경변수
 
 ### APP_ENV
@@ -117,6 +141,21 @@ secrets/ 폴더는 .gitignore에 포함한다.
 
 ---
 
+### FIREBASE_USE_MOCK
+
+```txt
+FIREBASE_USE_MOCK=true
+```
+
+설명:
+
+```txt
+V2 planned 변수. Firebase Admin SDK 대신 mock Firebase client를 사용할지 여부.
+현석 Section 9에서 현재 Firebase mock 선택 로직과 맞춰 .env.example 반영 여부를 확정한다.
+```
+
+---
+
 ### FIREBASE_STORAGE_BUCKET
 
 ```txt
@@ -149,6 +188,21 @@ FCM 푸시 알림 기능 사용 여부.
 ```
 
 4월 개발 초기에는 `false`로 두고 skeleton/mock으로 개발할 수 있다.
+
+---
+
+### FCM_USE_MOCK
+
+```txt
+FCM_USE_MOCK=true
+```
+
+설명:
+
+```txt
+V2 planned 변수. 실제 FCM 전송 대신 mock FCM 응답을 사용할지 여부.
+현석 Section 9에서 .env.example 반영 여부와 FCM_ENABLED와의 우선순위를 확정한다.
+```
 
 ---
 
