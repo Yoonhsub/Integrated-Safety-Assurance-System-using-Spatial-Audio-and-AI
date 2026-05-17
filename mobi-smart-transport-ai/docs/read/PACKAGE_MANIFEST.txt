@@ -64,3 +64,15 @@ v9 minor consistency cleanup checks: PASS
 - infrastructure/firebase/database.rules.json: `/users/{uid}/currentLocation` validation now matches strict user/driver location schema policy.
 - docs/rw/ARCHITECTURE.md, docs/rw/SETUP.md, docs/rw/ENVIRONMENT_VARIABLES.md, docs/01, docs/02, and docs/agent_required_reading/02: AI Vision April scope now explicitly excludes actual model training/inference code and Flutter/backend real-time integration.
 - scripts/validate_architecture.py: final section 20 invariants added for strict currentLocation rules and AI Vision scope wording.
+
+[V2 documentation planning update]
+- docs/rw/V2_SECTION_PLAN.md: added as the main V2 통합 MVP 고도화 12섹션 계획 document.
+- docs/rw/README.md: updated so fresh-zip readers can move from overview to V2 planning, dependency, setup, API, and team report documents.
+- docs/rw/선행작업의존성 정리.md and docs/rw/선행작업의존성 정리.md: V2 dependency map added.
+- docs/rw/공통 진행사항.md and docs/rw/공통 진행사항.md: V2 progress tracking tables added.
+- docs/rw/API_CONTRACTS.md: V2 app-facing API current/planned status map added.
+- docs/rw/ENVIRONMENT_VARIABLES.md: V2 mock/live transition variables and planned Firebase/FCM flags documented.
+- docs/rw/SETUP.md: fresh-zip reading order, validation commands, Flutter analyze guidance, and pre-section checklist added.
+- docs/read/FINAL_FILE_LIST.txt: updated to include docs/rw/V2_SECTION_PLAN.md.
+- docs/read/architecture_validation_result.txt: V2 documentation validation metadata added after actually running `python scripts/validate_architecture.py`.
+- Team final reports: V2 next-section notes are added without overwriting the original April/May implementation reports.
