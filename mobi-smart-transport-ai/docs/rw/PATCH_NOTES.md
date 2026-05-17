@@ -233,3 +233,13 @@
 - Strengthened `/users/{uid}/currentLocation` Firebase validation so it now matches the strict `drivers/{driverId}/currentLocation` schema/rules policy: exact child count, numeric latitude/longitude, coordinate bounds, and string `updatedAt`.
 - Aligned top-level AI Vision scope wording across `docs/rw/ARCHITECTURE.md`, `docs/rw/SETUP.md`, `docs/rw/ENVIRONMENT_VARIABLES.md`, `docs/01`, `docs/02`, and the agent-required-reading copy: April excludes actual model training/inference code and Flutter/backend real-time integration; April includes planning/research artifacts only.
 - Added final section 20 validation invariants to `scripts/validate_architecture.py`.
+
+## V2 documentation planning update
+
+- Added `docs/rw/V2_SECTION_PLAN.md` as the main 12-section V2 integration MVP planning document.
+- Updated `docs/rw/README.md` so a teammate opening a fresh zip can move from the overview to the V2 section plan, dependencies, setup, API contracts, and personal report documents.
+- Added the V2 dependency map to both Korean filename variants of `docs/rw/선행작업의존성 정리.md`.
+- Added V2 progress tracking tables and status values to both Korean filename variants of `docs/rw/공통 진행사항.md`.
+- Updated `docs/rw/SETUP.md` with the fresh-zip reading order, V2 local verification commands, mock/live checks, and pre-section checklist.
+- Planned follow-up documentation updates for API contracts, environment variables, validation metadata, package manifest, and team member final reports.
+- `docs/read/FINAL_FILE_LIST.txt` now includes the new `docs/rw/V2_SECTION_PLAN.md`; `docs/read/PACKAGE_MANIFEST.txt` will be refreshed after the remaining V2 document batches.
