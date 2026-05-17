@@ -83,6 +83,7 @@ docs/rw/PREDEPENDENCY_PATCH_REPORT_HYUNSEOK_BUS_INFO_GATEWAY.md
 docs/rw/PREDEPENDENCY_PATCH_REPORT_TEMPLATE.md
 docs/rw/README.md
 docs/rw/SETUP.md
+docs/rw/V2_SECTION_PLAN.md
 docs/rw/공통 진행사항.md
 docs/rw/김도성_디버그 리포트.md
 docs/rw/김도성_최종 개발 보고서.md
