@@ -24,7 +24,7 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 ## V2 통합 MVP App-Facing API 상태표
 
 이 표는 V2에서 Flutter 앱이 실제로 연결할 핵심 API를 `current`와 `V2 planned`로 구분한다.  
-상태는 2026-05-17 기준 backend route 파일 확인 결과를 따른다.
+상태는 2026-05-18 기준 backend route 파일 확인 결과를 따른다.
 
 | API | Status | 현재 repo 기준 | Notes |
 |---|---|---|---|
@@ -46,6 +46,39 @@ GET /drivers/{driverId}/ride-requests
 PATCH /ride-requests/{requestId}/status
 ```
 
+### V2 Section 1 backend route audit
+
+2026-05-18 KST에 FastAPI app route를 확인한 current route는 다음과 같다.
+
+```txt
+GET /health
+GET /bus-info/stops/{stopId}/arrivals
+POST /ride-requests
+GET /ride-requests/{requestId}
+PATCH /ride-requests/{requestId}/status
+GET /drivers/{driverId}/ride-requests
+POST /geofence/check
+POST /notifications/send
+```
+
+아래 endpoint는 아직 구현되지 않은 V2 planned API이다.
+
+```txt
+GET /driver/ride-requests
+PATCH /driver/ride-requests/{id}/status
+POST /safety-events
+GET /safety-events/recent
+```
+
+주의:
+
+```txt
+- V2 문서의 `{id}`는 shorthand이며, current FastAPI/OpenAPI path parameter 이름은 `requestId`이다.
+- driver app current route는 `/drivers/{driverId}/ride-requests`이다.
+- `/driver/ride-requests`와 `/driver/ride-requests/{id}/status` alias 여부는 현석 Section 5~6에서 확정한다.
+- Safety Event API는 현석 Section 7~8 전까지 planned 상태로 둔다.
+```
+
 ## 2. 공통 응답 원칙
 
 ### 2.1 성공 응답
@@ -65,7 +98,21 @@ FastAPI 라우트는 `packages/shared_contracts/api/*.schema.json` 및 `backend/
 
 ### 2.2 실패 응답
 
-실패 응답은 FastAPI 기본 오류 형식을 우선 사용한다. 프로젝트 공통 오류 모델이 필요한 경우 아래 형태를 목표로 하되, 성공 응답을 감싸는 wrapper로 확장하지 않는다.
+현재 실패 응답은 FastAPI 기본 오류 형식을 우선 사용한다. 따라서 request validation 오류는 FastAPI/Pydantic 기본 `detail` 배열로 반환될 수 있고, `HTTPException` 기반 404는 `detail` 문자열 또는 객체를 반환할 수 있다.
+
+현재 백엔드의 `AppServiceError` handler는 아래 형태를 반환한다.
+
+```json
+{
+  "error": {
+    "code": "SERVICE_ERROR",
+    "message": "서비스 오류가 발생했습니다.",
+    "detail": {}
+  }
+}
+```
+
+프로젝트 공통 오류 모델이 필요한 경우 아래 형태는 V2 planned 목표로 보되, 성공 응답을 감싸는 wrapper로 확장하지 않는다. 앱이 모든 오류를 한 형태로 처리해야 하는지 여부는 현석 Section 10에서 확정한다.
 
 ```json
 {
@@ -145,9 +192,20 @@ GET /health
 ```json
 {
   "status": "ok",
-  "service": "mobi-backend-api"
+  "service": "mobi-backend-api",
+  "environment": "development",
+  "firebaseMode": "mock"
 }
 ```
+
+필드 설명:
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `status` | string | 정상 시 `ok` |
+| `service` | string | 백엔드 서비스 식별자 |
+| `environment` | string | `APP_ENV` 값. 기본값은 `development` |
+| `firebaseMode` | string | `mock` 또는 `firebase-admin` |
 
 ---
 
