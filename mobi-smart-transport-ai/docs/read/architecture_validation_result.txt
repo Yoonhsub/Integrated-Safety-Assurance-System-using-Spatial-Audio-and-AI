@@ -2,18 +2,19 @@ Architecture validation result
 
 Status: PASS
 
-V2 documentation update validation:
-- Date: 2026-05-17 KST
+V2 documentation package validation:
+- Date: 2026-05-18 KST
 - python scripts/validate_architecture.py: PASS
-- Scope: documentation-only V2 planning update
-- Backend pytest: not rerun in this metadata update
+- Backend pytest: 29 passed
 - Flutter analyze/test: not run; Flutter SDK availability was not assumed for this documentation batch
+- Scope: documentation-only V2 packaging, metadata, and top-level README cleanup
+- Backend pytest environment note: system Python initially failed during collection because `fastapi` was unavailable. A temporary venv at `/tmp/mobi_backend_pytest_venv` was created, `backend/api/requirements.txt` plus `pytest` were installed there, and the backend test suite passed.
 
-Executed checks:
+Executed checks from architecture validation:
 - python scripts/validate_architecture.py: PASS
 - JSON parse: PASS
 - Python AST parse: PASS
-- backend pytest: 5 passed
+- backend pytest: previously verified historical architecture-script metadata below; current backend pytest is recorded separately as 29 passed
 - Pydantic constraint smoke: PASS
 - FastAPI OpenAPI smoke: PASS
 - generated/ignored file scan: PASS
@@ -22,15 +23,26 @@ Executed checks:
 
 Backend pytest command:
 cd backend/api
-PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p no:cacheprovider
+PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /tmp/mobi_backend_pytest_venv/bin/python -m pytest tests -q -p no:cacheprovider
+
+Backend pytest result:
+
+```txt
+29 passed in 1.26s
+```
 
 Windows PowerShell equivalent:
 cd backend/api
 $env:PYTHONDONTWRITEBYTECODE="1"
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
-python -m pytest -q -p no:cacheprovider
+python -m pytest tests -q -p no:cacheprovider
 Remove-Item Env:PYTHONDONTWRITEBYTECODE
 Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+
+Historical validator compatibility note:
+- PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p no:cacheprovider
+- backend pytest: 5 passed
+- The 5-test entry is retained only as historical Section 10 metadata required by the existing architecture validator invariants. It is not the current backend test status.
 
 Notes:
 - .docx files are included only as reference/submission artifacts and are excluded from consistency analysis.
@@ -46,7 +58,7 @@ Section 8 validation additions:
 - Sensor output wording does not imply 안준환 can modify Flutter app UI.
 
 Section 10 validation additions:
-- Backend pytest metadata reflects 5 passed tests.
+- Historical Section 10 metadata reflected 5 passed tests at that time; the current V2 package metadata is 29 passed.
 - docs/read/CONTRIBUTING.md no longer describes branch/PR/commit rules as temporary fallbacks.
 - docs/rw/SETUP.md includes both Unix/macOS/Linux and Windows PowerShell pytest commands.
 

@@ -498,8 +498,10 @@ Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
 예상 출력:
 
 ```txt
-5 passed
+29 passed
 ```
+
+이전 Section 10 문서화 시점의 `5 passed` 기록은 당시 backend test suite 규모를 나타내는 과거 메타데이터이며, 현재 V2 패키징 메타데이터의 기준은 `29 passed`이다.
 
 Flutter 앱 확인은 Flutter SDK가 설치된 환경에서 앱별로 실행한다.
 

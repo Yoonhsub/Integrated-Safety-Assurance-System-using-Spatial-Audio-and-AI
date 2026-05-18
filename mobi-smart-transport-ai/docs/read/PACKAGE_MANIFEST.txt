@@ -13,14 +13,28 @@
 Architecture validation: PASS
 JSON parse: PASS
 Python AST parse: PASS
-backend pytest: 5 passed
+backend pytest: 29 passed
 Pydantic constraint smoke: PASS
 FastAPI OpenAPI smoke: PASS
 generated/ignored file scan: PASS
 ZIP integrity: PASS
 v9 minor consistency cleanup checks: PASS
 ```
-- Section 7 carryover correction: validation timestamp invariant and docx reference/contract policy checks.
+- V2 documentation package metadata refreshed on 2026-05-18 KST.
+- Backend pytest 29 passed was rerun in a temporary `/tmp/mobi_backend_pytest_venv` environment after installing `backend/api/requirements.txt` plus `pytest`; the system Python attempt was blocked by missing `fastapi`.
+- `docs/read/FINAL_FILE_LIST.txt` remains the package-root file manifest for `mobi-smart-transport-ai`.
+- The top-level wrapper `README.md` one directory above `mobi-smart-transport-ai` is the project overview document; it is outside the package-root manifest scope.
+- Section 7 carryover correction remains historical metadata: validation timestamp invariant and docx reference/contract policy checks.
+
+## V2 documentation package status
+
+- `docs/rw/V2_SECTION_PLAN.md`: present; main 12-section V2 integration MVP plan.
+- `docs/rw/API_CONTRACTS.md`: current and V2 planned app-facing API status documented.
+- `docs/rw/ENVIRONMENT_VARIABLES.md`: mock/live transition variables documented.
+- `docs/rw/공통 진행사항.md` and `docs/rw/공통 진행사항.md`: V2 progress table present.
+- `docs/rw/선행작업의존성 정리.md` and `docs/rw/선행작업의존성 정리.md`: V2 dependency map present.
+- `docs/rw/SETUP.md`: V2 reading order and validation commands present.
+- `docs/read/PACKAGE_MANIFEST.txt` and `docs/read/architecture_validation_result.txt`: validation metadata aligned to Architecture validation PASS and Backend pytest 29 passed.
 
 
 [Section 8 role/ownership patch]
@@ -33,7 +47,8 @@ v9 minor consistency cleanup checks: PASS
 [Section 10 core documentation patch]
 - docs/rw/SETUP.md: backend pytest expected output updated from 1 passed to 5 passed and Windows PowerShell example added.
 - docs/read/CONTRIBUTING.md: obsolete temporary branch/PR/commit rule wording replaced with summary-rule wording.
-- docs/read/PACKAGE_MANIFEST.txt and docs/read/architecture_validation_result.txt: pytest result metadata updated to 5 passed.
+- Historical Section 10 baseline: backend pytest: 5 passed.
+- docs/read/PACKAGE_MANIFEST.txt and docs/read/architecture_validation_result.txt: at that time, pytest result metadata was updated to 5 passed; the current validation block above supersedes it with 29 passed.
 
 [Section 12 Flutter README clarity patch]
 - apps/passenger_app/README.md: passenger-only purpose, API targets, accessibility/STT/TTS scope, and mobile_sensors dependency policy clarified.

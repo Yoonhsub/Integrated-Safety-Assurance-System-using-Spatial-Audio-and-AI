@@ -188,7 +188,7 @@
 - Updated `docs/rw/SETUP.md` backend pytest expected output from `1 passed` to `5 passed`.
 - Added Windows PowerShell pytest command example to `docs/rw/SETUP.md` while retaining the Unix/macOS/Linux command.
 - Replaced obsolete `docs/read/CONTRIBUTING.md` wording that described branch, PR, and commit rules as temporary fallbacks before dedicated rule documents existed.
-- Updated `docs/read/PACKAGE_MANIFEST.txt` and `docs/read/architecture_validation_result.txt` validation metadata to reflect the current 5-test backend suite.
+- Updated `docs/read/PACKAGE_MANIFEST.txt` and `docs/read/architecture_validation_result.txt` validation metadata to reflect the then-current 5-test backend suite. This historical note is superseded by the V2 metadata cleanup below, where backend pytest is recorded as 29 passed.
 
 ## section 12 Flutter app README clarity patch
 
@@ -240,6 +240,10 @@
 - Updated `docs/rw/README.md` so a teammate opening a fresh zip can move from the overview to the V2 section plan, dependencies, setup, API contracts, and personal report documents.
 - Added the V2 dependency map to both Korean filename variants of `docs/rw/선행작업의존성 정리.md`.
 - Added V2 progress tracking tables and status values to both Korean filename variants of `docs/rw/공통 진행사항.md`.
+- Updated `docs/rw/API_CONTRACTS.md` with current and V2 planned app-facing API status.
+- Updated `docs/rw/ENVIRONMENT_VARIABLES.md` with V2 mock/live transition variables and planned Firebase/FCM flags.
 - Updated `docs/rw/SETUP.md` with the fresh-zip reading order, V2 local verification commands, mock/live checks, and pre-section checklist.
-- Planned follow-up documentation updates for API contracts, environment variables, validation metadata, package manifest, and team member final reports.
-- `docs/read/FINAL_FILE_LIST.txt` now includes the new `docs/rw/V2_SECTION_PLAN.md`; `docs/read/PACKAGE_MANIFEST.txt` will be refreshed after the remaining V2 document batches.
+- Updated team final reports with V2 next-section notes without overwriting April/May implementation records.
+- `docs/read/FINAL_FILE_LIST.txt` includes `docs/rw/V2_SECTION_PLAN.md`.
+- `docs/read/PACKAGE_MANIFEST.txt` and `docs/read/architecture_validation_result.txt` metadata are refreshed for the V2 documentation package state, including Architecture validation PASS and backend pytest 29 passed.
+- Added a project-level overview in the top-level wrapper `README.md`; `docs/rw/README.md` remains the V2 working guide.
