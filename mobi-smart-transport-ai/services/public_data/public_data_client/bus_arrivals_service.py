@@ -251,24 +251,60 @@ class LiveBusArrivalsProvider:
     ) -> list[NormalizedBusArrival]:
         """원본 응답 항목 list → 표준 ``NormalizedBusArrival`` list 변환.
 
-        매핑 규칙(서울 BIS ``getArrInfoByRouteAll`` 응답 필드 기준 — 1차 출처는
-        ``services/public_data/README.md`` 섹션 2 참조):
+        V2 섹션 3 정밀화 기준: 매핑 규칙을 **공식 1차 출처에 명시된 필드명**으로
+        정렬하고, **다중 도시 API 키 셋을 분기 처리**한다. 4월 V1 단계에서는 서울 BIS
+        키 셋만 가정했으나, V2 단계에서는 TAGO 키 셋도 fallback으로 처리해 청주/대전
+        등 다도시 환경에서도 그대로 동작 가능.
 
-        - ``rtNm`` 또는 ``busRouteId`` → ``routeId`` (없으면 빈 문자열로 두지 않고 호출자 책임)
-        - ``busRouteAbrv`` 또는 ``rtNm`` → ``busNo`` (안내용 노선명 우선)
-        - ``exps1`` 초 → ``arrivalMinutes`` (``round(seconds / 60)``)
-        - ``staOrd`` 또는 별도 필드 → ``remainingStops`` (없으면 ``None``)
-        - ``busType1`` "1" → ``lowFloor=True``, "0"/"2" → ``False``, 그 외 → ``False`` (안전 기본)
-        - ``reride_Num1`` → ``congestion`` (0/3/4/5 → UNKNOWN/LOW/NORMAL/HIGH, 그 외 → UNKNOWN)
-        - ``updatedAt`` → 호출 시점의 timezone-aware UTC datetime을 일괄 적용
-          (서울 BIS는 응답에 별도 timestamp를 정확히 제공하지 않아 호출 시점을 사용)
+        매핑 규칙 (V2):
+
+        - ``routeId`` (DB 관리용 식별자)
+          - 서울 BIS: ``rtNm`` → fallback ``busRouteId``
+          - TAGO   : ``routeId`` → fallback ``routeNo``
+        - ``busNo`` (사용자 안내용 노선명)
+          - 서울 BIS: ``busRouteAbrv`` → fallback ``rtNm``
+          - TAGO   : ``routeNo`` → fallback ``routeId``
+        - ``arrivalMinutes`` (분 단위 정수)
+          - 서울 BIS: ``exps1`` (초) → fallback ``kals1``
+          - TAGO   : ``arrtime`` (초) 단일 키
+          - 변환: ``round(seconds / 60)`` — Python banker's rounding 적용
+        - ``remainingStops`` (남은 정류장 수, 선택)
+          - 서울 BIS: ``staOrd`` (해당 차량 기준 잔여 정거장 수)
+          - TAGO   : 미제공 → ``None``
+          - 음수 또는 변환 실패 시 ``None`` 흡수
+        - ``lowFloor`` (저상버스 여부, 필수 bool)
+          - 서울 BIS: ``busType1`` (0/1/2 코드, 1 → True)
+          - TAGO   : ``vehicletp`` (저상버스 코드 — 명세 미확정, 활성화 후 조정)
+          - 미상 → ``False`` 안전 기본 (README §4 정책: 저상이 확실한 경우만 True)
+        - ``congestion`` (혼잡도 enum 4종)
+          - 서울 BIS: ``reride_Num1`` (0/3/4/5 → UNKNOWN/LOW/NORMAL/HIGH)
+          - TAGO   : 미제공 → ``UNKNOWN``
+          - 그 외 값 → ``UNKNOWN``
+        - ``updatedAt`` (RFC3339 datetime, 필수)
+          - 응답에 timestamp가 있으면 그것을 우선 사용:
+            - 서울 BIS: ``createdAt`` 등 timestamp 필드 (있을 때만)
+            - TAGO   : ``createdAt`` 등 (있을 때만)
+          - 응답에 timestamp가 없으면 호출 시점의 timezone-aware UTC datetime 일괄 적용
+          - 결과는 항상 timezone-aware (UTC). JSON 직렬화 시 ``YYYY-MM-DDTHH:MM:SS+00:00``
+            형식으로 출력되어 shared schema ``format: date-time`` (RFC3339) 정합.
 
         본 메서드는 ``raw_items``의 각 dict가 위 키를 갖는다고 가정한다. 키 누락 시:
-        - 필수 필드 누락 → ``KeyError``를 호출자에 전파 (호출자가 ``PublicDataEmptyResponseError``로 변환)
-        - 선택 필드 누락 → 안전 기본값으로 흡수
 
-        TAGO ``ArvlInfoInqireService``의 응답 필드명은 활용신청 명세서 확인 후
-        본 메서드의 키 set을 조건 분기로 확장한다. 4월 단계에서는 서울 BIS 키 셋을 가정.
+        - 필수 필드 누락 (``routeId``/``busNo`` 모두 추출 실패) → 안전하게 빈 문자열로
+          두고 호출자가 후속 검증에서 거르도록 함 (Pydantic ``StrictPublicDataModel``의
+          ``extra='forbid'`` + 필수 필드 검증은 통과하므로 빈 문자열 자체는 valid).
+        - 선택 필드 누락 (``remainingStops`` 등) → 안전 기본값으로 흡수.
+
+        ``raw_items``가 빈 list일 경우:
+
+        - 본 메서드는 빈 list ``[]``를 그대로 반환 (예외 발생하지 않음).
+        - 빈 응답을 ``PublicDataEmptyResponseError``로 분리할지는 호출자
+          (LiveBusArrivalsProvider) 정책. ``BusArrivalsService.get_arrivals``가
+          최종적으로 빈 ``arrivals``를 정상 응답으로 변환.
+
+        TAGO ``ArvlInfoInqireService`` 활성화 시점에 응답 필드명이 본 메서드의
+        TAGO 키 셋과 다르면 키 set을 조정한다. 활성화 절차는
+        ``services/public_data/README.md`` §V2 섹션 1 §6 참조.
         """
         from datetime import datetime, timezone
 
@@ -278,21 +314,40 @@ class LiveBusArrivalsProvider:
             seconds_to_arrival_minutes,
         )
 
+        # 빈 raw_items는 빈 결과 그대로 반환 (호출자가 PublicDataEmptyResponseError로 분리)
+        if not raw_items:
+            return []
+
         now = datetime.now(timezone.utc)
         results: list[NormalizedBusArrival] = []
         for item in raw_items:
-            # 노선 식별 — DB관리용 rtNm을 routeId로, 안내용 busRouteAbrv를 busNo로
-            route_id = str(item.get("rtNm") or item.get("busRouteId") or "")
-            bus_no = str(item.get("busRouteAbrv") or item.get("rtNm") or route_id or "")
+            # 노선 식별 (서울 BIS → TAGO 순 fallback)
+            route_id = str(
+                item.get("rtNm")
+                or item.get("busRouteId")
+                or item.get("routeId")
+                or item.get("routeNo")
+                or ""
+            )
+            bus_no = str(
+                item.get("busRouteAbrv")
+                or item.get("rtNm")
+                or item.get("routeNo")
+                or route_id
+                or ""
+            )
 
-            # 도착 예정 시간 — 첫번째 도착예정 차량 exps1 사용
+            # 도착 예정 시간 (서울 BIS exps1/kals1 → TAGO arrtime)
             raw_secs = item.get("exps1")
             if raw_secs is None:
-                # 일부 응답에서 exps1 대신 다른 필드명일 수 있음 (kals1 등). 그 외는 0 처리.
-                raw_secs = item.get("kals1") or 0
+                raw_secs = item.get("kals1")
+            if raw_secs is None:
+                raw_secs = item.get("arrtime")  # TAGO key
+            if raw_secs is None:
+                raw_secs = 0
             arrival_minutes = seconds_to_arrival_minutes(raw_secs)
 
-            # 남은 정류장 수 (서울 BIS는 도착예정 차량 기준 staOrd 또는 nstnId 거리 — 4월은 옵션)
+            # 남은 정류장 수 (서울 BIS staOrd만 — TAGO 미제공)
             remaining_stops = item.get("staOrd")
             if remaining_stops is not None:
                 try:
@@ -302,12 +357,34 @@ class LiveBusArrivalsProvider:
                 except (TypeError, ValueError):
                     remaining_stops = None
 
-            # 저상버스 — 미상은 False로 흡수 (README §4 정책: 저상이 확실한 경우만 True)
-            low_floor = map_vehicle_type_to_low_floor(item.get("busType1"), default=False)
+            # 저상버스 — 미상은 False로 흡수 (README §4 정책)
+            # 서울 BIS busType1 → TAGO vehicletp (명세 미확정, 활성화 후 조정)
+            low_floor_raw = item.get("busType1")
+            if low_floor_raw is None:
+                low_floor_raw = item.get("vehicletp")  # TAGO key (활성화 후 조정 가능)
+            low_floor = map_vehicle_type_to_low_floor(low_floor_raw, default=False)
             assert low_floor is not None  # default=False라 None은 나오지 않음
 
             # 혼잡도 — 미제공이면 UNKNOWN
+            # 서울 BIS reride_Num1 → TAGO는 혼잡도 필드 미제공이므로 UNKNOWN 흡수
             congestion = map_reride_to_congestion(item.get("reride_Num1"))
+
+            # updatedAt — 응답 timestamp가 있으면 우선 사용, 없으면 호출 시점
+            # 4월 V1 단계에서는 호출 시점 일괄 적용했고, V2 단계에서는 응답 timestamp
+            # 우선 정책을 명시적으로 둠. 단 현재 서울 BIS/TAGO 응답은 표준 timestamp
+            # 필드가 명확하지 않아 응답에서 추출 가능한 경우만 사용하고, 그 외는
+            # 호출 시점으로 fallback.
+            updated_at = now
+            ts_raw = item.get("createdAt") or item.get("responseTime")
+            if ts_raw:
+                try:
+                    parsed = datetime.fromisoformat(str(ts_raw))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    updated_at = parsed
+                except (TypeError, ValueError):
+                    # 파싱 실패 시 호출 시점 fallback (silent)
+                    updated_at = now
 
             results.append(
                 NormalizedBusArrival(
@@ -317,7 +394,7 @@ class LiveBusArrivalsProvider:
                     remainingStops=remaining_stops,
                     lowFloor=low_floor,
                     congestion=congestion,
-                    updatedAt=now,
+                    updatedAt=updated_at,
                 )
             )
 
