@@ -29,7 +29,15 @@ from .exceptions import (
     PublicDataNetworkError,
     PublicDataServiceKeyMissingError,
 )
-from .low_floor_filter import filter_low_floor_only, prioritize_low_floor
+from .low_floor_filter import (
+    AccessibilityMode,
+    apply_accessibility_filter,
+    filter_accessible_arrivals,
+    filter_low_floor_only,
+    is_accessible,
+    prioritize_low_floor,
+    sort_by_accessibility,
+)
 from .normalize import (
     map_reride_to_congestion,
     map_vehicle_type_to_low_floor,
@@ -47,6 +55,13 @@ __all__ = [
     "NormalizedBusArrival",
     "NormalizedBusArrivalsResponse",
     "CongestionLevel",
+    # Accessibility filter / sort (V2 신규)
+    "AccessibilityMode",
+    "apply_accessibility_filter",
+    "filter_accessible_arrivals",
+    "sort_by_accessibility",
+    "is_accessible",
+    # V1 하위 호환 (V2 신규 사용 권장)
     "prioritize_low_floor",
     "filter_low_floor_only",
     # Normalize helpers (단위 테스트와 다른 provider 구현이 재사용)
