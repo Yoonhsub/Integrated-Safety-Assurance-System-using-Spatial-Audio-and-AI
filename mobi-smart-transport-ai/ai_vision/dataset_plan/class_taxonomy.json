@@ -1,13 +1,58 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "owner": "김도성",
   "scope_phase": "2학기 본구현",
   "april_phase_note": "4월 단계에서는 본 taxonomy를 데이터 수집·라벨링 기준으로만 사용하며, 학습/추론 코드는 작성하지 않는다.",
+  "v2_section_note": "V2 단계 (2026-05~) 김도성 V2 섹션 9에서 7 학습 클래스 각각에 default_risk_level / detection_threshold / user_message_templates / related_reasons 4 필드를 추가하고, top-level에 reason_codes 카탈로그를 신설했다. 본 정밀화는 V2 섹션 7 (ai_vision/pipelines/README.md §3.4 Safety Event Schema 후보) + V2 섹션 8 (mock_safety_events.json 4건) 양쪽과 정합한다. 실제 detection_threshold 값은 model_research/model_candidates.csv의 후보 모델 (YOLOv11n / YOLOv8n / MobileNetV2 / EfficientDet-Lite) 학습 결과에 따라 2학기 단계 1·2에서 재조정될 수 있다 — 본 값은 V1 mock-first 단계의 안전한 default 가정 (0.5).",
   "annotation_format": {
     "primary": "bbox",
     "rationale": "교통약자 보행/승차 안전 안내 목적상 객체 위치만 정확하면 충분하고, 모바일 경량 모델(YOLO/EfficientDet-Lite 계열)도 bbox만 학습한다.",
     "future_extension": "차도/보도/점자블록 같은 면적 클래스는 2학기 후반 segmentation 도입을 별도 검토할 수 있다 (정책 미확정)."
   },
+  "reason_codes": [
+    {
+      "code": "bus_stop_recognized",
+      "default_risk_level": "info",
+      "ko_message": "버스 정류장을 인식했습니다.",
+      "trigger_primary_class": "bus_stop",
+      "description": "정류장 표지판을 인식했을 때 사용자에게 위치 안내."
+    },
+    {
+      "code": "approaching_bus",
+      "default_risk_level": "warn",
+      "ko_message": "버스가 접근하고 있습니다. 곧 도착합니다.",
+      "trigger_primary_class": "bus",
+      "description": "버스가 사용자가 서 있는 정류장에 접근 중일 때 승차 준비 안내."
+    },
+    {
+      "code": "bus_door_visible",
+      "default_risk_level": "info",
+      "ko_message": "버스 문이 보입니다. 안전하게 승차할 수 있습니다.",
+      "trigger_primary_class": "bus_door",
+      "description": "버스 문이 명확히 검출된 시점에 승차 위치 안내."
+    },
+    {
+      "code": "off_sidewalk",
+      "default_risk_level": "danger",
+      "ko_message": "차도로 진입하고 있습니다. 멈추세요.",
+      "trigger_primary_class": "roadway",
+      "description": "사용자가 보도가 아닌 차도 영역으로 이동 중일 때 즉시 경고."
+    },
+    {
+      "code": "obstacle_ahead",
+      "default_risk_level": "warn",
+      "ko_message": "전방에 장애물이 있습니다. 주의하세요.",
+      "trigger_primary_class": "obstacle",
+      "description": "보행 동선상 obstacle 검출 시 회피 안내."
+    },
+    {
+      "code": "tactile_paving_lost",
+      "default_risk_level": "danger",
+      "ko_message": "점자블록을 잃어버렸습니다. 잠시 멈추세요.",
+      "trigger_primary_class": "tactile_paving",
+      "description": "점자블록을 따라가던 사용자가 점자블록을 잃은 경우. detections=[] 케이스도 본 reason으로 발생 가능."
+    }
+  ],
   "classes": [
     {
       "id": "bus",
@@ -16,7 +61,13 @@
       "priority": "high",
       "label_rule": "차체 외곽 bbox. 차량 전체가 보이지 않으면 보이는 부분 기준. 다른 차량(트럭/승용차)과 혼동될 경우 라벨링 제외.",
       "ambiguous_neighbors": ["truck", "shuttle_van"],
-      "avg_per_image_hint": "0~2"
+      "avg_per_image_hint": "0~2",
+      "default_risk_level": "warn",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "버스가 접근하고 있습니다. 곧 도착합니다."
+      },
+      "related_reasons": ["approaching_bus"]
     },
     {
       "id": "bus_door",
@@ -25,7 +76,13 @@
       "priority": "high",
       "label_rule": "버스 차체 안의 문 영역 bbox. 닫힘/열림 구분하지 않음 (4월 범위에서는 단일 클래스). 후방 비상문은 라벨링 제외.",
       "ambiguous_neighbors": ["bus"],
-      "avg_per_image_hint": "0~2"
+      "avg_per_image_hint": "0~2",
+      "default_risk_level": "info",
+      "detection_threshold": 0.55,
+      "user_message_templates": {
+        "ko": "버스 문이 보입니다. 안전하게 승차할 수 있습니다."
+      },
+      "related_reasons": ["bus_door_visible"]
     },
     {
       "id": "bus_stop",
@@ -34,7 +91,13 @@
       "priority": "high",
       "label_rule": "정류장 표지판이 명확히 식별되는 경우 표지판 + 인접 승강장 bbox. 표지판이 가려져 있으면 라벨링 제외.",
       "ambiguous_neighbors": ["traffic_sign"],
-      "avg_per_image_hint": "0~1"
+      "avg_per_image_hint": "0~1",
+      "default_risk_level": "info",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "버스 정류장을 인식했습니다."
+      },
+      "related_reasons": ["bus_stop_recognized"]
     },
     {
       "id": "roadway",
@@ -43,7 +106,13 @@
       "priority": "high",
       "label_rule": "차량이 통행하는 도로면 bbox. 횡단보도 위쪽 도로면도 포함. 4월 단계에서는 segmentation이 아닌 bbox로 근사.",
       "ambiguous_neighbors": ["sidewalk", "crosswalk"],
-      "avg_per_image_hint": "1"
+      "avg_per_image_hint": "1",
+      "default_risk_level": "danger",
+      "detection_threshold": 0.6,
+      "user_message_templates": {
+        "ko": "차도로 진입하고 있습니다. 멈추세요."
+      },
+      "related_reasons": ["off_sidewalk"]
     },
     {
       "id": "sidewalk",
@@ -52,7 +121,13 @@
       "priority": "medium",
       "label_rule": "보도면 bbox. 차도와 분리 명확한 경우만 라벨링. 경계가 모호하면 라벨링 제외하고 차도를 우선.",
       "ambiguous_neighbors": ["roadway", "tactile_paving"],
-      "avg_per_image_hint": "0~2"
+      "avg_per_image_hint": "0~2",
+      "default_risk_level": "info",
+      "detection_threshold": 0.45,
+      "user_message_templates": {
+        "ko": "보도 위에서 안전하게 이동 중입니다."
+      },
+      "related_reasons": []
     },
     {
       "id": "obstacle",
@@ -61,7 +136,13 @@
       "priority": "medium",
       "label_rule": "보도/차도 구분 없이 보행자 동선을 막을 수 있는 고정/반고정 객체 bbox. 사람·자전거 같은 동적 객체는 본 클래스에서 제외.",
       "ambiguous_neighbors": ["bus_stop", "tactile_paving"],
-      "avg_per_image_hint": "0~3"
+      "avg_per_image_hint": "0~3",
+      "default_risk_level": "warn",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "전방에 장애물이 있습니다. 주의하세요."
+      },
+      "related_reasons": ["obstacle_ahead"]
     },
     {
       "id": "tactile_paving",
@@ -70,7 +151,13 @@
       "priority": "high",
       "label_rule": "점자블록 영역 bbox. 노란색이 명확히 보이는 경우 한정. 마모/오염되어 색이 거의 안 보이면 라벨링 제외.",
       "ambiguous_neighbors": ["sidewalk"],
-      "avg_per_image_hint": "0~2"
+      "avg_per_image_hint": "0~2",
+      "default_risk_level": "info",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "점자블록을 따라 이동 중입니다."
+      },
+      "related_reasons": ["tactile_paving_lost"]
     }
   ],
   "non_classes": [
@@ -86,6 +173,9 @@
   "policy_notes": [
     "어노테이터가 동의어·모호 케이스에서 자기 판단으로 새 클래스를 만들지 않는다. 새 클래스 후보가 나오면 labeling_standards.md의 '미정 케이스 보고' 절차를 따른다.",
     "동일 객체가 여러 클래스에 해당할 수 있는 경우 (예: 버스 정류장 표지판이 obstacle 동선을 막는 경우) bus_stop이 우선이며, obstacle은 라벨링하지 않는다 — 우선순위 high인 클래스를 항상 우선.",
-    "본 taxonomy의 7개 클래스 외 객체(자동차, 자전거, 신호등 등)는 4월 범위에서 라벨링 대상이 아니다. 단 데이터 수집 단계에서 영상에 등장하는 것은 정상이다 (배경 처리)."
+    "본 taxonomy의 7개 클래스 외 객체(자동차, 자전거, 신호등 등)는 4월 범위에서 라벨링 대상이 아니다. 단 데이터 수집 단계에서 영상에 등장하는 것은 정상이다 (배경 처리).",
+    "V2 정밀화 (v0.3.0): default_risk_level 은 detections 중 primaryClass에 해당하는 클래스의 위험도 기본값으로 사용한다. 실제 Safety Event의 riskLevel은 reason_codes 카탈로그가 우선 — 같은 클래스라도 reason에 따라 위험도가 달라질 수 있다 (예: bus 클래스가 'approaching_bus' reason에서는 warn, 단순 검출 시에는 info).",
+    "V2 정밀화 (v0.3.0): detection_threshold 는 후보 모델의 score 임계값. 본 값 미만 검출은 Safety Event 발생에서 제외. 본 값은 V1 mock-first 단계의 안전한 default 가정 (0.5±0.1) — 2학기 단계 1·2 학습 결과에 따라 model_research/model_candidates.csv 기반으로 재조정.",
+    "V2 정밀화 (v0.3.0): user_message_templates 는 단말이 Safety Event.message 필드를 생성할 때 사용하는 기본 안내 문구. 단말은 reason_codes 카탈로그의 ko_message를 우선 사용하고, 본 클래스별 템플릿은 fallback. backend는 사용자 메시지를 신뢰하지 않고 reason 기반으로 재가공 가능 (§3.4.3 명시)."
   ]
 }
