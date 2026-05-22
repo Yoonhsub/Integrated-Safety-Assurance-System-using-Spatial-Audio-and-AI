@@ -1,0 +1,87 @@
+{
+  "schema_version": "0.1.0",
+  "schema_reference": "ai_vision/pipelines/README.md §3.4 Safety Event Schema (V2 섹션 7 후보)",
+  "events": [
+    {
+      "eventId": "11111111-1111-4111-8111-111111111111",
+      "frameId": "22222222-2222-4222-8222-222222222222",
+      "capturedAt": "2026-05-22T09:00:00+09:00",
+      "riskLevel": "info",
+      "reason": "bus_stop_recognized",
+      "primaryClass": "bus_stop",
+      "detections": [
+        {
+          "classId": "bus_stop",
+          "bbox": { "x": 0.30, "y": 0.45, "w": 0.18, "h": 0.30 },
+          "score": 0.92
+        }
+      ],
+      "imageSize": { "width": 1920, "height": 1080 },
+      "modelInfo": { "name": "yolov11n", "version": "0.2.0" },
+      "message": "버스 정류장을 인식했습니다."
+    },
+    {
+      "eventId": "33333333-3333-4333-8333-333333333333",
+      "frameId": "44444444-4444-4444-8444-444444444444",
+      "capturedAt": "2026-05-22T09:00:05+09:00",
+      "riskLevel": "warn",
+      "reason": "approaching_bus",
+      "primaryClass": "bus",
+      "detections": [
+        {
+          "classId": "bus",
+          "bbox": { "x": 0.20, "y": 0.30, "w": 0.55, "h": 0.50 },
+          "score": 0.88
+        },
+        {
+          "classId": "bus_door",
+          "bbox": { "x": 0.42, "y": 0.45, "w": 0.10, "h": 0.30 },
+          "score": 0.71
+        },
+        {
+          "classId": "bus_stop",
+          "bbox": { "x": 0.05, "y": 0.50, "w": 0.10, "h": 0.25 },
+          "score": 0.65
+        }
+      ],
+      "imageSize": { "width": 1920, "height": 1080 },
+      "modelInfo": { "name": "yolov11n", "version": "0.2.0" },
+      "message": "버스가 접근하고 있습니다. 곧 도착합니다."
+    },
+    {
+      "eventId": "55555555-5555-4555-8555-555555555555",
+      "frameId": "66666666-6666-4666-8666-666666666666",
+      "capturedAt": "2026-05-22T09:00:10+09:00",
+      "riskLevel": "danger",
+      "reason": "off_sidewalk",
+      "primaryClass": "roadway",
+      "detections": [
+        {
+          "classId": "roadway",
+          "bbox": { "x": 0.00, "y": 0.55, "w": 1.00, "h": 0.45 },
+          "score": 0.81
+        },
+        {
+          "classId": "sidewalk",
+          "bbox": { "x": 0.70, "y": 0.55, "w": 0.30, "h": 0.45 },
+          "score": 0.74
+        }
+      ],
+      "imageSize": { "width": 1920, "height": 1080 },
+      "modelInfo": { "name": "yolov11n", "version": "0.2.0" },
+      "message": "차도로 진입하고 있습니다. 멈추세요."
+    },
+    {
+      "eventId": "77777777-7777-4777-8777-777777777777",
+      "frameId": "88888888-8888-4888-8888-888888888888",
+      "capturedAt": "2026-05-22T09:00:15+09:00",
+      "riskLevel": "danger",
+      "reason": "tactile_paving_lost",
+      "primaryClass": "tactile_paving",
+      "detections": [],
+      "imageSize": { "width": 1920, "height": 1080 },
+      "modelInfo": { "name": "yolov11n", "version": "0.2.0" },
+      "message": "점자블록을 잃어버렸습니다. 잠시 멈추세요."
+    }
+  ]
+}
