@@ -279,6 +279,84 @@ packages/shared_contracts/api/vision_safety_event.response.schema.json  (신규,
 
 ---
 
+### 3.5 Mock AI Inference Pipeline (V2 섹션 8 산출물)
+
+V2 섹션 7의 §3.4 Safety Event Schema 후보를 따라 **stub-only** mock pipeline을
+구현했다. **실제 모델 호출은 일절 하지 않으며**, fixture JSON을 로드해 후속 통합
+단계의 출발점으로 제공한다.
+
+#### 3.5.1 산출물
+
+```
+ai_vision/pipelines/
+├── fixtures/
+│   ├── __init__.py
+│   └── mock_safety_events.json        ← Safety Event 샘플 4건
+└── mock_inference_pipeline.py         ← fixture 로더 + helper API
+```
+
+#### 3.5.2 mock fixture 다양성 (4건)
+
+| eventId 끝 | riskLevel | reason | primaryClass | detections 수 |
+|---|---|---|---|---|
+| 111... | `info` | `bus_stop_recognized` | `bus_stop` | 1 |
+| 333... | `warn` | `approaching_bus` | `bus` | 3 (bus + bus_door + bus_stop) |
+| 555... | `danger` | `off_sidewalk` | `roadway` | 2 (roadway + sidewalk) |
+| 777... | `danger` | `tactile_paving_lost` | `tactile_paving` | **0 (빈 list)** |
+
+다양성 cover:
+
+- `riskLevel` enum 3종 (info / warn / danger) 모두 등장.
+- `detections` 단일 / 다중 / **빈 list** 모두 등장 — 점자블록 사라짐 같은 "객체가 안 보이는
+  것 자체가 사건" 케이스도 schema로 표현 가능함을 보여준다.
+- `primaryClass`는 4건 모두 `class_taxonomy.json` v0.2.0의 7개 학습 클래스 id 중 하나와 정합.
+- `bbox` 좌표는 모두 정규화 [0, 1] 범위. `score`도 [0, 1] 범위.
+- `imageSize` / `modelInfo` / `message` 모두 §3.4.2 후보 본문 그대로.
+
+#### 3.5.3 호출자 API
+
+```python
+from mock_inference_pipeline import (
+    get_all_events,            # 4건 모두 반환 (사본)
+    get_events_by_risk,        # riskLevel 필터 (enum 3종)
+    get_event_by_id,           # eventId 조회 (없으면 None)
+    get_fixture_schema_reference,  # 본 fixture가 따르는 schema 위치 문자열
+    MockInferenceError,        # fixture 손상/누락 시 raise
+)
+
+events = get_all_events()                              # 4건
+warn_events = get_events_by_risk("warn")                # 1건
+event = get_event_by_id("11111111-1111-4111-8111-111111111111")  # info 이벤트
+```
+
+또는 CLI 진입점으로 빠른 검사 가능:
+
+```
+python ai_vision/pipelines/mock_inference_pipeline.py
+```
+
+#### 3.5.4 후속 통합 단계 출발점 (완료 기준)
+
+본 V2 섹션 8 산출물은 V2_SECTION_PLAN §5 김도성 섹션 8 완료 기준
+"**후속 통합 단계 출발점 확보**"를 충족한다. 후속 활용 예:
+
+- **윤현섭 Flutter UI** — 2학기 단계 3 진입 전이라도 본 mock을 사용해 Safety Event를
+  음성·진동·시각 UI로 변환하는 통합 흐름을 시뮬레이션 가능.
+- **심현석 backend** — `POST /vision/safety-events` 신규 라우터 추가 시 본 mock 4건을
+  통합 테스트 입력으로 사용. FCM 알림 발송 + `rideRequests/{requestId}/safetyEvents/
+  {eventId}` 기록 흐름 검증.
+- **김도성 V2 섹션 10** (mock pipeline 검증) — 본 fixture가 §3.4 schema 계약을
+  시나리오 단위로 충족하는지 검증 (다음 섹션 작업).
+
+#### 3.5.5 실제 모델 추론 코드는 본 모듈 범위 밖
+
+본 모듈은 **stub-only**이며 실제 모델 호출은 하지 않는다. 실제 추론 코드는 2학기 단계 1·2
+에서 별도 작성 — 본 모듈은 그 시점에 (1) 실제 추론 모듈로 교체되거나, (2) mock 모드용
+으로 분리되어 보존될 수 있다 (V2 섹션 5의 BusArrivalsService mock/live 분리 패턴과
+같은 의도).
+
+---
+
 ---
 
 ## 4. 4월 시점 산출물 인덱스
