@@ -151,6 +151,7 @@ V2 단계 동작:
 - gateway가 받은 `BusArrivalsResponse`는 cache에 그대로 직렬화(`model_dump_json`)하고, app에 그대로 반환한다 — 변환 단계 0회.
 - `/busArrivals/{stopId}` cache payload와 `/bus-info/stops/{stopId}/arrivals` API 응답은 같은 `BusArrivalsResponse` 구조 (`docs/rw/API_CONTRACTS.md` §6·7, CONFLICT-20260518-1338-심현석-001에서 Option A로 합의).
 - gateway의 단위 테스트(`backend/api/tests/`)는 김도성 mock provider로 통과한다 — backend pytest 29 passed 기준선 유지.
+- **V2 섹션 6 검증 결과 (2026-05~)**: shared schema ↔ 김도성 `NormalizedBusArrivalsResponse` ↔ 심현석 `BusArrivalsResponse` 3 계약 필드명·타입·required·enum **1:1 일치, 불일치 0건**. backend gateway의 `_coerce_response`가 김도성 정상 출력에 영향 없음(`model_dump` 자동 변환). `_ensure_arrival_timestamps`의 fallback도 김도성 출력에 발동되지 않음(항상 `updatedAt` 포함). 자세한 검증 결과는 `docs/rw/공통 진행사항.md` V2 기록 0006 참조.
 
 ### 8. 알려진 제약 / V2 후속 항목
 
