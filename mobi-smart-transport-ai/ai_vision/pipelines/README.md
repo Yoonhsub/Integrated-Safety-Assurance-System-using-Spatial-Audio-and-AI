@@ -12,7 +12,7 @@
 본 영역은 4월 V1 단계의 4가지 산출물(데이터 수집 계획, 라벨링 기준, 모델 후보 리서치, 향후 파이프라인 초안)에 더해 V2 단계에서 다음을 보강한다:
 
 - **V2 섹션 7 — Safety Event Schema 후보**: `pipelines/README.md` §3.4에 detection + risk interpretation을 합본한 backend 호환 후보 schema를 정리. 정식 등록은 안준환 협의 후 (V2 섹션 11 또는 2학기 단계 2).
-- **V2 섹션 8 — Mock AI Inference Pipeline**: `pipelines/` 안에 mock fixture 추가 예정.
+- **V2 섹션 8 — Mock AI Inference Pipeline** (완료): `pipelines/mock_inference_pipeline.py` + `pipelines/fixtures/mock_safety_events.json` (Safety Event 샘플 4건, riskLevel 3종 + 빈 detections 케이스 cover).
 - **V2 섹션 9 — class taxonomy 정밀화**: `dataset_plan/class_taxonomy.json` 위험도·메시지·threshold 항목 보강 예정.
 - **V2 섹션 10 — mock pipeline 검증**: V2 섹션 8 산출물의 5 시나리오 검증 예정.
 
@@ -33,7 +33,11 @@ ai_vision/
 │   ├── model_candidates.csv           ← 5개 후보 정량 표 (입력 해상도/COCO mAP/라이선스 포함)
 │   └── model_comparison.md            ← 5개 차원 정성 비교 + 4월 결정/유보 분리
 └── pipelines/
-    └── README.md                       ← 향후 통합 흐름·인터페이스 후보 메모
+    ├── README.md                       ← 향후 통합 흐름·인터페이스 후보 메모 (+ V2 섹션 7 §3.4 + V2 섹션 8 §3.5)
+    ├── mock_inference_pipeline.py      ← V2 섹션 8 — stub-only mock pipeline + fixture 로더
+    └── fixtures/
+        ├── __init__.py
+        └── mock_safety_events.json     ← V2 섹션 8 — Safety Event 샘플 4건
 ```
 
 ---
