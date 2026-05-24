@@ -159,6 +159,104 @@ V2 단계 동작:
 - Pydantic 인스턴스 통합 smoke는 컨테이너 환경 제약(네트워크 차단으로 pip 설치 불가)으로 일부 검증 단계에서 NOT_RUN 처리됨. 실제 코드 동작은 stdlib + Fake 시뮬레이션으로 검증.
 - `docs/rw/ENVIRONMENT_VARIABLES.md` 요약 표(맨 위)에 `PUBLIC_DATA_API_KEY`·`PUBLIC_DATA_CITY_CODE` 항목이 누락되어 있음(본문에는 존재). 표 갱신은 공통 문서 영역이라 김도성 측에서 직접 수정하지 않고 V2 섹션 2(검증) 시점에 충돌 이슈 또는 협의 사항으로 처리 검토.
 
+## V2 통합 정리 (섹션 11) — 누적 인지 사항 + 협의 필요 사항 집계
+
+### 김도성 V2 12 섹션 진척 요약
+
+| 영역 | V2 섹션 | 핵심 산출물 | 상태 |
+|---|---|---|---|
+| public_data | §1 계약 정리 | README §V2 섹션 1 8 sub-section | PASS |
+| public_data | §2 검증 | 5 시나리오 검증 + DEBUG V2-0001 | PASS |
+| public_data | §3 정규화 강화 | `_normalize_arrivals` TAGO 분기 + timestamp 우선 | PASS |
+| public_data | §4 테스트 | `tests/test_bus_arrivals_service.py` 30 tests (skipped=2) | PASS |
+| public_data | §5 접근성 필터 | `low_floor_filter.py` V2 강화 (AccessibilityMode 4종) | PASS |
+| public_data | §6 Backend Gateway 검증 | 3 계약 필드명 불일치 0건 | PASS |
+| ai_vision | §7 Safety Event Schema | `pipelines/README.md` §3.4 (9 필드 후보) | PASS |
+| ai_vision | §8 Mock Pipeline | `mock_inference_pipeline.py` + fixture 4건 | PASS |
+| ai_vision | §9 Taxonomy 정밀화 | `class_taxonomy.json` v0.3.0 (reason_codes 6종) | PASS |
+| ai_vision | §10 Mock Pipeline 검증 | `tests/test_mock_inference_pipeline.py` 37 tests | PASS |
+| 통합 | §11 통합 정리 | 본 절 (누적 인지 사항 집계) | PASS |
+| 통합 | §12 최종 검증 | 다음 섹션 | TODO |
+
+### 누적 인지 사항 — 다른 팀원 협의 필요
+
+| # | 항목 | 발생 섹션 | 협의 대상 | 긴급도 |
+|---|---|---|---|---|
+| 1 | `ENVIRONMENT_VARIABLES.md` 요약 표에 `PUBLIC_DATA_API_KEY`·`PUBLIC_DATA_CITY_CODE` 누락 | §1 | 공통 문서 관리자 (전체) | 낮음 — 본문에는 존재 |
+| 2 | TAGO `vehicletp` 필드 저상버스 코드 매핑 미확정 | §3 | 공공데이터 API 명세 확인 후 자체 처리 | 2학기 |
+| 3 | TAGO 응답 timestamp 필드명 미확정 (`createdAt`/`responseTime` 2개 시도 + fallback) | §3 | 동일 | 2학기 |
+| 4 | `AccessibilityMode.STRICT` 혼잡도 임계값 (LOW/NORMAL만 통과) | §5 | 윤현섭 (UX) | 2학기 |
+| 5 | `include_congestion=True` 옵션 활성화 시점 | §5 | 윤현섭 (Flutter UI) | 2학기 |
+| 6 | backend 라우터에 accessibility query parameter 추가 여부 | §6 | 심현석 (backend) | 2학기 |
+| 7 | `riskLevel` enum 3종 + `reason` snake_case 5종 UX 확정 | §7 | 윤현섭 (UX) + 심현석 (이벤트 가공) | 2학기 |
+| 8 | `primaryClass` ↔ `detections[].classId` cross-field validator 위치 (Pydantic vs backend) | §7 | 안준환 (shared_contracts) + 심현석 | 2학기 |
+| 9 | `vision_safety_event.*.schema.json` 정식 등록 | §7 | 안준환 (`packages/shared_contracts/`) | 2학기 |
+| 10 | `detection_threshold` V1 default (0.5±0.1) → 실 학습 후 재조정 | §9 | 자체 (모델 학습 후) | 2학기 |
+| 11 | `user_message_templates` 다국어 (en/ja) 확장 | §9 | 윤현섭 (i18n) | 2학기 |
+| 12 | `sidewalk` 클래스 `related_reasons` 빈 list — 보도 안전 안내 reason 추가 여부 | §9 | 윤현섭 (UX) | 2학기 |
+
+### 누적 인지 사항 — 김도성 자체 해결 (2학기)
+
+| # | 항목 | 상태 |
+|---|---|---|
+| A | `LiveBusArrivalsProvider._call_arrivals_api` 실 구현 | stub (NotImplementedError) |
+| B | V1 docstring 섹션 번호 → V2 용어 갱신 | **V2 섹션 11에서 처리 완료** |
+| C | `_normalize_arrivals` TAGO 실 응답 검증 | 2학기 활성화 시점 |
+| D | 실 모델 학습 후 detection_threshold 재조정 | 2학기 단계 1·2 |
+
+### 김도성 V2 산출물 통합 인덱스
+
+```
+services/public_data/
+├── README.md                              ← V2 섹션 1 계약 + V2 섹션 6 검증 + V2 섹션 11 통합 정리
+├── examples/
+│   └── mock_bus_arrivals.json             ← V1 mock 4건 (shared schema 정합)
+├── public_data_client/
+│   ├── __init__.py                        ← V2 섹션 5 export 갱신 (7종 V2 신규 + 2종 V1 호환)
+│   ├── schemas.py                         ← V1 StrictPublicDataModel + 7 필드
+│   ├── exceptions.py                      ← V1 4 예외 계층
+│   ├── data_go_kr_client.py               ← V1 + V2 섹션 11 docstring 갱신
+│   ├── bus_arrivals_service.py             ← V2 섹션 3 TAGO 분기 + timestamp 우선 + V2 섹션 11 docstring 갱신
+│   ├── normalize.py                       ← V1 3 헬퍼 (seconds_to_minutes, vehicle_to_low_floor, reride_to_congestion)
+│   └── low_floor_filter.py                ← V2 섹션 5 강화 (AccessibilityMode 4종 + dispatch)
+└── tests/
+    └── test_bus_arrivals_service.py        ← V2 섹션 4 (30 tests, skipped=2)
+
+ai_vision/
+├── README.md                              ← V2 단계 진입 노트 + V2 섹션 7~10 안내
+├── dataset_plan/
+│   ├── class_taxonomy.json                ← V2 섹션 9 v0.3.0 (reason_codes 6종 + V2 4 필드)
+│   ├── data_collection_guide.md           ← V1
+│   └── labeling_standards.md              ← V1
+├── model_research/
+│   ├── model_candidates.csv               ← V1
+│   └── model_comparison.md                ← V1
+└── pipelines/
+    ├── README.md                          ← V2 섹션 7 §3.4 + V2 섹션 8 §3.5
+    ├── mock_inference_pipeline.py          ← V2 섹션 8 (stub-only, fixture 로더)
+    ├── fixtures/
+    │   ├── __init__.py
+    │   └── mock_safety_events.json        ← V2 섹션 8 (Safety Event 4건)
+    └── tests/
+        ├── __init__.py
+        └── test_mock_inference_pipeline.py ← V2 섹션 10 (37 tests)
+```
+
+### 테스트 현황 요약
+
+| 패키지 | 테스트 수 | 결과 | 비고 |
+|---|---|---|---|
+| `services.public_data.tests` | 30 (skipped=2) | OK | Pydantic/httpx 미설치 시 인스턴스 2건 skip |
+| `ai_vision.pipelines.tests` | 37 | OK | stdlib만으로 완전 실행 |
+| **합계** | **67 (skipped=2)** | **OK** | |
+
+### V2 섹션 11에서 처리한 것
+
+- V1 docstring 섹션 번호 4건 → V2 용어로 갱신 (`bus_arrivals_service.py` 3건 + `data_go_kr_client.py` 1건)
+- 누적 인지 사항 12건 + 자체 해결 4건 한 곳에 집계
+- 두 담당 영역 통합 인덱스 작성
+- 테스트 현황 요약
+
 ## 공공데이터 API 조사 결과 (섹션 2)
 
 > 이 절은 4월 섹션 2에서 김도성의 에이전트가 실제 공식 출처를 확인하고 정리한 1차 조사 결과이다.
