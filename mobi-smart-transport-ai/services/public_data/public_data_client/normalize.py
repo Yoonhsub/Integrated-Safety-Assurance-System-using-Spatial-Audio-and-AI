@@ -72,6 +72,13 @@ def map_vehicle_type_to_low_floor(
         return True
     if s in {"0", "2"}:  # 일반, 굴절 → False
         return False
+    
+    # TAGO vehicletp 한국어 문자열 (V2 청주 활성화 후 추가)
+    if "저상" in s:
+        return True
+    if "일반" in s or "좌석" in s:
+        return False
+    
     return default  # 알 수 없는 코드
 
 
