@@ -7,19 +7,19 @@
 
 mock/real 경계는 ``PUBLIC_DATA_USE_MOCK`` 환경변수가 결정한다.
 - ``PUBLIC_DATA_USE_MOCK=true``  (또는 미설정): mock 응답 사용. 4월 MVP 기본.
-- ``PUBLIC_DATA_USE_MOCK=false``               : real provider 사용 (섹션 6에서 본격 구현).
+- ``PUBLIC_DATA_USE_MOCK=false``               : real provider 사용 (README §V2 섹션 1 §6 활성화 절차 참조).
 
 설계 책임 분리:
 - ``DataGoKrClient``       : transport-only. HTTP 호출과 예외 변환.
 - ``MockBusArrivalsProvider`` : mock JSON 파일을 읽어 표준 모델로 변환.
-- ``LiveBusArrivalsProvider`` : 실제 API 호출 + 원본 응답 normalize (섹션 6).
+- ``LiveBusArrivalsProvider`` : 실제 API 호출 + 원본 응답 normalize (활성화 시점에 구현).
 - ``BusArrivalsService``    : 환경변수 기반 disp + 호출자 진입점.
 
-TODO(김도성, 섹션 6):
+V2 미구현 사항 (2학기 활성화 시점):
 - ``LiveBusArrivalsProvider._call_arrivals_api`` 실제 endpoint 호출 구현.
-- 원본 응답 → ``NormalizedBusArrival`` 변환 (busType→lowFloor, reride_Num→congestion).
-- 빈 응답을 빈 ``arrivals`` 정상 응답으로 만들지 예외로 처리할지 정책 확정.
-- 저상버스 우선 정렬/필터를 호출 결과에 자동 적용할지 결정.
+- 원본 응답 → ``NormalizedBusArrival`` 변환은 V2 섹션 3에서 TAGO 키 셋 분기로 정밀화됨.
+- 빈 응답 → ``BusArrivalsService.get_arrivals``가 ``PublicDataEmptyResponseError`` catch 후 빈 ``arrivals`` 정상 응답 반환 (V2 섹션 3 정밀화).
+- 저상버스 우선 정렬/필터 → ``low_floor_filter.py`` V2 섹션 5에서 ``AccessibilityMode`` 4종 + ``apply_accessibility_filter`` dispatch 구현 완료.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class LiveBusArrivalsProvider:
         self.client.require_service_key()
 
         # 2. 실제 endpoint 호출 — 4월 단계는 명세 미확보(TAGO) + 신규 인증키 발급 불가(서울 BIS)
-        # 운영 환경이라 호출 본체를 stub으로 유지한다. 명세서 확보 후 섹션 8 또는 10에서
+        # 운영 환경이라 호출 본체를 stub으로 유지한다. 명세서 확보 후 2학기 단계에서
         # _call_arrivals_api 본체를 구현하면 본 메서드는 다음 흐름으로 동작한다:
         #
         #     raw_items = self._call_arrivals_api(stop_id)
@@ -464,7 +464,7 @@ class BusArrivalsService:
     def empty_response(stop_id: str) -> NormalizedBusArrivalsResponse:
         """현재 운행 중인 버스가 없는 정류장에 대한 빈 응답 헬퍼.
 
-        섹션 6에서 ``PublicDataEmptyResponseError`` 캐치 후 호출자가 빈 응답으로
+        섹션 3 정밀화에서 ``PublicDataEmptyResponseError`` 캐치 후 호출자가 빈 응답으로
         대체하고 싶을 때 사용 가능. updatedAt이 필요 없는 빈 arrivals 응답이라
         timezone-aware datetime 의존성이 없다.
         """

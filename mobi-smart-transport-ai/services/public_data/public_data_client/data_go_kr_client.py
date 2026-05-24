@@ -16,11 +16,12 @@ backend/api나 Flutter 앱은 이 모듈을 직접 호출하지 않으며,
 - normalize는 ``BusArrivalsService`` 또는 별도 normalize 함수가 책임진다 (섹션 6).
 - 예외는 ``services/public_data/public_data_client/exceptions.py``의 계층을 사용한다.
 
-TODO(김도성, 섹션 6):
+V2 미구현 사항 (2학기 활성화 시점):
 - 실제 endpoint(예: TAGO ``/1613000/ArvlInfoInqireService/getSttnAcctoArvlPrearngeInfoList``)
   와 매개변수(``cityCode``, ``nodeId`` 등)를 별도 메서드로 분리한다.
 - XML/JSON 응답 파싱.
 - 호출 제한, 일시 오류 retry/backoff (운영 단계).
+- 활성화 절차는 ``services/public_data/README.md`` §V2 섹션 1 §6 참조.
 """
 
 from __future__ import annotations
