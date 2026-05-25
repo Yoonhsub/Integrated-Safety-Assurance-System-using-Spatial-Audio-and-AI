@@ -141,6 +141,66 @@ print(signal.toJson());
 앱 화면에서 가까움/멀어짐을 어떻게 보여줄지는 Flutter 앱 담당 영역입니다. 이 패키지는 값 계산과 모델 변환만 담당합니다.
 
 
+
+## V2 섹션 3 RSSI 거리 구간 추정 기준
+
+섹션 3에서는 RSSI 값을 정밀한 meter 값 하나로 단정하기보다 Passenger App이 안정적으로 소비할 수 있는 거리 구간을 우선하도록 `BeaconDistanceZone`과 `BeaconDistanceEstimate`를 추가했습니다. 실제 버스 정류장 환경에서는 사람, 벽, 스마트폰 기종, 비콘 설치 높이에 따라 RSSI가 흔들리므로 화면이나 음성 안내에서는 구간 기반 판단을 기본으로 사용합니다.
+
+앱 안내용 거리 구간은 다음 네 가지입니다.
+
+```txt
+BeaconDistanceZone.near    -> NEAR
+BeaconDistanceZone.medium  -> MEDIUM
+BeaconDistanceZone.far     -> FAR
+BeaconDistanceZone.unknown -> UNKNOWN
+```
+
+기본 변환 기준은 다음과 같습니다. 이 값은 실측 보정 전 초기 기준입니다.
+
+```txt
+VERY_CLOSE / CLOSE -> NEAR
+MEDIUM             -> MEDIUM
+FAR                -> FAR
+LOST               -> UNKNOWN
+
+estimatedDistanceMeters <= 3.0m -> NEAR
+estimatedDistanceMeters <= 8.0m -> MEDIUM
+estimatedDistanceMeters >  8.0m -> FAR
+null / invalid RSSI             -> UNKNOWN
+```
+
+`BeaconDistanceEstimator.estimate(rssi)`는 다음 값을 함께 반환합니다.
+
+```txt
+rssi
+signalLevel
+distanceZone
+estimatedDistanceMeters
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+const estimator = BeaconDistanceEstimator();
+final estimate = estimator.estimate(-70);
+
+print(estimate.distanceZone.toJsonValue());
+print(estimate.estimatedDistanceMeters);
+```
+
+경계값 근처에서 안내가 계속 바뀌지 않도록 `stabilizeZone()`도 제공합니다. 예를 들어 3m 근처에서 `NEAR`와 `MEDIUM`이 반복 전환되는 경우, `zoneHysteresisMeters` 기본값 `0.75m` 범위 안에서는 이전 구간을 유지할 수 있습니다.
+
+```dart
+final candidate = estimator.classifyZoneFromMeters(3.1);
+final stableZone = estimator.stabilizeZone(
+  previousZone: BeaconDistanceZone.near,
+  candidateZone: candidate,
+  estimatedDistanceMeters: 3.1,
+);
+```
+
+이 섹션의 핵심은 실제 거리가 정확히 몇 m인지 단정하는 것이 아니라, 앱과 오디오 cue가 사용할 `near`, `medium`, `far`, `unknown` 기준을 명확히 제공하는 것입니다. 실기기 보정 전까지 이 값은 확정 현장값이 아니라 mock/replay와 앱 연결을 위한 안정적인 초기 계약입니다.
+
 ## V2 섹션 2 Sensor 모델 검증 기준
 
 섹션 2에서는 센서 도메인 모델이 앱에서 안전하게 소비될 수 있도록 null, unknown beacon, invalid RSSI, timestamp, distance 변환 기준을 명시하고 코드에 반영했습니다. 이 기준은 실제 BLE 연동을 의미하지 않고, JSON payload와 패키지 내부 모델 변환의 안전장치입니다.
