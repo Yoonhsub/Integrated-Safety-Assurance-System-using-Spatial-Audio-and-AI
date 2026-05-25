@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/backend_api_client.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -8,6 +9,36 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const String _apiBaseUrl = String.fromEnvironment(
+  'MOBI_API_BASE_URL',
+  defaultValue: 'http://localhost:8000',
+);
+
+final BackendApiClient _backendApiClient = const BackendApiClient(
+  baseUrl: _apiBaseUrl,
+  useMockData: false,
+);
+
+  BackendHealthStatus? _backendHealthStatus;
+  bool _isLoadingBackendHealth = true;
+
+  @override
+  void initState() {
+    super.initState();
+  _loadBackendHealthStatus();
+}
+
+Future<void> _loadBackendHealthStatus() async {
+  final healthStatus = await _backendApiClient.fetchHealthStatus();
+
+  if (!mounted) return;
+
+  setState(() {
+    _backendHealthStatus = healthStatus;
+    _isLoadingBackendHealth = false;
+  });
+}
+
   final List<_MockRideRequest> _rideRequests = const [
     _MockRideRequest(
       passengerLabel: '시각 보조가 필요한 승객',
@@ -43,6 +74,19 @@ class _HomePageState extends State<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _HeaderSection(),
+              const SizedBox(height: 16),
+              _InfoCard(
+                title: '백엔드 연결 상태',
+                statusLabel: _isLoadingBackendHealth
+                  ? '확인 중'
+                  : (_backendHealthStatus?.isAvailable ?? false)
+                     ? '연결 성공'
+                     : '연결 실패',
+                description: _backendHealthStatus?.message ??
+                  '백엔드 연결 상태를 확인하는 중입니다.',
+                icon: Icons.cloud_done_outlined,
+                semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
+              ),
               const SizedBox(height: 24),
               _InfoCard(
                 title: '운행 상태',

@@ -10,16 +10,27 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final VoiceGuideService _voiceGuideService = VoiceGuideService();
-  final BackendApiClient _backendApiClient = const BackendApiClient(
-    baseUrl: 'mock://passenger-app',
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'MOBI_API_BASE_URL',
+    defaultValue: 'http://localhost:8000',
   );
 
-  @override
-  void initState() {
-    super.initState();
-    _loadPassengerHomeSnapshot();
-  }
+  final VoiceGuideService _voiceGuideService = VoiceGuideService();
+
+  final BackendApiClient _backendApiClient = const BackendApiClient(
+    baseUrl: _apiBaseUrl,
+    useMockData: false,
+  );
+
+  BackendHealthStatus? _backendHealthStatus;
+  bool _isLoadingBackendHealth = true;
+
+@override
+void initState() {
+  super.initState();
+  _loadBackendHealthStatus();
+  _loadPassengerHomeSnapshot();
+}
 
   Future<void> _loadPassengerHomeSnapshot() async {
     final snapshot = await _backendApiClient.fetchPassengerHomeSnapshot();
@@ -31,6 +42,17 @@ class _HomePageState extends State<HomePage> {
       _isLoadingHomeSnapshot = false;
     });
   }
+
+  Future<void> _loadBackendHealthStatus() async {
+  final healthStatus = await _backendApiClient.fetchHealthStatus();
+
+  if (!mounted) return;
+
+  setState(() {
+    _backendHealthStatus = healthStatus;
+    _isLoadingBackendHealth = false;
+  });
+}
 
   PassengerHomeSnapshot? _homeSnapshot;
   bool _isLoadingHomeSnapshot = true;
@@ -100,6 +122,19 @@ class _HomePageState extends State<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _HeaderSection(),
+              const SizedBox(height: 16),
+              _StatusCard(
+                title: '백엔드 연결 상태',
+                statusLabel: _isLoadingBackendHealth
+                  ? '확인 중'
+                  : (_backendHealthStatus?.isAvailable ?? false)
+                    ? '연결 성공'
+                    : '연결 실패',
+                description: _backendHealthStatus?.message ??
+                  '백엔드 연결 상태를 확인하는 중입니다.',
+                icon: Icons.cloud_done_outlined,
+                semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
+              ),
               const SizedBox(height: 24),
               _VoiceActionButton(
                 label: voiceButtonLabel,
