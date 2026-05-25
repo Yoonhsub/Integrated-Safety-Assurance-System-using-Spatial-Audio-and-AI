@@ -537,3 +537,52 @@ print(snapshot.toJson());
 - RSSI는 벽, 사람, 스마트폰 기종, 비콘 설치 위치에 따라 흔들릴 수 있으므로 `APPROACHING`/`MOVING_AWAY`는 정밀 위치 판정이 아니라 안내용 힌트입니다.
 - `distanceStableThresholdMeters`, `rssiStableThreshold`, `maxSignalAge`는 현장 테스트 후 조정해야 합니다.
 - 이 패키지는 가까워짐/멀어짐 상태를 계산할 뿐, 실제 TTS 재생이나 골전도 이어폰 연결 제어는 Flutter 앱 또는 오디오 담당 모듈에서 처리해야 합니다.
+
+## V2 섹션 4 RSSI / smoothing 검증 기준
+
+섹션 4에서는 섹션 3에서 만든 거리 구간 판단이 순간 RSSI 튐과 신호 끊김 상황에서 과도하게 흔들리지 않는지 검증했습니다. 검증 대상은 `RssiMovingAverageSmoother`와 `BeaconDistanceEstimator.classifyZone()` 조합입니다.
+
+검증 기준은 다음 네 가지입니다.
+
+```txt
+연속 강한 신호: NEAR 구간 유지
+연속 약한 신호: FAR 구간 유지
+갑자기 튀는 신호: 단일 spike가 전체 안내 구간을 즉시 지배하지 않음
+신호 끊김: invalid/missing RSSI가 반복되면 stale RSSI를 버리고 UNKNOWN으로 전환 가능
+```
+
+이를 위해 `RssiMovingAverageSmoother`에 다음 기준을 추가했습니다.
+
+```txt
+windowSize: 이동 평균에 사용할 최근 RSSI 샘플 개수
+maxSingleSampleDelta: 단일 샘플이 현재 평균에서 한 번에 바뀔 수 있는 최대 RSSI 폭
+lostResetThreshold: invalid/missing RSSI가 연속으로 몇 번 발생하면 window를 초기화할지 정하는 값
+consecutiveLostSamples: 연속 신호 끊김 기록 횟수
+recordSignalLost(): 스캔 결과 없음 또는 RSSI 신뢰 불가 상황을 기록하는 helper
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final smoother = RssiMovingAverageSmoother(
+  windowSize: 5,
+  maxSingleSampleDelta: 10,
+  lostResetThreshold: 3,
+);
+
+smoother.addSample(-70);
+smoother.addSample(-71);
+smoother.addSample(-40); // sudden spike는 현재 평균 근처로 완화됨
+
+smoother.recordSignalLost();
+smoother.recordSignalLost();
+smoother.recordSignalLost(); // stale RSSI window reset
+```
+
+섹션 4 검증 파일은 아래 경로에 추가했습니다.
+
+```txt
+packages/mobile_sensors/test/rssi_smoothing_test.dart
+```
+
+현재 작업 환경에는 Dart/Flutter SDK가 없어 `flutter test`를 직접 실행하지 못했습니다. 따라서 테스트 파일은 작성 완료 상태이며, 실제 실행 결과는 Flutter SDK가 있는 환경에서 확인해야 합니다.

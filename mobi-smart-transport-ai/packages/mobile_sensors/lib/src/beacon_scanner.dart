@@ -38,13 +38,25 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
     this.estimator = const BeaconDistanceEstimator(),
     this.scanTimeout = const Duration(seconds: 10),
     this.smoothingWindowSize = 5,
+    this.maxSingleSampleDelta = 10,
+    this.lostResetThreshold = 3,
     BeaconIdResolver? beaconIdResolver,
   })  : assert(smoothingWindowSize > 0, 'smoothingWindowSize must be greater than 0'),
+        assert(
+          maxSingleSampleDelta > 0,
+          'maxSingleSampleDelta must be greater than 0',
+        ),
+        assert(
+          lostResetThreshold > 0,
+          'lostResetThreshold must be greater than 0',
+        ),
         beaconIdResolver = beaconIdResolver ?? defaultBeaconIdResolver;
 
   final BeaconDistanceEstimator estimator;
   final Duration scanTimeout;
   final int smoothingWindowSize;
+  final int maxSingleSampleDelta;
+  final int lostResetThreshold;
   final BeaconIdResolver beaconIdResolver;
 
   final Map<String, RssiMovingAverageSmoother> _smoothers = {};
@@ -84,7 +96,11 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
 
           final smoother = _smoothers.putIfAbsent(
             beaconId,
-            () => RssiMovingAverageSmoother(windowSize: smoothingWindowSize),
+            () => RssiMovingAverageSmoother(
+              windowSize: smoothingWindowSize,
+              maxSingleSampleDelta: maxSingleSampleDelta,
+              lostResetThreshold: lostResetThreshold,
+            ),
           );
           final smoothedRssi = smoother.addSample(result.rssi);
 

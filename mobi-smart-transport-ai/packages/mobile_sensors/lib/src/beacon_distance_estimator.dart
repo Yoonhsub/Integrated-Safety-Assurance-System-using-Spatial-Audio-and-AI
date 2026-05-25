@@ -292,11 +292,33 @@ class BeaconDistanceEstimator {
 /// 이 helper는 현장 검증값을 가장하지 않는다. BLE RSSI의 순간 튐을 완화하기
 /// 위한 패키지 내부 기본 구조이며, window 크기는 테스트와 현장 측정 후 조정한다.
 class RssiMovingAverageSmoother {
-  RssiMovingAverageSmoother({this.windowSize = 5})
-      : assert(windowSize > 0, 'windowSize must be greater than 0');
+  RssiMovingAverageSmoother({
+    this.windowSize = 5,
+    this.maxSingleSampleDelta = 10,
+    this.lostResetThreshold = 3,
+  })  : assert(windowSize > 0, 'windowSize must be greater than 0'),
+        assert(
+          maxSingleSampleDelta > 0,
+          'maxSingleSampleDelta must be greater than 0',
+        ),
+        assert(
+          lostResetThreshold > 0,
+          'lostResetThreshold must be greater than 0',
+        );
 
   final int windowSize;
+
+  /// 한 번의 RSSI 샘플이 현재 smoothing 값에서 허용되는 최대 변화 폭이다.
+  ///
+  /// BLE RSSI는 순간적으로 크게 튈 수 있으므로, 단일 샘플이 안내 구간을
+  /// 즉시 바꾸지 않도록 현재 평균 근처로 보정한다.
+  final int maxSingleSampleDelta;
+
+  /// invalid RSSI 또는 신호 끊김이 몇 번 연속 발생하면 window를 초기화할지 정한다.
+  final int lostResetThreshold;
+
   final Queue<int> _samples = Queue<int>();
+  int _consecutiveLostSamples = 0;
 
   /// 현재 smoothing에 사용 중인 샘플 목록이다.
   List<int> get samples => List.unmodifiable(_samples);
@@ -304,22 +326,60 @@ class RssiMovingAverageSmoother {
   /// 현재 샘플이 없는지 여부이다.
   bool get isEmpty => _samples.isEmpty;
 
-  /// 모든 샘플을 제거한다.
+  /// 연속으로 기록된 invalid/missing RSSI 횟수이다.
+  int get consecutiveLostSamples => _consecutiveLostSamples;
+
+  /// 모든 샘플과 연속 신호 끊김 카운터를 제거한다.
   void reset() {
     _samples.clear();
+    _consecutiveLostSamples = 0;
   }
 
   /// 새 RSSI 값을 추가하고 이동 평균 RSSI를 반환한다.
+  ///
+  /// invalid RSSI는 정상 샘플로 넣지 않는다. 대신 연속 신호 끊김으로 기록하고,
+  /// [lostResetThreshold]에 도달하면 기존 평균을 초기화해 오래된 RSSI가 계속
+  /// 남아 있는 문제를 막는다.
   int addSample(int rssi) {
     if (!SensorModelValidation.isValidRssi(rssi)) {
-      return smoothedRssi;
+      return recordSignalLost();
     }
 
-    _samples.addLast(rssi);
+    _consecutiveLostSamples = 0;
+    final boundedRssi = _boundOutlier(rssi);
+
+    _samples.addLast(boundedRssi);
     while (_samples.length > windowSize) {
       _samples.removeFirst();
     }
     return smoothedRssi;
+  }
+
+  /// 스캔 결과가 없거나 RSSI를 신뢰할 수 없는 경우 호출하는 helper이다.
+  ///
+  /// 신호가 한두 번만 비는 상황에서는 마지막 평균을 유지하되, 여러 번 연속
+  /// 비면 window를 비워서 다음 계산이 `LOST/UNKNOWN`으로 이어지게 한다.
+  int recordSignalLost() {
+    _consecutiveLostSamples += 1;
+    if (_consecutiveLostSamples >= lostResetThreshold) {
+      reset();
+    }
+    return smoothedRssi;
+  }
+
+  int _boundOutlier(int rssi) {
+    if (_samples.isEmpty) return rssi;
+
+    final current = smoothedRssi;
+    final delta = rssi - current;
+    if (delta.abs() <= maxSingleSampleDelta) {
+      return rssi;
+    }
+
+    if (delta > 0) {
+      return current + maxSingleSampleDelta;
+    }
+    return current - maxSingleSampleDelta;
   }
 
   /// 현재 window의 평균 RSSI이다.
