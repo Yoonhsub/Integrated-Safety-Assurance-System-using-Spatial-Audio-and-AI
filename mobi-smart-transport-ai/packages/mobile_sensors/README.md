@@ -11,7 +11,7 @@
 - RSSI smoothing/거리 추정 구조
 - RSSI 기반 가까움/멀어짐 상태 계산
 - 스마트폰 방향/나침반 센서값 수집 구조
-- `BeaconSignal` / `DirectionReading` 데이터 모델
+- `BeaconSignal` / `ProximityEvent` / `DirectionReading` 데이터 모델
 - `mobi_mobile_sensors.dart` public API export 정리
 - 패키지 내부 예제 또는 로그 기반 검증 구조
 
@@ -42,7 +42,7 @@
 ```dart
 export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
-export 'src/beacon_proximity_tracker.dart';
+export 'src/beacon_proximity_tracker.dart'; // BeaconProximityTracker, ProximityEvent
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
@@ -138,6 +138,59 @@ print(signal.toJson());
 ```
 
 앱 화면에서 가까움/멀어짐을 어떻게 보여줄지는 Flutter 앱 담당 영역입니다. 이 패키지는 값 계산과 모델 변환만 담당합니다.
+
+
+## ProximityEvent 계약
+
+`ProximityEvent`는 `BeaconSignal`과 선택적인 `DirectionReading`을 Passenger App이 바로 소비할 수 있는 이벤트 payload로 묶는 V2 섹션 1 기준 모델입니다. 이 모델은 실제 event stream 전환 로직이나 앱 화면을 만들지 않고, 섹션 5 이후 event stream 설계에서 사용할 필드 계약만 먼저 고정합니다.
+
+기본 JSON 구조는 다음과 같습니다.
+
+```json
+{
+  "eventType": "BEACON_NEAR",
+  "beaconId": "MOBI_BEACON_001",
+  "rssi": -67,
+  "estimatedDistanceMeters": 2.8,
+  "signalLevel": "CLOSE",
+  "direction": {
+    "headingDegrees": 132.5,
+    "accuracy": "MEDIUM",
+    "updatedAt": "2026-04-18T14:32:00+09:00"
+  },
+  "timestamp": "2026-04-18T14:32:01+09:00",
+  "metadata": {}
+}
+```
+
+필드 원칙은 다음과 같습니다.
+
+- `eventType`: `BEACON_NEAR`, `BEACON_LOST`, `APPROACHING_STOP`, `LEAVING_STOP` 중 하나입니다.
+- `beaconId`: 이벤트 기준이 된 비콘 식별자입니다.
+- `rssi`: 이벤트 기준 RSSI 값입니다. 신호 상실 이벤트에서는 `null`을 허용합니다.
+- `estimatedDistanceMeters`: RSSI 기반 추정 거리입니다. 추정 불가 또는 신호 상실이면 `null`을 유지합니다.
+- `signalLevel`: 기존 `BeaconSignalLevel` JSON 값인 `VERY_CLOSE`, `CLOSE`, `MEDIUM`, `FAR`, `LOST`를 그대로 사용합니다.
+- `direction`: 선택적인 스마트폰 방향 정보입니다. 방향 센서값이 없으면 `null`입니다.
+- `timestamp`: 이벤트 생성 시각 ISO-8601 문자열입니다.
+- `metadata`: 후속 섹션의 mock/replay/debug 정보를 담기 위한 선택 object입니다.
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final event = ProximityEvent.fromBeaconSignal(
+  signal,
+  eventType: ProximityEventType.beaconNear,
+  direction: direction,
+);
+
+print(event.toJson());
+```
+
+주의할 점은 다음과 같습니다.
+
+- 이 모델은 Passenger App이 소비할 수 있는 데이터 계약만 제공합니다.
+- `apps/passenger_app/**` 화면, stream subscription, TTS 출력은 직접 수정하지 않습니다.
+- 실제 event transition 판단은 섹션 5에서 `BEACON_NEAR`, `BEACON_LOST`, `APPROACHING_STOP`, `LEAVING_STOP` 흐름으로 별도 설계합니다.
 
 ## DirectionReading 계약
 

@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import 'beacon_signal.dart';
+import 'direction_sensor.dart';
 
 /// RSSI/거리 변화로부터 사용자가 비콘에 가까워지는지, 멀어지는지 판단한다.
 ///
@@ -60,6 +61,219 @@ class BeaconProximitySnapshot {
         'isStale': isStale,
         'updatedAt': updatedAt.toIso8601String(),
       };
+}
+
+
+/// Passenger App이 소비할 수 있는 비콘 근접 이벤트 종류이다.
+///
+/// 이 enum은 실제 BLE 스캔이나 앱 UI 동작을 수행하지 않고, 센서 패키지가
+/// 앱/로그/오디오 cue 계층에 넘길 수 있는 이벤트 이름만 고정한다.
+enum ProximityEventType { beaconNear, beaconLost, approachingStop, leavingStop }
+
+extension ProximityEventTypeJson on ProximityEventType {
+  String toJsonValue() {
+    switch (this) {
+      case ProximityEventType.beaconNear:
+        return 'BEACON_NEAR';
+      case ProximityEventType.beaconLost:
+        return 'BEACON_LOST';
+      case ProximityEventType.approachingStop:
+        return 'APPROACHING_STOP';
+      case ProximityEventType.leavingStop:
+        return 'LEAVING_STOP';
+    }
+  }
+
+  static ProximityEventType fromJsonValue(String value) {
+    switch (value) {
+      case 'BEACON_NEAR':
+        return ProximityEventType.beaconNear;
+      case 'BEACON_LOST':
+        return ProximityEventType.beaconLost;
+      case 'APPROACHING_STOP':
+        return ProximityEventType.approachingStop;
+      case 'LEAVING_STOP':
+        return ProximityEventType.leavingStop;
+      default:
+        throw ArgumentError('Unknown ProximityEventType JSON value: $value');
+    }
+  }
+}
+
+/// 비콘 신호와 선택적인 방향 정보를 앱이 소비할 수 있는 근접 이벤트로 묶는다.
+///
+/// V2 섹션 1 기준으로 앱이 필요한 `beaconId`, `rssi`,
+/// `estimatedDistanceMeters`, `signalLevel`, `direction`, `timestamp`를 한 모델에
+/// 고정한다. 실제 event stream 생성과 transition 판단은 후속 섹션에서 확장한다.
+class ProximityEvent {
+  const ProximityEvent({
+    required this.eventType,
+    required this.beaconId,
+    required this.signalLevel,
+    required this.timestamp,
+    this.rssi,
+    this.estimatedDistanceMeters,
+    this.direction,
+    this.metadata = const {},
+  })  : assert(beaconId.length > 0, 'beaconId must not be empty');
+
+  /// 앱 또는 로그에서 구분할 근접 이벤트 종류이다.
+  final ProximityEventType eventType;
+
+  /// 이벤트 기준이 된 비콘 ID이다.
+  final String beaconId;
+
+  /// 이벤트 기준 RSSI 값이다. 비콘 신호가 완전히 없으면 null일 수 있다.
+  final int? rssi;
+
+  /// RSSI 기반 추정 거리이다. 추정 불가하거나 신호 상실이면 null을 유지한다.
+  final double? estimatedDistanceMeters;
+
+  /// 이벤트 생성 시점의 비콘 신호 단계이다.
+  final BeaconSignalLevel signalLevel;
+
+  /// 선택적인 스마트폰 방향/나침반 값이다. 방향 센서가 없으면 null이다.
+  final DirectionReading? direction;
+
+  /// 이벤트 생성 시각이다.
+  final DateTime timestamp;
+
+  /// 후속 섹션에서 fixture/replay/debug 정보를 넣기 위한 선택 필드이다.
+  final Map<String, Object?> metadata;
+
+  bool get isLost => eventType == ProximityEventType.beaconLost;
+
+  ProximityEvent copyWith({
+    ProximityEventType? eventType,
+    String? beaconId,
+    int? rssi,
+    bool clearRssi = false,
+    double? estimatedDistanceMeters,
+    bool clearEstimatedDistanceMeters = false,
+    BeaconSignalLevel? signalLevel,
+    DirectionReading? direction,
+    bool clearDirection = false,
+    DateTime? timestamp,
+    Map<String, Object?>? metadata,
+  }) {
+    return ProximityEvent(
+      eventType: eventType ?? this.eventType,
+      beaconId: beaconId ?? this.beaconId,
+      rssi: clearRssi ? null : rssi ?? this.rssi,
+      estimatedDistanceMeters: clearEstimatedDistanceMeters
+          ? null
+          : estimatedDistanceMeters ?? this.estimatedDistanceMeters,
+      signalLevel: signalLevel ?? this.signalLevel,
+      direction: clearDirection ? null : direction ?? this.direction,
+      timestamp: timestamp ?? this.timestamp,
+      metadata: metadata ?? this.metadata,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+        'eventType': eventType.toJsonValue(),
+        'beaconId': beaconId,
+        'rssi': rssi,
+        'estimatedDistanceMeters': estimatedDistanceMeters,
+        'signalLevel': signalLevel.toJsonValue(),
+        'direction': direction?.toJson(),
+        'timestamp': timestamp.toIso8601String(),
+        'metadata': metadata,
+      };
+
+  factory ProximityEvent.fromJson(Map<String, Object?> json) {
+    final eventType = json['eventType'];
+    final beaconId = json['beaconId'];
+    final rssi = json['rssi'];
+    final estimatedDistanceMeters = json['estimatedDistanceMeters'];
+    final signalLevel = json['signalLevel'];
+    final direction = json['direction'];
+    final timestamp = json['timestamp'];
+    final metadata = json['metadata'];
+
+    if (eventType is! String) {
+      throw ArgumentError('ProximityEvent.eventType must be a string.');
+    }
+    if (beaconId is! String || beaconId.isEmpty) {
+      throw ArgumentError('ProximityEvent.beaconId must be a non-empty string.');
+    }
+    if (rssi != null && rssi is! num) {
+      throw ArgumentError('ProximityEvent.rssi must be a number or null.');
+    }
+    if (estimatedDistanceMeters != null && estimatedDistanceMeters is! num) {
+      throw ArgumentError(
+        'ProximityEvent.estimatedDistanceMeters must be a number or null.',
+      );
+    }
+    if (signalLevel is! String) {
+      throw ArgumentError('ProximityEvent.signalLevel must be a string.');
+    }
+    if (direction != null && direction is! Map) {
+      throw ArgumentError('ProximityEvent.direction must be an object or null.');
+    }
+    if (timestamp is! String) {
+      throw ArgumentError('ProximityEvent.timestamp must be an ISO-8601 string.');
+    }
+    if (metadata != null && metadata is! Map) {
+      throw ArgumentError('ProximityEvent.metadata must be an object or null.');
+    }
+
+    return ProximityEvent(
+      eventType: ProximityEventTypeJson.fromJsonValue(eventType),
+      beaconId: beaconId,
+      rssi: rssi == null ? null : (rssi as num).toInt(),
+      estimatedDistanceMeters: estimatedDistanceMeters == null
+          ? null
+          : (estimatedDistanceMeters as num).toDouble(),
+      signalLevel: BeaconSignalLevelJson.fromJsonValue(signalLevel),
+      direction: direction == null
+          ? null
+          : DirectionReading.fromJson(Map<String, Object?>.from(direction as Map)),
+      timestamp: DateTime.parse(timestamp),
+      metadata: metadata == null
+          ? const {}
+          : Map<String, Object?>.from(metadata as Map),
+    );
+  }
+
+  /// [BeaconSignal]을 근접 이벤트 payload로 감싸는 편의 생성자이다.
+  factory ProximityEvent.fromBeaconSignal(
+    BeaconSignal signal, {
+    required ProximityEventType eventType,
+    DirectionReading? direction,
+    DateTime? timestamp,
+    Map<String, Object?> metadata = const {},
+  }) {
+    return ProximityEvent(
+      eventType: eventType,
+      beaconId: signal.beaconId,
+      rssi: signal.rssi,
+      estimatedDistanceMeters: signal.estimatedDistanceMeters,
+      signalLevel: signal.signalLevel,
+      direction: direction,
+      timestamp: timestamp ?? signal.lastDetectedAt,
+      metadata: metadata,
+    );
+  }
+
+  /// 비콘 신호 상실 이벤트를 명시적으로 만들 때 사용한다.
+  factory ProximityEvent.beaconLost({
+    required String beaconId,
+    DirectionReading? direction,
+    DateTime? timestamp,
+    Map<String, Object?> metadata = const {},
+  }) {
+    return ProximityEvent(
+      eventType: ProximityEventType.beaconLost,
+      beaconId: beaconId,
+      rssi: null,
+      estimatedDistanceMeters: null,
+      signalLevel: BeaconSignalLevel.lost,
+      direction: direction,
+      timestamp: timestamp ?? DateTime.now(),
+      metadata: metadata,
+    );
+  }
 }
 
 /// 비콘별 최근 [BeaconSignal]을 저장하고 가까워짐/멀어짐 추세를 계산한다.
