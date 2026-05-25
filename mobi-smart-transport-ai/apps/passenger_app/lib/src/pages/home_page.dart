@@ -30,6 +30,9 @@ bool _isLoadingBusArrivals = true;
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
 
+  RideRequestCreateResult? _rideRequestCreateResult;
+  bool _isCreatingRideRequest = false;
+
   @override
     void initState() {
       super.initState();
@@ -71,6 +74,27 @@ Future<void> _loadBusArrivalSummary() async {
     _backendHealthStatus = healthStatus;
     _isLoadingBackendHealth = false;
   });
+}
+
+Future<void> _createRideRequest() async {
+  setState(() {
+    _isCreatingRideRequest = true;
+  });
+
+  final result = await _backendApiClient.createRideRequest();
+
+  if (!mounted) return;
+
+  setState(() {
+    _rideRequestCreateResult = result;
+    _isCreatingRideRequest = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(result.description),
+    ),
+  );
 }
 
   PassengerHomeSnapshot? _homeSnapshot;
@@ -196,15 +220,45 @@ Future<void> _loadBusArrivalSummary() async {
               const SizedBox(height: 16),
               _StatusCard(
                 title: '탑승 요청 상태',
-                statusLabel: _isLoadingHomeSnapshot
-                    ? '불러오는 중'
-                    : rideRequestStatus?.statusLabel ?? 'mock 대기',
-                description:
-                    rideRequestStatus?.description ?? '탑승 요청 상태를 불러오는 중입니다.',
+                statusLabel: _isCreatingRideRequest
+                  ? '요청 중'
+                  : _rideRequestCreateResult?.statusLabel ??
+                       rideRequestStatus?.statusLabel ??
+                       '요청 전',
+                description: _isCreatingRideRequest
+                  ? '탑승 요청을 생성하는 중입니다.'
+                  : _rideRequestCreateResult?.description ??
+                      rideRequestStatus?.description ??
+                     '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint: rideRequestStatus?.semanticHint ??
-                    '실제 탑승 요청 API 연동 전 mock 요청 상태를 표시하는 영역입니다.',
-              ),
+                semanticHint: _rideRequestCreateResult?.semanticHint ??
+                      rideRequestStatus?.semanticHint ??
+                      '탑승 요청 생성 전 상태를 표시하는 영역입니다.',
+),
+const SizedBox(height: 12),
+Semantics(
+  button: true,
+  label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
+  hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
+  child: SizedBox(
+    height: 64,
+    child: ElevatedButton.icon(
+      onPressed: _isCreatingRideRequest ? null : _createRideRequest,
+      icon: Icon(
+        _isCreatingRideRequest
+            ? Icons.hourglass_empty
+            : Icons.accessible_forward_outlined,
+      ),
+      label: Text(
+        _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    ),
+  ),
+),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],

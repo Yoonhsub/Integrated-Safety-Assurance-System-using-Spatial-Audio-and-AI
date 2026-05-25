@@ -3,6 +3,20 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+class RideRequestCreateResult {
+  const RideRequestCreateResult({
+    required this.isSuccess,
+    required this.statusLabel,
+    required this.description,
+    required this.semanticHint,
+  });
+
+  final bool isSuccess;
+  final String statusLabel;
+  final String description;
+  final String semanticHint;
+}
+
 class BackendApiClient {
   const BackendApiClient({
     required this.baseUrl,
@@ -175,6 +189,82 @@ Future<BusArrivalSummary> fetchBusArrivalSummary({
     );
   }
 }
+
+  Future<RideRequestCreateResult> createRideRequest() async {
+    if (useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      return const RideRequestCreateResult(
+        isSuccess: true,
+        statusLabel: '요청 생성 완료',
+        description: 'mock 탑승 요청이 생성되었습니다. 실제 rideRequests API 계약 확정 후 서버 요청으로 교체됩니다.',
+        semanticHint: 'mock 탑승 요청 생성 성공 상태입니다.',
+      );
+    }
+
+    try {
+      final response = await http
+          .post(
+            _buildUri('/ride-requests'),
+            headers: const {
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(const <String, Object?>{}),
+          )
+          .timeout(timeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return RideRequestCreateResult(
+          isSuccess: false,
+          statusLabel: '요청 실패',
+          description:
+              '탑승 요청 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+          semanticHint: '탑승 요청 생성 API 응답 실패 상태입니다.',
+        );
+      }
+
+      final decodedBody = jsonDecode(response.body);
+
+      if (decodedBody is! Map<String, dynamic>) {
+        return const RideRequestCreateResult(
+          isSuccess: false,
+          statusLabel: '응답 확인 필요',
+          description: '탑승 요청 API 응답 형식이 예상과 다릅니다.',
+          semanticHint: '탑승 요청 생성 응답 형식 확인이 필요한 상태입니다.',
+        );
+      }
+
+      final status = decodedBody['status']?.toString();
+      final requestId = decodedBody['requestId']?.toString();
+
+      return RideRequestCreateResult(
+        isSuccess: true,
+        statusLabel: status == null || status.isEmpty
+            ? '요청 생성 완료'
+            : '요청 상태 $status',
+        description: requestId == null || requestId.isEmpty
+            ? '탑승 요청이 생성되었습니다. 요청 식별자는 응답 계약 확정 후 표시합니다.'
+            : '탑승 요청이 생성되었습니다. 요청 식별자: $requestId',
+        semanticHint: '탑승 요청 생성 성공 상태입니다.',
+      );
+    } on TimeoutException {
+      return const RideRequestCreateResult(
+        isSuccess: false,
+        statusLabel: '요청 시간 초과',
+        description: '탑승 요청 API 연결 시간이 초과되었습니다.',
+        semanticHint: '탑승 요청 생성 API 연결 시간이 초과된 상태입니다.',
+      );
+    } catch (_) {
+      return const RideRequestCreateResult(
+        isSuccess: false,
+        statusLabel: '요청 실패',
+        description: '탑승 요청 API에 연결할 수 없습니다.',
+        semanticHint: '탑승 요청 생성 API 연결 실패 상태입니다.',
+      );
+    }
+  }
+
+  
 
 BusArrivalSummary _mockBusArrivalSummary() {
   return const BusArrivalSummary(
