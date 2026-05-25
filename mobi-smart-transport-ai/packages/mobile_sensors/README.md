@@ -971,3 +971,41 @@ final events = await runner.collectEvents(
 ```
 
 이 fixture는 실측 BLE 데이터가 아니라 통합 smoke check용 고정 입력입니다. 실제 RSSI 보정, 권한 요청 UI, 앱 lifecycle subscription 보관, 실제 TTS/골전도 이어폰 출력은 각 담당 모듈과 실기기 검증 단계에서 확인해야 합니다.
+
+## V2 섹션 12 최종 검증 / 문서 정리
+
+섹션 12에서는 안준환 담당 `Sensor / BLE / Audio Cue` 범위의 V2 1~12섹션 산출물을 최종 점검했습니다. 이 패키지는 Passenger App이 직접 소비할 수 있는 sensor event source, mock/replay fixture, audio cue payload 기준을 제공하지만 앱 UI, 실제 권한 요청 화면, 실제 TTS 출력, HRTF/3D 공간음향 렌더링은 구현하지 않습니다.
+
+최종 제공 범위는 다음과 같습니다.
+
+```txt
+Sensor/BLE interface       : BeaconScanner, BeaconSignal, DirectionReading
+Model validation           : SensorModelValidation, UNKNOWN_BEACON, invalid RSSI/timestamp/distance guard
+RSSI distance estimation   : BeaconDistanceEstimator, BeaconDistanceZone, RssiMovingAverageSmoother
+Proximity event stream     : ProximityEvent, ProximityEventStreamAdapter
+Mock/replay fixture        : BeaconReplayFixture, ProximityEventReplayRunner, mock/sample JSON fixtures
+Audio cue mapping          : BoneConductionAudioCue, BeaconAudioCueFactory
+Passenger adapter guide    : PassengerSensorService, MobileSensorPassengerAdapter
+Lifecycle/permission guide : PassengerSensorLifecyclePolicy
+```
+
+최종 검증 상태는 다음과 같습니다.
+
+```txt
+JSON parse                         : PASS
+YAML/YML parse                     : PASS
+Python AST parse                   : PASS
+Dart delimiter static check        : PASS
+V2 section 12 contract string check: PASS
+architecture validation            : FAIL, 기존 한글 파일명 인코딩 문제
+flutter analyze/test               : NOT_RUN, Flutter SDK unavailable
+real BLE device test               : NOT_RUN, device environment unavailable
+```
+
+`python scripts/validate_architecture.py`는 현재 작업 환경에서 `docs/02_4월_개인별_구현범위_수정안.md`를 찾지 못해 실패했습니다. ZIP 해제 결과 한글 파일명이 `#U...` 형태로 보이는 문제이며, 이번 `packages/mobile_sensors/**` 변경 때문이라고 단정할 수 없습니다.
+
+최종 보고서는 아래 문서에 정리했습니다.
+
+```txt
+docs/rw/안준환_최종 개발 보고서.md
+```
