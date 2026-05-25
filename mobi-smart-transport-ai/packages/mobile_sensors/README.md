@@ -52,6 +52,7 @@ export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
 export 'src/beacon_audio_cue_factory.dart';
+export 'src/passenger_sensor_adapter.dart'; // PassengerSensorService, MobileSensorPassengerAdapter
 ```
 
 앱 또는 다른 패키지는 내부 파일을 직접 import하기보다 아래처럼 패키지 entrypoint를 사용하는 것을 권장합니다.
@@ -544,6 +545,97 @@ packages/mobile_sensors/test/audio_cue_factory_test.dart
 ```
 
 이 검증은 실제 TTS 재생, 골전도 이어폰 연결, HRTF/3D 공간음향 렌더링을 수행하지 않습니다. 앱 또는 오디오 출력 계층이 사용할 cue payload와 queue 판단 기준만 제공합니다.
+
+
+## V2 섹션 9 Passenger App 연결 adapter 기준
+
+섹션 9에서는 `apps/passenger_app/**`를 직접 수정하지 않고, Passenger App이 센서 이벤트를 받을 수 있도록 `packages/mobile_sensors` 내부에 adapter 기준을 추가했습니다. 이 adapter는 앱 화면, 권한 요청 UI, 실제 TTS 호출을 구현하지 않고, 앱이 구독할 수 있는 stream/service interface만 제공합니다.
+
+추가된 주요 API는 다음과 같습니다.
+
+```txt
+PassengerSensorService: 앱이 의존할 sensor service interface
+MobileSensorPassengerAdapter: BeaconScanner를 proximity/audio cue stream으로 묶는 adapter
+PassengerSensorAdapterConfig: targetBeaconId, 반복 cue 억제 기준 설정
+PassengerSensorPermissionSnapshot: BLE/위치 권한과 기기 서비스 상태 snapshot
+PassengerSensorPermissionStatus: READY, UNKNOWN, BLUETOOTH_PERMISSION_DENIED 등 권한 상태 enum
+```
+
+기본 연결 흐름은 다음과 같습니다.
+
+```dart
+final sensorService = MobileSensorPassengerAdapter(
+  scanner: FlutterBlueBeaconScanner(),
+  config: const PassengerSensorAdapterConfig(
+    targetBeaconId: 'MOBI_STOP_BEACON_001',
+    suppressRepeatedAudioCues: true,
+  ),
+  permissionProvider: () async {
+    // 실제 권한 확인은 Passenger App에서 수행한다.
+    return PassengerSensorPermissionSnapshot.ready();
+  },
+);
+
+final permission = await sensorService.checkPermissionStatus();
+if (permission.canStartScan) {
+  final subscription = sensorService.watchProximityEvents().listen((event) {
+    print(event.toJson());
+  });
+
+  await subscription.cancel();
+  await sensorService.dispose();
+}
+```
+
+오디오 안내 payload까지 필요한 경우에는 다음처럼 사용할 수 있습니다.
+
+```dart
+final cueSubscription = sensorService.watchAudioCues().listen((cue) {
+  // 실제 TTS 호출, 알림음 재생, 골전도 이어폰 출력은 앱/오디오 계층에서 처리한다.
+  print(cue.message);
+});
+```
+
+권장 lifecycle은 다음과 같습니다.
+
+```txt
+initState 또는 viewModel start:
+1. checkPermissionStatus()
+2. watchProximityEvents() 또는 watchAudioCues() 구독
+
+pause / route leave / logout:
+1. StreamSubscription.cancel()
+2. sensorService.stop()
+
+dispose:
+1. StreamSubscription.cancel()
+2. sensorService.dispose()
+```
+
+권한 상태는 `PassengerSensorPermissionSnapshot`으로 표현합니다. 이 패키지는 Android/iOS 권한 요청 화면을 만들지 않으므로, 앱은 `permission_handler` 또는 플랫폼 API 결과를 `permissionProvider`로 주입해야 합니다. provider가 없으면 adapter는 `UNKNOWN`을 반환하며, 이는 패키지가 권한 상태를 모른다는 뜻입니다.
+
+```txt
+UNKNOWN: 패키지 내부에서 권한 상태를 확인하지 않음
+READY: BLE/위치 권한과 기기 서비스가 준비됨
+BLUETOOTH_PERMISSION_DENIED: Bluetooth 권한 거부
+LOCATION_PERMISSION_DENIED: 위치 권한 거부
+BLUETOOTH_OFF: Bluetooth 비활성화
+LOCATION_OFF: 위치 서비스 비활성화
+UNAVAILABLE: 기기나 플랫폼이 센서 기능을 제공하지 않음
+```
+
+자세한 Passenger App 소비 가이드는 아래 문서에 정리했습니다.
+
+```txt
+packages/mobile_sensors/docs/passenger_sensor_adapter_guide.md
+```
+
+주의할 점은 다음과 같습니다.
+
+- Passenger App 코드는 이번 섹션에서 직접 수정하지 않았습니다.
+- 실제 권한 요청 UI, 앱 화면 상태 관리, stream subscription 저장 위치는 Passenger App 담당 범위입니다.
+- 실제 TTS 호출과 골전도 이어폰 출력 제어는 오디오 출력 계층에서 처리해야 합니다.
+- `packages/shared_contracts/**`는 수정하지 않았습니다.
 
 ## 현재 구현 상태
 

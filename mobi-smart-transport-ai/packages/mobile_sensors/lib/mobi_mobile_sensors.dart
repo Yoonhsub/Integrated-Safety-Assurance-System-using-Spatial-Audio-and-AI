@@ -15,3 +15,4 @@ export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
 export 'src/beacon_audio_cue_factory.dart';
+export 'src/passenger_sensor_adapter.dart';
