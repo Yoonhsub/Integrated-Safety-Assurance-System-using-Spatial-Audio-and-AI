@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import 'beacon_signal.dart';
 import 'direction_sensor.dart';
+import 'sensor_model_validation.dart';
 
 /// RSSI/거리 변화로부터 사용자가 비콘에 가까워지는지, 멀어지는지 판단한다.
 ///
@@ -115,7 +116,17 @@ class ProximityEvent {
     this.estimatedDistanceMeters,
     this.direction,
     this.metadata = const {},
-  })  : assert(beaconId.length > 0, 'beaconId must not be empty');
+  })  : assert(beaconId.length > 0, 'beaconId must not be empty'),
+        assert(
+          rssi == null ||
+              (rssi >= SensorModelValidation.minValidRssi &&
+                  rssi <= SensorModelValidation.maxValidRssi),
+          'rssi must be null or between -127 and -1',
+        ),
+        assert(
+          estimatedDistanceMeters == null || estimatedDistanceMeters >= 0,
+          'estimatedDistanceMeters must be non-negative or null',
+        );
 
   /// 앱 또는 로그에서 구분할 근접 이벤트 종류이다.
   final ProximityEventType eventType;
@@ -194,16 +205,8 @@ class ProximityEvent {
     if (eventType is! String) {
       throw ArgumentError('ProximityEvent.eventType must be a string.');
     }
-    if (beaconId is! String || beaconId.isEmpty) {
-      throw ArgumentError('ProximityEvent.beaconId must be a non-empty string.');
-    }
-    if (rssi != null && rssi is! num) {
-      throw ArgumentError('ProximityEvent.rssi must be a number or null.');
-    }
-    if (estimatedDistanceMeters != null && estimatedDistanceMeters is! num) {
-      throw ArgumentError(
-        'ProximityEvent.estimatedDistanceMeters must be a number or null.',
-      );
+    if (beaconId != null && beaconId is! String) {
+      throw ArgumentError('ProximityEvent.beaconId must be a string or null.');
     }
     if (signalLevel is! String) {
       throw ArgumentError('ProximityEvent.signalLevel must be a string.');
@@ -211,25 +214,32 @@ class ProximityEvent {
     if (direction != null && direction is! Map) {
       throw ArgumentError('ProximityEvent.direction must be an object or null.');
     }
-    if (timestamp is! String) {
-      throw ArgumentError('ProximityEvent.timestamp must be an ISO-8601 string.');
-    }
     if (metadata != null && metadata is! Map) {
       throw ArgumentError('ProximityEvent.metadata must be an object or null.');
     }
 
     return ProximityEvent(
       eventType: ProximityEventTypeJson.fromJsonValue(eventType),
-      beaconId: beaconId,
-      rssi: rssi == null ? null : (rssi as num).toInt(),
-      estimatedDistanceMeters: estimatedDistanceMeters == null
+      beaconId: SensorModelValidation.normalizeBeaconId(beaconId as String?),
+      rssi: rssi == null
           ? null
-          : (estimatedDistanceMeters as num).toDouble(),
+          : SensorModelValidation.requireValidRssi(
+              rssi,
+              fieldName: 'ProximityEvent.rssi',
+            ),
+      estimatedDistanceMeters:
+          SensorModelValidation.normalizeEstimatedDistanceMeters(
+        estimatedDistanceMeters,
+        fieldName: 'ProximityEvent.estimatedDistanceMeters',
+      ),
       signalLevel: BeaconSignalLevelJson.fromJsonValue(signalLevel),
       direction: direction == null
           ? null
           : DirectionReading.fromJson(Map<String, Object?>.from(direction as Map)),
-      timestamp: DateTime.parse(timestamp),
+      timestamp: SensorModelValidation.requireIsoTimestamp(
+        timestamp,
+        fieldName: 'ProximityEvent.timestamp',
+      ),
       metadata: metadata == null
           ? const {}
           : Map<String, Object?>.from(metadata as Map),
@@ -265,7 +275,7 @@ class ProximityEvent {
   }) {
     return ProximityEvent(
       eventType: ProximityEventType.beaconLost,
-      beaconId: beaconId,
+      beaconId: SensorModelValidation.normalizeBeaconId(beaconId),
       rssi: null,
       estimatedDistanceMeters: null,
       signalLevel: BeaconSignalLevel.lost,

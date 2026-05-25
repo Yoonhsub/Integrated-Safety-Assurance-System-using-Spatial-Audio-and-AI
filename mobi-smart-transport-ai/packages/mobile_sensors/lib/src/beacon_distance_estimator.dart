@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'dart:math';
 
 import 'beacon_signal.dart';
+import 'sensor_model_validation.dart';
 
 /// RSSI 값으로부터 초기 거리 추정값과 가까움/멀어짐 상태를 계산한다.
 ///
@@ -49,13 +50,13 @@ class BeaconDistanceEstimator {
   /// 추정 불가 상황에서는 `BeaconSignal.estimatedDistanceMeters` 계약에 맞춰
   /// 호출자가 null을 저장할 수 있도록 null을 반환한다.
   double? estimateMeters(int rssi) {
-    if (rssi >= 0) return null;
+    if (!SensorModelValidation.isValidRssi(rssi)) return null;
     return pow(10, (txPower - rssi) / (10 * pathLossExponent)).toDouble();
   }
 
   /// RSSI 값을 신호 레벨 enum으로 분류한다.
   BeaconSignalLevel classify(int rssi) {
-    if (rssi >= 0) return BeaconSignalLevel.lost;
+    if (!SensorModelValidation.isValidRssi(rssi)) return BeaconSignalLevel.lost;
     if (rssi >= veryCloseRssiThreshold) return BeaconSignalLevel.veryClose;
     if (rssi >= closeRssiThreshold) return BeaconSignalLevel.close;
     if (rssi >= mediumRssiThreshold) return BeaconSignalLevel.medium;
@@ -73,12 +74,21 @@ class BeaconDistanceEstimator {
     required DateTime lastDetectedAt,
     double? estimatedDistanceMeters,
   }) {
-    final distance = estimatedDistanceMeters ?? estimateMeters(rssi);
+    final normalizedBeaconId = SensorModelValidation.normalizeBeaconId(beaconId);
+    final safeRssi = SensorModelValidation.isValidRssi(rssi)
+        ? rssi
+        : SensorModelValidation.minValidRssi;
+    final distance = SensorModelValidation.normalizeEstimatedDistanceMeters(
+          estimatedDistanceMeters,
+          fieldName: 'BeaconDistanceEstimator.estimatedDistanceMeters',
+        ) ??
+        estimateMeters(safeRssi);
+
     return BeaconSignal(
-      beaconId: beaconId,
-      rssi: rssi,
+      beaconId: normalizedBeaconId,
+      rssi: safeRssi,
       estimatedDistanceMeters: distance,
-      signalLevel: classify(rssi),
+      signalLevel: classify(safeRssi),
       lastDetectedAt: lastDetectedAt,
     );
   }
@@ -108,6 +118,10 @@ class RssiMovingAverageSmoother {
 
   /// 새 RSSI 값을 추가하고 이동 평균 RSSI를 반환한다.
   int addSample(int rssi) {
+    if (!SensorModelValidation.isValidRssi(rssi)) {
+      return smoothedRssi;
+    }
+
     _samples.addLast(rssi);
     while (_samples.length > windowSize) {
       _samples.removeFirst();

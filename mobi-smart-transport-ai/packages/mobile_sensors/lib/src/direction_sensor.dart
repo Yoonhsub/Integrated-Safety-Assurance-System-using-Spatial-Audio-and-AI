@@ -1,3 +1,5 @@
+import 'sensor_model_validation.dart';
+
 enum DirectionAccuracy { high, medium, low, unknown }
 
 extension DirectionAccuracyJson on DirectionAccuracy {
@@ -47,6 +49,9 @@ class DirectionReading {
   /// 이 패키지는 앱 UI가 아니라 모델 계층에서 JSON 계약을 안정적으로 유지하기
   /// 위해 값을 [0, 360) 범위로 맞춘다.
   static double normalizeHeadingDegrees(double headingDegrees) {
+    if (!headingDegrees.isFinite) {
+      throw ArgumentError('DirectionReading.headingDegrees must be finite.');
+    }
     final normalized = headingDegrees % 360;
     return normalized < 0 ? normalized + 360 : normalized;
   }
@@ -74,20 +79,20 @@ class DirectionReading {
     final accuracy = json['accuracy'];
     final updatedAt = json['updatedAt'];
 
-    if (headingDegrees is! num) {
-      throw ArgumentError('DirectionReading.headingDegrees must be a number.');
+    if (headingDegrees is! num || !headingDegrees.isFinite) {
+      throw ArgumentError('DirectionReading.headingDegrees must be a finite number.');
     }
     if (accuracy is! String) {
       throw ArgumentError('DirectionReading.accuracy must be a string.');
-    }
-    if (updatedAt is! String) {
-      throw ArgumentError('DirectionReading.updatedAt must be an ISO-8601 string.');
     }
 
     return DirectionReading(
       headingDegrees: headingDegrees.toDouble(),
       accuracy: DirectionAccuracyJson.fromJsonValue(accuracy),
-      updatedAt: DateTime.parse(updatedAt),
+      updatedAt: SensorModelValidation.requireIsoTimestamp(
+        updatedAt,
+        fieldName: 'DirectionReading.updatedAt',
+      ),
     );
   }
 

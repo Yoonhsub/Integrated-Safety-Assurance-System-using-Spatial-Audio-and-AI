@@ -40,6 +40,7 @@
 `lib/mobi_mobile_sensors.dart`는 다음 파일을 public API로 export합니다.
 
 ```dart
+export 'src/sensor_model_validation.dart'; // SensorModelValidation
 export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
 export 'src/beacon_proximity_tracker.dart'; // BeaconProximityTracker, ProximityEvent
@@ -139,6 +140,48 @@ print(signal.toJson());
 
 앱 화면에서 가까움/멀어짐을 어떻게 보여줄지는 Flutter 앱 담당 영역입니다. 이 패키지는 값 계산과 모델 변환만 담당합니다.
 
+
+## V2 섹션 2 Sensor 모델 검증 기준
+
+섹션 2에서는 센서 도메인 모델이 앱에서 안전하게 소비될 수 있도록 null, unknown beacon, invalid RSSI, timestamp, distance 변환 기준을 명시하고 코드에 반영했습니다. 이 기준은 실제 BLE 연동을 의미하지 않고, JSON payload와 패키지 내부 모델 변환의 안전장치입니다.
+
+### 공통 validation helper
+
+`SensorModelValidation`은 다음 기준을 제공합니다.
+
+```txt
+unknownBeaconId: UNKNOWN_BEACON
+valid RSSI: -127 이상 -1 이하의 정수
+invalid RSSI: 0, 양수, -127보다 작은 값, NaN/Infinity, 소수점 RSSI
+estimatedDistanceMeters: null 또는 0 이상 finite number
+timestamp: 비어 있지 않은 ISO-8601 문자열
+```
+
+### null 값 처리
+
+- `beaconId`가 null 또는 blank이면 `UNKNOWN_BEACON`으로 정규화합니다.
+- `estimatedDistanceMeters`는 추정 불가 시 `null`을 허용합니다.
+- `ProximityEvent.rssi`는 `BEACON_LOST` 같은 신호 상실 이벤트에서 `null`을 허용합니다.
+- `direction`은 방향 센서값이 없으면 `null`을 허용합니다.
+- `metadata`가 null이면 빈 object로 정규화합니다.
+
+### unknown beacon 처리
+
+비콘 ID를 알 수 없는 payload가 들어오더라도 앱이 즉시 crash하지 않도록 `UNKNOWN_BEACON` fallback을 사용합니다. 다만 실제 BLE scanner에서 beaconId를 얻지 못한 scan result는 의미 있는 위치 기준점이 아니므로 scanner 단계에서는 기존처럼 빈 ID를 통과시키지 않습니다.
+
+### invalid RSSI 처리
+
+- JSON 모델 parsing에서는 invalid RSSI를 `ArgumentError`로 거부합니다.
+- live scan/buildSignal 경계에서는 invalid RSSI를 `LOST` sentinel인 `-127`로 낮춰 안전하게 처리합니다.
+- smoothing helper는 invalid RSSI 샘플을 window에 넣지 않습니다.
+
+### timestamp 처리
+
+`lastDetectedAt`, `timestamp`, `DirectionReading.updatedAt`는 모두 ISO-8601 문자열이어야 합니다. 잘못된 문자열은 `ArgumentError`로 처리하여 앱 계층에서 invalid payload를 구분할 수 있게 했습니다.
+
+### distance 변환 처리
+
+`estimatedDistanceMeters`는 `null` 또는 0 이상 finite number만 허용합니다. RSSI가 invalid이면 거리 추정값은 만들지 않고 `LOST` 상태와 연결합니다. 이 기준은 정밀한 meter 값보다 앱에서 흔들리지 않는 안전한 상태 판단을 우선합니다.
 
 ## ProximityEvent 계약
 
