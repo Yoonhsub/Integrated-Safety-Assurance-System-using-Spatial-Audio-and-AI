@@ -153,6 +153,45 @@ Future<void> _createRideRequest() async {
       context,
     ).showSnackBar(SnackBar(content: Text(guideMessage)));
   }
+
+  Future<void> _speakCurrentStatusGuide() async {
+  final backendStatus = _isLoadingBackendHealth
+      ? '확인 중'
+      : (_backendHealthStatus?.isAvailable ?? false)
+          ? '연결 성공'
+          : '연결 실패';
+
+  final busArrivalStatus = _isLoadingBusArrivals
+      ? '불러오는 중'
+      : _busArrivalSummary?.statusLabel ?? '도착 정보 없음';
+
+  final rideRequestStatus = _isCreatingRideRequest
+      ? '요청 중'
+      : _isLoadingRideRequestStatus
+          ? '조회 중'
+          : _rideRequestStatusResult?.statusLabel ??
+              _rideRequestCreateResult?.statusLabel ??
+              _homeSnapshot?.rideRequestStatus.statusLabel ??
+              '요청 전';
+
+  final message = await _voiceGuideService.speakStatusGuide(
+    backendStatus: backendStatus,
+    busArrivalStatus: busArrivalStatus,
+    rideRequestStatus: rideRequestStatus,
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _voiceStatusMessage = message;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+    ),
+  );
+}
   
     Future<void> _loadRideRequestStatus() async {
     final requestId = _rideRequestCreateResult?.requestId;
@@ -217,10 +256,30 @@ Future<void> _createRideRequest() async {
                 semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 24),
-              _VoiceActionButton(
+                          _VoiceActionButton(
                 label: voiceButtonLabel,
                 isListening: _isListening,
                 onPressed: _toggleVoiceInput,
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: '현재 상태 음성 안내',
+                hint: '두 번 탭하면 백엔드 연결 상태, 버스 도착 정보, 탑승 요청 상태를 음성으로 안내합니다.',
+                child: SizedBox(
+                  height: 64,
+                  child: OutlinedButton.icon(
+                    onPressed: _speakCurrentStatusGuide,
+                    icon: const Icon(Icons.record_voice_over_outlined),
+                    label: const Text(
+                      '현재 상태 음성 안내',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               _StatusCard(

@@ -65,6 +65,19 @@ class VoiceGuideService {
     return message;
   }
 
+    Future<String> speakStatusGuide({
+    required String backendStatus,
+    required String busArrivalStatus,
+    required String rideRequestStatus,
+  }) async {
+    final message =
+        '현재 백엔드 연결 상태는 $backendStatus 입니다. '
+        '버스 도착 정보는 $busArrivalStatus 상태입니다. '
+        '탑승 요청 상태는 $rideRequestStatus 입니다.';
+
+    return speakGuide(message);
+  }
+
   Future<void> stopSpeaking() async {
     await _flutterTts.stop();
   }
