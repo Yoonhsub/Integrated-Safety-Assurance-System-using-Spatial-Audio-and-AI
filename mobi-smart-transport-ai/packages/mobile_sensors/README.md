@@ -856,3 +856,81 @@ for (final event in events) {
 
 이 fixture는 실제 BLE 수신값을 가장하지 않습니다. 목적은 실기기 전 단계에서 앱 팀이 event stream 구독, eventType 분기, direction payload 유무, lost event 처리를 검증할 수 있게 하는 것입니다. 실제 BLE 스캔과 권한 처리는 이후 lifecycle/권한 검증 섹션과 실기기 테스트에서 별도로 확인해야 합니다.
 
+
+## V2 섹션 9 Passenger Sensor Adapter 기준
+
+섹션 9에서는 `apps/passenger_app/**`를 직접 수정하지 않고, Passenger App이 sensor event와 audio cue payload를 구독할 수 있는 adapter 기준을 추가했습니다.
+
+추가된 주요 구성은 다음과 같습니다.
+
+```txt
+PassengerSensorService: 앱이 의존할 sensor service interface
+MobileSensorPassengerAdapter: BeaconScanner를 proximity/audio cue stream으로 연결하는 adapter
+PassengerSensorAdapterConfig: targetBeaconId, repeated cue 억제 설정
+PassengerSensorPermissionSnapshot: BLE/위치 권한과 기기 서비스 상태 snapshot
+PassengerSensorPermissionStatus: UNKNOWN, READY, BLUETOOTH_PERMISSION_DENIED 등 권한 상태 enum
+```
+
+세부 연결 기준은 아래 문서에 정리했습니다.
+
+```txt
+packages/mobile_sensors/docs/passenger_sensor_adapter_guide.md
+```
+
+## V2 섹션 10 앱 lifecycle / 권한 처리 검증 기준
+
+섹션 10에서는 BLE 권한, 위치 권한, 앱 background/foreground, 스캔 중지/재개 상황을 실기기 전 단계에서 검증·문서화했습니다. 이 패키지는 앱 권한 요청 UI를 직접 만들지 않고, 앱이 권한 상태와 lifecycle 상태를 주입하면 어떤 sensor 동작을 선택해야 하는지 판단할 수 있는 policy helper를 제공합니다.
+
+추가된 주요 구성은 다음과 같습니다.
+
+```txt
+PassengerSensorLifecyclePhase: FOREGROUND, BACKGROUND, PAUSED, RESUMED, RESTARTED, DISPOSED
+PassengerSensorLifecycleAction: START_SCAN, KEEP_SCANNING, STOP_SCAN, RESUME_SCAN, USE_MOCK_REPLAY, SHOW_PERMISSION_RATIONALE, DO_NOTHING
+PassengerSensorLifecycleDecision: 권한/lifecycle 조합에 따른 앱 동작 결정 payload
+PassengerSensorLifecyclePolicy: 권한 snapshot과 lifecycle phase를 받아 scan 시작/중지/재개 기준을 결정하는 helper
+```
+
+검증 기준은 다음과 같습니다.
+
+```txt
+권한 없음/미확인: live scan 시작 금지, mock/replay fallback 또는 앱 권한 확인 필요
+권한 거부: live scan 시작 금지, 권한 안내 UI 필요
+앱 background/paused: subscription cancel 후 scanner stop 권장
+앱 resumed/restarted: 권한 재확인 후 subscription 재생성 또는 scan 재개
+dispose: subscription cancel 후 adapter dispose
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final policy = PassengerSensorLifecyclePolicy();
+final permission = await sensorService.checkPermissionStatus();
+final decision = policy.decide(
+  permission: permission,
+  phase: PassengerSensorLifecyclePhase.resumed,
+  wasScanning: scanner.isScanning,
+);
+
+if (decision.shouldStartScan) {
+  subscription = sensorService.watchProximityEvents().listen(handleEvent);
+}
+
+if (decision.shouldStopScan) {
+  await subscription.cancel();
+  await sensorService.stop();
+}
+```
+
+세부 가이드는 아래 문서에 정리했습니다.
+
+```txt
+packages/mobile_sensors/docs/passenger_sensor_lifecycle_guide.md
+```
+
+섹션 10 검증 파일은 아래 경로에 추가했습니다.
+
+```txt
+packages/mobile_sensors/test/passenger_sensor_lifecycle_test.dart
+```
+
+현재 작업 환경에는 Dart/Flutter SDK가 없어 `flutter test`를 직접 실행하지 못했습니다. 따라서 lifecycle policy 테스트 파일은 작성 완료 상태이며, 실제 실행 결과는 Flutter SDK가 있는 환경에서 확인해야 합니다.

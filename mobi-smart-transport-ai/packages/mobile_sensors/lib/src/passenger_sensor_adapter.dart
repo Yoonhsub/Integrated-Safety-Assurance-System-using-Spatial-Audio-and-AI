@@ -79,6 +79,50 @@ class PassengerSensorPermissionSnapshot {
     );
   }
 
+  /// 앱 계층에서 확인한 권한/기기 서비스 상태를 공통 snapshot으로 변환한다.
+  ///
+  /// 섹션 10의 권한 없음/거부, Bluetooth off, 위치 서비스 off, 앱 재시작
+  /// 검증에서 테스트 fixture나 앱 adapter가 동일한 형태로 상태를 기록하게 하기 위한
+  /// helper이다. 실제 권한 요청은 여전히 Passenger App 담당이다.
+  factory PassengerSensorPermissionSnapshot.fromStatus({
+    required PassengerSensorPermissionStatus status,
+    DateTime? checkedAt,
+    bool? bluetoothPermissionGranted,
+    bool? locationPermissionGranted,
+    bool? bluetoothEnabled,
+    bool? locationServiceEnabled,
+    String? message,
+  }) {
+    return PassengerSensorPermissionSnapshot(
+      status: status,
+      checkedAt: checkedAt ?? DateTime.now(),
+      bluetoothPermissionGranted: bluetoothPermissionGranted,
+      locationPermissionGranted: locationPermissionGranted,
+      bluetoothEnabled: bluetoothEnabled,
+      locationServiceEnabled: locationServiceEnabled,
+      message: message ?? _defaultMessageFor(status),
+    );
+  }
+
+  static String _defaultMessageFor(PassengerSensorPermissionStatus status) {
+    switch (status) {
+      case PassengerSensorPermissionStatus.unknown:
+        return 'Permission state is unknown. Check app-level BLE and location permissions before scanning.';
+      case PassengerSensorPermissionStatus.ready:
+        return 'Sensor permissions and device services are ready.';
+      case PassengerSensorPermissionStatus.bluetoothPermissionDenied:
+        return 'Bluetooth permission is denied. Live BLE scan must not start.';
+      case PassengerSensorPermissionStatus.locationPermissionDenied:
+        return 'Location permission is denied. Live BLE scan must not start on platforms requiring location for BLE.';
+      case PassengerSensorPermissionStatus.bluetoothOff:
+        return 'Bluetooth is turned off. Live BLE scan is unavailable.';
+      case PassengerSensorPermissionStatus.locationOff:
+        return 'Location service is turned off. Live BLE scan may be unavailable.';
+      case PassengerSensorPermissionStatus.unavailable:
+        return 'This device or platform does not expose the required sensor capability.';
+    }
+  }
+
   final PassengerSensorPermissionStatus status;
   final bool? bluetoothPermissionGranted;
   final bool? locationPermissionGranted;
