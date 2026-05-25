@@ -105,7 +105,7 @@ extension ProximityEventTypeJson on ProximityEventType {
 ///
 /// V2 섹션 1 기준으로 앱이 필요한 `beaconId`, `rssi`,
 /// `estimatedDistanceMeters`, `signalLevel`, `direction`, `timestamp`를 한 모델에
-/// 고정한다. 실제 event stream 생성과 transition 판단은 후속 섹션에서 확장한다.
+/// 고정한다. 실제 stream 변환은 `ProximityEventStreamAdapter`에서 수행한다.
 class ProximityEvent {
   const ProximityEvent({
     required this.eventType,

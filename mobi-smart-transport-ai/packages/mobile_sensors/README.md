@@ -12,6 +12,7 @@
 - RSSI 기반 가까움/멀어짐 상태 계산
 - 스마트폰 방향/나침반 센서값 수집 구조
 - `BeaconSignal` / `ProximityEvent` / `DirectionReading` 데이터 모델
+- `Stream<BeaconSignal>` → `Stream<ProximityEvent>` 변환 adapter
 - `mobi_mobile_sensors.dart` public API export 정리
 - 패키지 내부 예제 또는 로그 기반 검증 구조
 
@@ -44,6 +45,7 @@ export 'src/sensor_model_validation.dart'; // SensorModelValidation
 export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
 export 'src/beacon_proximity_tracker.dart'; // BeaconProximityTracker, ProximityEvent
+export 'src/proximity_event_stream.dart'; // ProximityEventStreamAdapter
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
@@ -586,3 +588,40 @@ packages/mobile_sensors/test/rssi_smoothing_test.dart
 ```
 
 현재 작업 환경에는 Dart/Flutter SDK가 없어 `flutter test`를 직접 실행하지 못했습니다. 따라서 테스트 파일은 작성 완료 상태이며, 실제 실행 결과는 Flutter SDK가 있는 환경에서 확인해야 합니다.
+
+
+## V2 섹션 5 Proximity Event Stream 설계
+
+섹션 5에서는 BLE scanner가 제공하는 `Stream<BeaconSignal>`을 Passenger App이 바로 구독할 수 있는 `Stream<ProximityEvent>`로 변환하는 `ProximityEventStreamAdapter`를 추가했습니다. 이 adapter는 Flutter 앱 화면이나 권한 안내 UI를 직접 구현하지 않고, 센서 패키지 내부에서 event payload 구조만 제공합니다.
+
+지원하는 eventType은 다음과 같습니다.
+
+```txt
+ProximityEventType.beaconNear      -> BEACON_NEAR
+ProximityEventType.beaconLost      -> BEACON_LOST
+ProximityEventType.approachingStop -> APPROACHING_STOP
+ProximityEventType.leavingStop     -> LEAVING_STOP
+```
+
+기본 변환 기준은 다음과 같습니다.
+
+```txt
+BeaconSignalLevel.VERY_CLOSE / CLOSE -> BEACON_NEAR
+BeaconSignalLevel.LOST               -> BEACON_LOST
+BeaconProximityTrend.APPROACHING     -> APPROACHING_STOP
+BeaconProximityTrend.MOVING_AWAY     -> LEAVING_STOP
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final adapter = ProximityEventStreamAdapter(
+  scanner: MockBeaconScanner(mockSignals),
+);
+
+await for (final event in adapter.watch(targetBeaconId: 'MOBI_BEACON_001')) {
+  print(event.toJson());
+}
+```
+
+`ProximityEvent.metadata`에는 앱 디버깅과 후속 audio cue mapping에 필요한 `source`, `distanceZone`, `trend`, `isStale`, `rssiDelta`, `distanceDeltaMeters`가 포함됩니다. 실제 TTS 호출, 화면 표시, 앱 lifecycle 처리는 Passenger App 담당 영역이며 이 패키지는 이벤트 stream과 payload 계약만 제공합니다.
