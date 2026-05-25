@@ -934,3 +934,40 @@ packages/mobile_sensors/test/passenger_sensor_lifecycle_test.dart
 ```
 
 현재 작업 환경에는 Dart/Flutter SDK가 없어 `flutter test`를 직접 실행하지 못했습니다. 따라서 lifecycle policy 테스트 파일은 작성 완료 상태이며, 실제 실행 결과는 Flutter SDK가 있는 환경에서 확인해야 합니다.
+
+## V2 섹션 11 Sensor Debug Fixture 정리
+
+섹션 11에서는 다른 팀원이 실제 BLE 비콘 없이도 센서 이벤트 흐름을 재현할 수 있도록 debug fixture를 정리했습니다. 목적은 Passenger App 담당자가 센서 패키지를 직접 실행하거나 실기기를 준비하지 않아도 `BEACON_NEAR`, `APPROACHING_STOP`, `LEAVING_STOP`, `BEACON_LOST` 흐름을 확인할 수 있게 하는 것입니다.
+
+정리된 산출물은 다음과 같습니다.
+
+```txt
+packages/mobile_sensors/fixtures/mock_beacon_sequence.json
+packages/mobile_sensors/fixtures/sample_proximity_events.json
+packages/mobile_sensors/docs/sensor_replay_guide.md
+packages/mobile_sensors/test/proximity_event_replay_test.dart
+```
+
+`mock_beacon_sequence.json`은 replay 입력입니다. `sample_proximity_events.json`은 해당 입력을 `ProximityEventReplayRunner`로 변환했을 때 기대되는 sample output입니다. 앱 담당자는 `sensor_replay_guide.md`를 참고하여 실제 scanner 대신 fixture를 주입하고 eventType별 UI/TTS 분기를 점검할 수 있습니다.
+
+기본 replay 흐름은 다음과 같습니다.
+
+```txt
+MEDIUM signal  -> 이벤트 없음
+CLOSE signal   -> BEACON_NEAR + APPROACHING_STOP
+CLOSE signal   -> BEACON_NEAR + APPROACHING_STOP
+MEDIUM signal  -> LEAVING_STOP
+LOST signal    -> BEACON_LOST
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final fixture = BeaconReplayFixture.fromJson(fixtureJson);
+final runner = ProximityEventReplayRunner(fixture: fixture);
+final events = await runner.collectEvents(
+  targetBeaconId: 'MOBI_STOP_BEACON_001',
+);
+```
+
+이 fixture는 실측 BLE 데이터가 아니라 통합 smoke check용 고정 입력입니다. 실제 RSSI 보정, 권한 요청 UI, 앱 lifecycle subscription 보관, 실제 TTS/골전도 이어폰 출력은 각 담당 모듈과 실기기 검증 단계에서 확인해야 합니다.

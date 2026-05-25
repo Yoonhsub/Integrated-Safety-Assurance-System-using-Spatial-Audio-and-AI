@@ -9,7 +9,7 @@ void main() {
     test('parses the mock beacon sequence fixture', () {
       final fixture = _loadSection6Fixture();
 
-      expect(fixture.name, 'section6_mock_beacon_sequence');
+      expect(fixture.name, 'section11_sensor_debug_mock_beacon_sequence');
       expect(fixture.frames, hasLength(5));
       expect(fixture.signals.first.beaconId, 'MOBI_STOP_BEACON_001');
       expect(fixture.frames.first.direction, isNotNull);
@@ -50,6 +50,17 @@ void main() {
 
       expect(events, isEmpty);
     });
+
+    test('sample proximity events document replay output payloads', () {
+      final sample = _loadSampleProximityEvents();
+      final events = sample['events'] as List;
+
+      expect(sample['sourceFixture'], 'packages/mobile_sensors/fixtures/mock_beacon_sequence.json');
+      expect(events, hasLength(6));
+      expect(events.first['eventType'], 'BEACON_NEAR');
+      expect(events.last['eventType'], 'BEACON_LOST');
+      expect(events.last['rssi'], isNull);
+    });
   });
 }
 
@@ -65,4 +76,18 @@ BeaconReplayFixture _loadSection6Fixture() {
   );
   final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
   return BeaconReplayFixture.fromJson(Map<String, Object?>.from(json));
+}
+
+Map<String, Object?> _loadSampleProximityEvents() {
+  final candidates = [
+    File('fixtures/sample_proximity_events.json'),
+    File('packages/mobile_sensors/fixtures/sample_proximity_events.json'),
+  ];
+
+  final file = candidates.firstWhere(
+    (candidate) => candidate.existsSync(),
+    orElse: () => throw StateError('sample_proximity_events.json fixture not found.'),
+  );
+  final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+  return Map<String, Object?>.from(json);
 }

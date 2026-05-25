@@ -1,6 +1,6 @@
 {
-  "name": "section6_mock_beacon_sequence",
-  "description": "V2 section 6 replay sequence for BEACON_NEAR, BEACON_LOST, APPROACHING_STOP, and LEAVING_STOP transitions without live BLE hardware.",
+  "name": "section11_sensor_debug_mock_beacon_sequence",
+  "description": "V2 section 11 debug fixture for app teammates to replay BEACON_NEAR, APPROACHING_STOP, LEAVING_STOP, and BEACON_LOST transitions without live BLE hardware.",
   "frames": [
     {
       "beaconId": "MOBI_STOP_BEACON_001",
@@ -16,7 +16,10 @@
       "delayMs": 0,
       "metadata": {
         "expectedTrend": "UNKNOWN",
-        "expectedEvents": []
+        "expectedEvents": [],
+        "frameIndex": 0,
+        "frameLabel": "initial_medium_signal",
+        "fixtureVersion": "v2_section11"
       }
     },
     {
@@ -33,7 +36,13 @@
       "delayMs": 0,
       "metadata": {
         "expectedTrend": "APPROACHING",
-        "expectedEvents": ["BEACON_NEAR", "APPROACHING_STOP"]
+        "expectedEvents": [
+          "BEACON_NEAR",
+          "APPROACHING_STOP"
+        ],
+        "frameIndex": 1,
+        "frameLabel": "approaching_close_signal",
+        "fixtureVersion": "v2_section11"
       }
     },
     {
@@ -50,7 +59,13 @@
       "delayMs": 0,
       "metadata": {
         "expectedTrend": "APPROACHING",
-        "expectedEvents": ["BEACON_NEAR", "APPROACHING_STOP"]
+        "expectedEvents": [
+          "BEACON_NEAR",
+          "APPROACHING_STOP"
+        ],
+        "frameIndex": 2,
+        "frameLabel": "near_close_signal",
+        "fixtureVersion": "v2_section11"
       }
     },
     {
@@ -67,7 +82,12 @@
       "delayMs": 0,
       "metadata": {
         "expectedTrend": "MOVING_AWAY",
-        "expectedEvents": ["LEAVING_STOP"]
+        "expectedEvents": [
+          "LEAVING_STOP"
+        ],
+        "frameIndex": 3,
+        "frameLabel": "moving_away_medium_signal",
+        "fixtureVersion": "v2_section11"
       }
     },
     {
@@ -80,8 +100,14 @@
       "delayMs": 0,
       "metadata": {
         "expectedTrend": "UNKNOWN",
-        "expectedEvents": ["BEACON_LOST"]
+        "expectedEvents": [
+          "BEACON_LOST"
+        ],
+        "frameIndex": 4,
+        "frameLabel": "lost_signal",
+        "fixtureVersion": "v2_section11"
       }
     }
-  ]
+  ],
+  "usage": "Use with BeaconReplayFixture.fromJson(...) and ProximityEventReplayRunner.collectEvents(...). The expectedEvents metadata documents the sample proximity events that should be produced from each frame."
 }
