@@ -33,6 +33,9 @@ bool _isLoadingBusArrivals = true;
   RideRequestCreateResult? _rideRequestCreateResult;
   bool _isCreatingRideRequest = false;
 
+  RideRequestStatusResult? _rideRequestStatusResult;
+  bool _isLoadingRideRequestStatus = false;
+
   @override
     void initState() {
       super.initState();
@@ -89,6 +92,8 @@ Future<void> _createRideRequest() async {
     _rideRequestCreateResult = result;
     _isCreatingRideRequest = false;
   });
+
+  
 
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -147,6 +152,40 @@ Future<void> _createRideRequest() async {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(guideMessage)));
+  }
+  
+    Future<void> _loadRideRequestStatus() async {
+    final requestId = _rideRequestCreateResult?.requestId;
+
+    if (requestId == null || requestId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('조회할 탑승 요청 식별자가 없습니다.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoadingRideRequestStatus = true;
+    });
+
+    final result = await _backendApiClient.fetchRideRequestStatus(
+      requestId: requestId,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _rideRequestStatusResult = result;
+      _isLoadingRideRequestStatus = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.description),
+      ),
+    );
   }
 
   @override
@@ -222,43 +261,77 @@ Future<void> _createRideRequest() async {
                 title: '탑승 요청 상태',
                 statusLabel: _isCreatingRideRequest
                   ? '요청 중'
-                  : _rideRequestCreateResult?.statusLabel ??
-                       rideRequestStatus?.statusLabel ??
-                       '요청 전',
+                  : _isLoadingRideRequestStatus
+                  ? '조회 중'
+                  : _rideRequestStatusResult?.statusLabel ??
+                    _rideRequestCreateResult?.statusLabel ??
+                    rideRequestStatus?.statusLabel ??
+                    '요청 전',
                 description: _isCreatingRideRequest
                   ? '탑승 요청을 생성하는 중입니다.'
-                  : _rideRequestCreateResult?.description ??
-                      rideRequestStatus?.description ??
-                     '탑승 요청 상태를 불러오는 중입니다.',
+                  : _isLoadingRideRequestStatus
+                  ? '탑승 요청 상태를 조회하는 중입니다.'
+                  : _rideRequestStatusResult?.description ??
+                     _rideRequestCreateResult?.description ??
+                     rideRequestStatus?.description ??
+                      '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint: _rideRequestCreateResult?.semanticHint ??
-                      rideRequestStatus?.semanticHint ??
+                semanticHint: _rideRequestStatusResult?.semanticHint ??
+                     _rideRequestCreateResult?.semanticHint ??
+                     rideRequestStatus?.semanticHint ??
                       '탑승 요청 생성 전 상태를 표시하는 영역입니다.',
-),
-const SizedBox(height: 12),
-Semantics(
-  button: true,
-  label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
-  hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
-  child: SizedBox(
-    height: 64,
-    child: ElevatedButton.icon(
-      onPressed: _isCreatingRideRequest ? null : _createRideRequest,
-      icon: Icon(
-        _isCreatingRideRequest
-            ? Icons.hourglass_empty
-            : Icons.accessible_forward_outlined,
-      ),
-      label: Text(
-        _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    ),
-  ),
-),
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
+                hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
+                child: SizedBox(
+                  height: 64,
+                  child: ElevatedButton.icon(
+                    onPressed: _isCreatingRideRequest ? null : _createRideRequest,
+                    icon: Icon(
+                      _isCreatingRideRequest
+                          ? Icons.hourglass_empty
+                          : Icons.accessible_forward_outlined,
+                    ),
+                    label: Text(
+                      _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Semantics(
+                button: true,
+                label: _isLoadingRideRequestStatus
+                    ? '탑승 요청 상태 조회 중'
+                    : '탑승 요청 상태 조회',
+                hint: '두 번 탭하면 생성된 탑승 요청의 현재 상태를 조회합니다.',
+                child: SizedBox(
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        _isLoadingRideRequestStatus ? null : _loadRideRequestStatus,
+                    icon: Icon(
+                      _isLoadingRideRequestStatus
+                          ? Icons.hourglass_empty
+                          : Icons.refresh_outlined,
+                    ),
+                    label: Text(
+                      _isLoadingRideRequestStatus ? '상태 조회 중...' : '상태 조회',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],
@@ -268,6 +341,7 @@ Semantics(
     );
   }
 }
+
 
 class _HeaderSection extends StatelessWidget {
   const _HeaderSection();
