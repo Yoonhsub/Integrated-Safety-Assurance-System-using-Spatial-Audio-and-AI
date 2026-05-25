@@ -28,6 +28,9 @@ class _HomePageState extends State<HomePage> {
   DriverRideRequestsResult? _rideRequestsResult;
   bool _isLoadingRideRequests = true;
 
+  RideRequestStatusUpdateResult? _statusUpdateResult;
+  bool _isUpdatingRideRequestStatus = false;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +69,43 @@ class _HomePageState extends State<HomePage> {
 
     await _loadDriverRideRequests();
   }
+
+  Future<void> _acceptRideRequest(String? requestId) async {
+  if (requestId == null || requestId.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('상태를 변경할 탑승 요청 식별자가 없습니다.'),
+      ),
+    );
+    return;
+  }
+
+  setState(() {
+    _isUpdatingRideRequestStatus = true;
+  });
+
+  final result = await _backendApiClient.updateRideRequestStatus(
+    requestId: requestId,
+    status: 'ACCEPTED',
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _statusUpdateResult = result;
+    _isUpdatingRideRequestStatus = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(result.description),
+    ),
+  );
+
+  if (result.isSuccess) {
+    await _refreshDriverRideRequests();
+  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +152,22 @@ class _HomePageState extends State<HomePage> {
                 icon: Icons.accessible_forward_outlined,
                 semanticHint: '기사에게 배정된 탑승 요청 목록 상태를 표시하는 영역입니다.',
               ),
+
+              if (_statusUpdateResult != null) ...[
+                const SizedBox(height: 12),
+                _InfoCard(
+                  title: '상태 변경 결과',
+                  statusLabel: _isUpdatingRideRequestStatus
+                      ? '변경 중'
+                      : _statusUpdateResult?.statusLabel ?? '대기',
+                  description: _statusUpdateResult?.description ??
+                      '탑승 요청 상태 변경 결과를 기다리는 중입니다.',
+                  icon: Icons.check_circle_outline,
+                  semanticHint: _statusUpdateResult?.semanticHint ??
+                      '탑승 요청 상태 변경 결과를 표시하는 영역입니다.',
+                ),
+              ],
+
               const SizedBox(height: 12),
               Semantics(
                 button: true,
@@ -155,18 +211,49 @@ class _HomePageState extends State<HomePage> {
                   semanticHint: '기사에게 배정된 탑승 요청이 없는 상태입니다.',
                 )
               else
-                ...rideRequests.map(
-                  (request) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _InfoCard(
-                      title: request.requestLabel,
-                      statusLabel: request.statusLabel,
-                      description: request.description,
-                      icon: Icons.assignment_outlined,
-                      semanticHint: request.semanticHint,
-                    ),
+              ...rideRequests.map(
+                (request) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _InfoCard(
+                        title: request.requestLabel,
+                        statusLabel: request.statusLabel,
+                        description: request.description,
+                        icon: Icons.assignment_outlined,
+                        semanticHint: request.semanticHint,
+                      ),
+                      const SizedBox(height: 8),
+                      Semantics(
+                        button: true,
+                        label: '${request.requestLabel} 수락',
+                        hint: '두 번 탭하면 해당 탑승 요청을 ACCEPTED 상태로 변경합니다.',
+                        child: SizedBox(
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            onPressed: _isUpdatingRideRequestStatus
+                                ? null
+                                : () => _acceptRideRequest(request.requestId),
+                            icon: Icon(
+                              _isUpdatingRideRequestStatus
+                                  ? Icons.hourglass_empty
+                                  : Icons.check_circle_outline,
+                            ),
+                            label: Text(
+                              _isUpdatingRideRequestStatus ? '처리 중...' : '요청 수락',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+              ),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],
