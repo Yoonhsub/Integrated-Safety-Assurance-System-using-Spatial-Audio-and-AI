@@ -514,6 +514,37 @@ await for (final cue in cueStream) {
 - `BUS_APPROACHING`, `OBSTACLE_DETECTED` 같은 이벤트는 현재 `ProximityEventType` 계약에 없으므로 이번 섹션에서 임의로 enum을 추가하지 않았습니다.
 - 버스 접근 정보와 AI 장애물 감지는 다른 담당 영역 또는 shared contract 협의가 필요한 이벤트이므로, 이번 mapping은 안준환 담당 범위의 sensor proximity event 네 가지에 한정합니다.
 
+
+## V2 섹션 8 Audio Cue Factory 검증
+
+섹션 8에서는 섹션 7에서 추가한 `BeaconAudioCueFactory`가 앱에서 안정적으로 사용될 수 있는지 검증했습니다. 검증 범위는 트리거 프롬프트 기준의 `known event`, `unknown event`, `repeated event`, `priority conflict` 네 가지입니다.
+
+검증 기준은 다음과 같습니다.
+
+```txt
+known event: BEACON_NEAR 같은 확정된 ProximityEventType은 정해진 message/urgency/repeat payload로 변환
+unknown event: 현재 계약에 없는 문자열 event는 enum을 임의 추가하지 않고 fallback cue로 처리
+repeated event: 짧은 시간 안에 반복되는 비치명 안내는 앱이 suppress 가능
+priority conflict: 여러 cue가 동시에 발생하면 critical > high > medium > low 순서로 선택
+```
+
+섹션 8에서 보강한 factory helper는 다음과 같습니다.
+
+```txt
+createFallbackCueForUnknownEvent(): 알 수 없는 event 문자열을 안전한 warning cue로 변환
+shouldSuppressRepeatedCue(): 같은 beacon/event가 cooldown 안에 반복될 때 중복 안내 억제 여부 판단
+selectHighestPriorityCue(): cue 충돌 시 가장 높은 우선순위 cue 선택
+createCueStreamFromEvents(... suppressRepeatedEvents: true): event stream 변환 중 반복 cue 억제 옵션 제공
+```
+
+테스트 파일은 아래 경로에 추가했습니다.
+
+```txt
+packages/mobile_sensors/test/audio_cue_factory_test.dart
+```
+
+이 검증은 실제 TTS 재생, 골전도 이어폰 연결, HRTF/3D 공간음향 렌더링을 수행하지 않습니다. 앱 또는 오디오 출력 계층이 사용할 cue payload와 queue 판단 기준만 제공합니다.
+
 ## 현재 구현 상태
 
 현재 패키지는 GitHub-ready 스캐폴딩 단계입니다. 따라서 `UnimplementedBeaconScanner`와 `UnimplementedDirectionSensor`가 `Stream.empty()`를 반환하는 것은 오류가 아닙니다. 실제 BLE 스캔, 권한 처리, 현장 RSSI 보정값, 플랫폼별 센서 연결은 이후 구현 섹션에서 담당 범위 안에서 순차적으로 보강합니다.
