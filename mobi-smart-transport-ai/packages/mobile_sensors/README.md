@@ -46,6 +46,7 @@ export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
 export 'src/beacon_proximity_tracker.dart'; // BeaconProximityTracker, ProximityEvent
 export 'src/proximity_event_stream.dart'; // ProximityEventStreamAdapter
+export 'src/beacon_replay_fixture.dart'; // BeaconReplayFixture, ProximityEventReplayRunner
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
@@ -625,3 +626,56 @@ await for (final event in adapter.watch(targetBeaconId: 'MOBI_BEACON_001')) {
 ```
 
 `ProximityEvent.metadata`에는 앱 디버깅과 후속 audio cue mapping에 필요한 `source`, `distanceZone`, `trend`, `isStale`, `rssiDelta`, `distanceDeltaMeters`가 포함됩니다. 실제 TTS 호출, 화면 표시, 앱 lifecycle 처리는 Passenger App 담당 영역이며 이 패키지는 이벤트 stream과 payload 계약만 제공합니다.
+
+## V2 섹션 6 Event Stream mock/replay 검증
+
+섹션 6에서는 실제 BLE 기기가 없어도 Passenger App 연동자가 센서 흐름을 재현할 수 있도록 replay fixture와 event transition 테스트 구조를 추가했습니다. 이 작업은 앱 화면을 직접 수정하지 않고, `packages/mobile_sensors/**` 내부에서 mock scanner와 replay helper만 제공합니다.
+
+추가된 주요 구성은 다음과 같습니다.
+
+```txt
+BeaconReplayFrame          : 한 시점의 BeaconSignal + 선택적 DirectionReading
+BeaconReplayFixture        : 여러 frame으로 구성된 mock beacon sequence
+ProximityEventReplayRunner : fixture를 Stream<ProximityEvent>로 변환하는 test/helper runner
+mock_beacon_sequence.json  : BEACON_NEAR / BEACON_LOST / APPROACHING_STOP / LEAVING_STOP 검증용 fixture
+proximity_event_replay_test.dart : replay fixture 기반 event transition 테스트
+```
+
+fixture 경로는 다음과 같습니다.
+
+```txt
+packages/mobile_sensors/fixtures/mock_beacon_sequence.json
+```
+
+테스트 경로는 다음과 같습니다.
+
+```txt
+packages/mobile_sensors/test/proximity_event_replay_test.dart
+```
+
+fixture의 기본 전환 흐름은 다음과 같습니다.
+
+```txt
+MEDIUM signal  -> 초기값이므로 이벤트 없음
+CLOSE signal   -> BEACON_NEAR + APPROACHING_STOP
+CLOSE signal   -> BEACON_NEAR + APPROACHING_STOP
+MEDIUM signal  -> LEAVING_STOP
+LOST signal    -> BEACON_LOST
+```
+
+사용 예시는 다음과 같습니다.
+
+```dart
+final fixture = BeaconReplayFixture.fromJson(fixtureJson);
+final runner = ProximityEventReplayRunner(fixture: fixture);
+final events = await runner.collectEvents(
+  targetBeaconId: 'MOBI_STOP_BEACON_001',
+);
+
+for (final event in events) {
+  print(event.toJson());
+}
+```
+
+이 fixture는 실제 BLE 수신값을 가장하지 않습니다. 목적은 실기기 전 단계에서 앱 팀이 event stream 구독, eventType 분기, direction payload 유무, lost event 처리를 검증할 수 있게 하는 것입니다. 실제 BLE 스캔과 권한 처리는 이후 lifecycle/권한 검증 섹션과 실기기 테스트에서 별도로 확인해야 합니다.
+

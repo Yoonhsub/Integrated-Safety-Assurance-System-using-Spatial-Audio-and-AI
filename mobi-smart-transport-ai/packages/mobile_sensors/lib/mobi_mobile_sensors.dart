@@ -10,6 +10,7 @@ export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
 export 'src/beacon_proximity_tracker.dart';
 export 'src/proximity_event_stream.dart';
+export 'src/beacon_replay_fixture.dart';
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';

@@ -1,0 +1,87 @@
+{
+  "name": "section6_mock_beacon_sequence",
+  "description": "V2 section 6 replay sequence for BEACON_NEAR, BEACON_LOST, APPROACHING_STOP, and LEAVING_STOP transitions without live BLE hardware.",
+  "frames": [
+    {
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -78,
+      "estimatedDistanceMeters": 6.5,
+      "signalLevel": "MEDIUM",
+      "lastDetectedAt": "2026-04-18T09:00:00+09:00",
+      "direction": {
+        "headingDegrees": 35.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:00+09:00"
+      },
+      "delayMs": 0,
+      "metadata": {
+        "expectedTrend": "UNKNOWN",
+        "expectedEvents": []
+      }
+    },
+    {
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -64,
+      "estimatedDistanceMeters": 2.6,
+      "signalLevel": "CLOSE",
+      "lastDetectedAt": "2026-04-18T09:00:01+09:00",
+      "direction": {
+        "headingDegrees": 32.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:01+09:00"
+      },
+      "delayMs": 0,
+      "metadata": {
+        "expectedTrend": "APPROACHING",
+        "expectedEvents": ["BEACON_NEAR", "APPROACHING_STOP"]
+      }
+    },
+    {
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -60,
+      "estimatedDistanceMeters": 1.7,
+      "signalLevel": "CLOSE",
+      "lastDetectedAt": "2026-04-18T09:00:02+09:00",
+      "direction": {
+        "headingDegrees": 31.0,
+        "accuracy": "HIGH",
+        "updatedAt": "2026-04-18T09:00:02+09:00"
+      },
+      "delayMs": 0,
+      "metadata": {
+        "expectedTrend": "APPROACHING",
+        "expectedEvents": ["BEACON_NEAR", "APPROACHING_STOP"]
+      }
+    },
+    {
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -76,
+      "estimatedDistanceMeters": 5.2,
+      "signalLevel": "MEDIUM",
+      "lastDetectedAt": "2026-04-18T09:00:03+09:00",
+      "direction": {
+        "headingDegrees": 45.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:03+09:00"
+      },
+      "delayMs": 0,
+      "metadata": {
+        "expectedTrend": "MOVING_AWAY",
+        "expectedEvents": ["LEAVING_STOP"]
+      }
+    },
+    {
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -127,
+      "estimatedDistanceMeters": null,
+      "signalLevel": "LOST",
+      "lastDetectedAt": "2026-04-18T09:00:04+09:00",
+      "direction": null,
+      "delayMs": 0,
+      "metadata": {
+        "expectedTrend": "UNKNOWN",
+        "expectedEvents": ["BEACON_LOST"]
+      }
+    }
+  ]
+}
