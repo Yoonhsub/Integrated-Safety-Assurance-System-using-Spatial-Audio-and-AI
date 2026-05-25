@@ -52,6 +52,7 @@ class BoneConductionAudioCue {
     required this.createdAt,
     this.estimatedDistanceMeters,
     this.proximityTrend,
+    this.sourceEventType,
     this.shouldRepeat = true,
   })  : assert(cueId.length > 0, 'cueId must not be empty'),
         assert(beaconId.length > 0, 'beaconId must not be empty'),
@@ -76,6 +77,13 @@ class BoneConductionAudioCue {
   /// 최근 비콘 접근 추세이다. 추세 판단을 수행하지 않았다면 null일 수 있다.
   final BeaconProximityTrend? proximityTrend;
 
+  /// cue 생성의 기준이 된 proximity event 종류이다.
+  ///
+  /// 기존 [BeaconSignal] 기반 cue에서는 null일 수 있으며, V2 섹션 7 이후
+  /// Passenger App은 이 값을 보고 어떤 sensor event에서 안내가 나왔는지
+  /// 로그와 TTS 분기에서 확인할 수 있다.
+  final ProximityEventType? sourceEventType;
+
   /// 안내 우선순위 또는 위험도 힌트이다.
   final BoneConductionCueUrgency urgency;
 
@@ -99,6 +107,8 @@ class BoneConductionAudioCue {
     bool clearEstimatedDistanceMeters = false,
     BeaconProximityTrend? proximityTrend,
     bool clearProximityTrend = false,
+    ProximityEventType? sourceEventType,
+    bool clearSourceEventType = false,
     BoneConductionCueUrgency? urgency,
     int? repeatIntervalMs,
     bool? shouldRepeat,
@@ -115,6 +125,9 @@ class BoneConductionAudioCue {
       proximityTrend: clearProximityTrend
           ? null
           : proximityTrend ?? this.proximityTrend,
+      sourceEventType: clearSourceEventType
+          ? null
+          : sourceEventType ?? this.sourceEventType,
       urgency: urgency ?? this.urgency,
       repeatIntervalMs: repeatIntervalMs ?? this.repeatIntervalMs,
       shouldRepeat: shouldRepeat ?? this.shouldRepeat,
@@ -129,6 +142,7 @@ class BoneConductionAudioCue {
         'signalLevel': signalLevel.toJsonValue(),
         'estimatedDistanceMeters': estimatedDistanceMeters,
         'proximityTrend': proximityTrend?.toJsonValue(),
+        'sourceEventType': sourceEventType?.toJsonValue(),
         'urgency': urgency.toJsonValue(),
         'repeatIntervalMs': repeatIntervalMs,
         'shouldRepeat': shouldRepeat,
@@ -142,6 +156,7 @@ class BoneConductionAudioCue {
     final signalLevel = json['signalLevel'];
     final estimatedDistanceMeters = json['estimatedDistanceMeters'];
     final proximityTrend = json['proximityTrend'];
+    final sourceEventType = json['sourceEventType'];
     final urgency = json['urgency'];
     final repeatIntervalMs = json['repeatIntervalMs'];
     final shouldRepeat = json['shouldRepeat'];
@@ -167,6 +182,9 @@ class BoneConductionAudioCue {
     if (proximityTrend != null && proximityTrend is! String) {
       throw ArgumentError('BoneConductionAudioCue.proximityTrend must be a string or null.');
     }
+    if (sourceEventType != null && sourceEventType is! String) {
+      throw ArgumentError('BoneConductionAudioCue.sourceEventType must be a string or null.');
+    }
     if (urgency is! String) {
       throw ArgumentError('BoneConductionAudioCue.urgency must be a string.');
     }
@@ -191,6 +209,9 @@ class BoneConductionAudioCue {
       proximityTrend: proximityTrend == null
           ? null
           : _proximityTrendFromJsonValue(proximityTrend),
+      sourceEventType: sourceEventType == null
+          ? null
+          : ProximityEventTypeJson.fromJsonValue(sourceEventType),
       urgency: BoneConductionCueUrgencyJson.fromJsonValue(urgency),
       repeatIntervalMs: repeatIntervalMs.toInt(),
       shouldRepeat: shouldRepeat,
@@ -211,6 +232,35 @@ class BoneConductionAudioCue {
       default:
         throw ArgumentError('Unknown BeaconProximityTrend JSON value: $value');
     }
+  }
+
+  /// proximity event를 앱/TTS/오디오 모듈이 소비할 안내 cue로 변환한다.
+  ///
+  /// 기본 mapping 대상은 `BEACON_NEAR`, `BEACON_LOST`,
+  /// `APPROACHING_STOP`, `LEAVING_STOP` 네 가지이다.
+  /// 이 factory는 실제 TTS 재생, 골전도 이어폰 제어, 공간음향 렌더링을 수행하지
+  /// 않고 V2 섹션 7 기준 eventType별 message/urgency/repeat payload만 만든다.
+  factory BoneConductionAudioCue.fromProximityEvent(
+    ProximityEvent event, {
+    DateTime? createdAt,
+  }) {
+    final now = createdAt ?? event.timestamp;
+    final trend = _trendForEvent(event);
+    final eventName = event.eventType.toJsonValue().toLowerCase().replaceAll('_', '-');
+
+    return BoneConductionAudioCue(
+      cueId: 'event-$eventName-${event.beaconId}-${now.millisecondsSinceEpoch}',
+      beaconId: event.beaconId,
+      message: _messageForEvent(event.eventType, event.signalLevel, trend),
+      signalLevel: event.signalLevel,
+      estimatedDistanceMeters: event.estimatedDistanceMeters,
+      proximityTrend: trend,
+      sourceEventType: event.eventType,
+      urgency: _urgencyForEvent(event.eventType, event.signalLevel),
+      repeatIntervalMs: _repeatIntervalForEvent(event.eventType, event.signalLevel),
+      shouldRepeat: _shouldRepeatForEvent(event.eventType, event.signalLevel),
+      createdAt: now,
+    );
   }
 
   /// 비콘 신호 단계에 맞춘 기본 안내 cue를 생성한다.
@@ -235,6 +285,89 @@ class BoneConductionAudioCue {
       shouldRepeat: signal.signalLevel != BeaconSignalLevel.veryClose,
       createdAt: now,
     );
+  }
+
+  static BeaconProximityTrend? _trendForEvent(ProximityEvent event) {
+    switch (event.eventType) {
+      case ProximityEventType.approachingStop:
+        return BeaconProximityTrend.approaching;
+      case ProximityEventType.leavingStop:
+        return BeaconProximityTrend.movingAway;
+      case ProximityEventType.beaconLost:
+        return BeaconProximityTrend.unknown;
+      case ProximityEventType.beaconNear:
+        final trendValue = event.metadata['trend'];
+        if (trendValue is String) {
+          try {
+            return _proximityTrendFromJsonValue(trendValue);
+          } on ArgumentError {
+            return null;
+          }
+        }
+        return null;
+    }
+  }
+
+  static String _messageForEvent(
+    ProximityEventType eventType,
+    BeaconSignalLevel level,
+    BeaconProximityTrend? trend,
+  ) {
+    switch (eventType) {
+      case ProximityEventType.beaconNear:
+        return '정류장 근처입니다. 탑승 위치를 확인하세요.';
+      case ProximityEventType.beaconLost:
+        return '비콘 신호가 끊겼습니다. 주변을 다시 확인하세요.';
+      case ProximityEventType.approachingStop:
+        return '정류장에 가까워지고 있습니다.';
+      case ProximityEventType.leavingStop:
+        return '정류장에서 멀어지고 있습니다. 방향을 다시 확인하세요.';
+    }
+  }
+
+  static BoneConductionCueUrgency _urgencyForEvent(
+    ProximityEventType eventType,
+    BeaconSignalLevel level,
+  ) {
+    switch (eventType) {
+      case ProximityEventType.beaconNear:
+        return level == BeaconSignalLevel.veryClose
+            ? BoneConductionCueUrgency.low
+            : BoneConductionCueUrgency.medium;
+      case ProximityEventType.approachingStop:
+        return BoneConductionCueUrgency.medium;
+      case ProximityEventType.leavingStop:
+        return BoneConductionCueUrgency.high;
+      case ProximityEventType.beaconLost:
+        return BoneConductionCueUrgency.critical;
+    }
+  }
+
+  static int _repeatIntervalForEvent(
+    ProximityEventType eventType,
+    BeaconSignalLevel level,
+  ) {
+    switch (eventType) {
+      case ProximityEventType.beaconNear:
+        return level == BeaconSignalLevel.veryClose ? 0 : 3000;
+      case ProximityEventType.approachingStop:
+        return 2500;
+      case ProximityEventType.leavingStop:
+        return 1500;
+      case ProximityEventType.beaconLost:
+        return 1000;
+    }
+  }
+
+  static bool _shouldRepeatForEvent(
+    ProximityEventType eventType,
+    BeaconSignalLevel level,
+  ) {
+    if (eventType == ProximityEventType.beaconNear &&
+        level == BeaconSignalLevel.veryClose) {
+      return false;
+    }
+    return true;
   }
 
   static String _messageForLevel(

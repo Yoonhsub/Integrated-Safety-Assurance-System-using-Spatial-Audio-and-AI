@@ -13,6 +13,7 @@
 - 스마트폰 방향/나침반 센서값 수집 구조
 - `BeaconSignal` / `ProximityEvent` / `DirectionReading` 데이터 모델
 - `Stream<BeaconSignal>` → `Stream<ProximityEvent>` 변환 adapter
+- `ProximityEvent` → `BoneConductionAudioCue` 안내 payload mapping
 - `mobi_mobile_sensors.dart` public API export 정리
 - 패키지 내부 예제 또는 로그 기반 검증 구조
 
@@ -459,6 +460,59 @@ await for (final cue in cueStream) {
 - 헤드트래킹을 제외했기 때문에 머리 방향 기준의 HRTF/3D 공간음향 보정은 구현하지 않습니다.
 - 현재 구현은 비콘 거리 상태와 접근 추세에 따라 어떤 안내를 낼지 결정하는 데이터 생성 계층입니다.
 - 실제 앱에서 이 cue를 음성으로 읽거나 알림음으로 재생하는 작업은 Flutter 앱 또는 오디오 담당 영역에서 처리해야 합니다.
+
+
+## V2 섹션 7 Audio Cue Mapping 설계
+
+섹션 7에서는 섹션 5~6에서 만든 `ProximityEvent`를 Flutter Passenger App 또는 오디오 모듈이 소비할 수 있는 `BoneConductionAudioCue` payload로 변환하는 기준을 추가했습니다. 이 작업은 실제 TTS 재생, 블루투스 이어폰 연결 제어, HRTF/3D 공간음향 렌더링이 아니라 eventType별 안내 문구와 긴급도, 반복 간격을 정하는 mapping 계층입니다.
+
+지원하는 eventType별 기본 mapping은 다음과 같습니다.
+
+```txt
+BEACON_NEAR      -> "정류장 근처입니다. 탑승 위치를 확인하세요." / urgency MEDIUM 또는 LOW
+BEACON_LOST      -> "비콘 신호가 끊겼습니다. 주변을 다시 확인하세요." / urgency CRITICAL
+APPROACHING_STOP -> "정류장에 가까워지고 있습니다." / urgency MEDIUM
+LEAVING_STOP     -> "정류장에서 멀어지고 있습니다. 방향을 다시 확인하세요." / urgency HIGH
+```
+
+`BoneConductionAudioCue`에는 섹션 7 기준으로 `sourceEventType`을 추가했습니다. 기존 `BeaconSignal` 기반 cue에서는 null일 수 있고, `fromProximityEvent()`로 만든 cue에서는 `BEACON_NEAR`, `BEACON_LOST`, `APPROACHING_STOP`, `LEAVING_STOP` 중 하나가 들어갑니다. 앱은 이 값을 이용해 어떤 sensor event에서 안내가 발생했는지 로그와 TTS 분기에 사용할 수 있습니다.
+
+사용 예시는 다음과 같습니다.
+
+```dart
+const cueFactory = BeaconAudioCueFactory();
+
+final event = ProximityEvent.fromBeaconSignal(
+  signal,
+  eventType: ProximityEventType.beaconNear,
+);
+
+final cue = cueFactory.createCueForEvent(event);
+print(cue.message);
+print(cue.toJson());
+```
+
+stream 변환은 다음처럼 사용할 수 있습니다.
+
+```dart
+final eventAdapter = ProximityEventStreamAdapter(scanner: scanner);
+const cueFactory = BeaconAudioCueFactory();
+
+final cueStream = cueFactory.createCueStreamFromEvents(
+  eventAdapter.watch(targetBeaconId: 'MOBI_STOP_BEACON_001'),
+);
+
+await for (final cue in cueStream) {
+  print(cue.message);
+}
+```
+
+주의할 점은 다음과 같습니다.
+
+- 실제 소리를 재생하는 TTS 호출은 Passenger App 또는 오디오 출력 계층에서 처리합니다.
+- 골전도 이어폰은 현재 단계에서 일반 블루투스 오디오 출력 장치로 취급합니다.
+- `BUS_APPROACHING`, `OBSTACLE_DETECTED` 같은 이벤트는 현재 `ProximityEventType` 계약에 없으므로 이번 섹션에서 임의로 enum을 추가하지 않았습니다.
+- 버스 접근 정보와 AI 장애물 감지는 다른 담당 영역 또는 shared contract 협의가 필요한 이벤트이므로, 이번 mapping은 안준환 담당 범위의 sensor proximity event 네 가지에 한정합니다.
 
 ## 현재 구현 상태
 
