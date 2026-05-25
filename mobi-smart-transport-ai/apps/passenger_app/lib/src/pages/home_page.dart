@@ -15,6 +15,11 @@ class _HomePageState extends State<HomePage> {
     defaultValue: 'http://localhost:8000',
   );
 
+  static const String _defaultBusStopId = 'mock-stop-001';
+
+BusArrivalSummary? _busArrivalSummary;
+bool _isLoadingBusArrivals = true;
+
   final VoiceGuideService _voiceGuideService = VoiceGuideService();
 
   final BackendApiClient _backendApiClient = const BackendApiClient(
@@ -25,11 +30,25 @@ class _HomePageState extends State<HomePage> {
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
 
-@override
-void initState() {
-  super.initState();
-  _loadBackendHealthStatus();
-  _loadPassengerHomeSnapshot();
+  @override
+    void initState() {
+      super.initState();
+      _loadBackendHealthStatus();
+      _loadPassengerHomeSnapshot();
+      _loadBusArrivalSummary();
+}
+
+Future<void> _loadBusArrivalSummary() async {
+  final busArrivalSummary = await _backendApiClient.fetchBusArrivalSummary(
+    stopId: _defaultBusStopId,
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _busArrivalSummary = busArrivalSummary;
+    _isLoadingBusArrivals = false;
+  });
 }
 
   Future<void> _loadPassengerHomeSnapshot() async {
@@ -110,7 +129,6 @@ void initState() {
   Widget build(BuildContext context) {
     final voiceButtonLabel = _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
     final safetyStatus = _homeSnapshot?.safetyStatus;
-    final busArrivalStatus = _homeSnapshot?.busArrivalStatus;
     final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
@@ -166,15 +184,15 @@ void initState() {
               const SizedBox(height: 16),
               _StatusCard(
                 title: '버스 도착 정보',
-                statusLabel: _isLoadingHomeSnapshot
-                    ? '불러오는 중'
-                    : busArrivalStatus?.statusLabel ?? 'mock 대기',
-                description:
-                    busArrivalStatus?.description ?? '버스 도착 정보를 불러오는 중입니다.',
+                statusLabel: _isLoadingBusArrivals
+                   ? '불러오는 중'
+                   : _busArrivalSummary?.statusLabel ?? '도착 정보 없음',
+                description: _busArrivalSummary?.description ??
+                   '버스 도착 정보를 불러오는 중입니다.',
                 icon: Icons.directions_bus_outlined,
-                semanticHint: busArrivalStatus?.semanticHint ??
-                    '실제 버스 도착 API 연동 전 mock 도착 정보를 표시하는 영역입니다.',
-              ),
+                semanticHint: _busArrivalSummary?.semanticHint ??
+                   '버스 도착 정보 API 또는 mock 도착 정보를 불러오는 중입니다.',
+),
               const SizedBox(height: 16),
               _StatusCard(
                 title: '탑승 요청 상태',
