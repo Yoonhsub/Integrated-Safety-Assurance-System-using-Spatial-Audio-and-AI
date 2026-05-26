@@ -5,10 +5,15 @@
 /// It does not implement Flutter passenger/driver app UI.
 library mobi_mobile_sensors;
 
+export 'src/sensor_model_validation.dart';
 export 'src/beacon_signal.dart';
 export 'src/beacon_distance_estimator.dart';
 export 'src/beacon_proximity_tracker.dart';
+export 'src/proximity_event_stream.dart';
+export 'src/beacon_replay_fixture.dart';
 export 'src/beacon_scanner.dart';
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
 export 'src/beacon_audio_cue_factory.dart';
+export 'src/passenger_sensor_adapter.dart';
+export 'src/passenger_sensor_lifecycle.dart';

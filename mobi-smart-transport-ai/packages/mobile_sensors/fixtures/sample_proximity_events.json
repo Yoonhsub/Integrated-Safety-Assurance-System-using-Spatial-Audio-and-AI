@@ -1,0 +1,133 @@
+{
+  "name": "section11_sample_proximity_events",
+  "description": "Expected sample proximity events generated from fixtures/mock_beacon_sequence.json. This file is for Passenger App integration smoke checks and documentation, not live BLE telemetry.",
+  "sourceFixture": "packages/mobile_sensors/fixtures/mock_beacon_sequence.json",
+  "targetBeaconId": "MOBI_STOP_BEACON_001",
+  "events": [
+    {
+      "eventType": "BEACON_NEAR",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -64,
+      "estimatedDistanceMeters": 2.6,
+      "signalLevel": "CLOSE",
+      "direction": {
+        "headingDegrees": 32.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:01+09:00"
+      },
+      "timestamp": "2026-04-18T09:00:01+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "NEAR",
+        "trend": "APPROACHING",
+        "isStale": false,
+        "rssiDelta": 14,
+        "distanceDeltaMeters": -3.9,
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    },
+    {
+      "eventType": "APPROACHING_STOP",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -64,
+      "estimatedDistanceMeters": 2.6,
+      "signalLevel": "CLOSE",
+      "direction": {
+        "headingDegrees": 32.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:01+09:00"
+      },
+      "timestamp": "2026-04-18T09:00:01+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "NEAR",
+        "trend": "APPROACHING",
+        "isStale": false,
+        "rssiDelta": 14,
+        "distanceDeltaMeters": -3.9,
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    },
+    {
+      "eventType": "BEACON_NEAR",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -60,
+      "estimatedDistanceMeters": 1.7,
+      "signalLevel": "CLOSE",
+      "direction": {
+        "headingDegrees": 31.0,
+        "accuracy": "HIGH",
+        "updatedAt": "2026-04-18T09:00:02+09:00"
+      },
+      "timestamp": "2026-04-18T09:00:02+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "NEAR",
+        "trend": "APPROACHING",
+        "isStale": false,
+        "rssiDelta": 4,
+        "distanceDeltaMeters": -0.9,
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    },
+    {
+      "eventType": "APPROACHING_STOP",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -60,
+      "estimatedDistanceMeters": 1.7,
+      "signalLevel": "CLOSE",
+      "direction": {
+        "headingDegrees": 31.0,
+        "accuracy": "HIGH",
+        "updatedAt": "2026-04-18T09:00:02+09:00"
+      },
+      "timestamp": "2026-04-18T09:00:02+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "NEAR",
+        "trend": "APPROACHING",
+        "isStale": false,
+        "rssiDelta": 4,
+        "distanceDeltaMeters": -0.9,
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    },
+    {
+      "eventType": "LEAVING_STOP",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": -76,
+      "estimatedDistanceMeters": 5.2,
+      "signalLevel": "MEDIUM",
+      "direction": {
+        "headingDegrees": 45.0,
+        "accuracy": "MEDIUM",
+        "updatedAt": "2026-04-18T09:00:03+09:00"
+      },
+      "timestamp": "2026-04-18T09:00:03+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "MEDIUM",
+        "trend": "MOVING_AWAY",
+        "isStale": false,
+        "rssiDelta": -16,
+        "distanceDeltaMeters": 3.5,
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    },
+    {
+      "eventType": "BEACON_LOST",
+      "beaconId": "MOBI_STOP_BEACON_001",
+      "rssi": null,
+      "estimatedDistanceMeters": null,
+      "signalLevel": "LOST",
+      "direction": null,
+      "timestamp": "2026-04-18T09:00:04+09:00",
+      "metadata": {
+        "source": "mobile_sensors",
+        "distanceZone": "UNKNOWN",
+        "trend": "UNKNOWN",
+        "debugFixture": "section11_sensor_debug_mock_beacon_sequence"
+      }
+    }
+  ]
+}

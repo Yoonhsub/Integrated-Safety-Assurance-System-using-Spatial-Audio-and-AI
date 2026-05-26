@@ -1,3 +1,5 @@
+import 'sensor_model_validation.dart';
+
 enum BeaconSignalLevel { veryClose, close, medium, far, lost }
 
 extension BeaconSignalLevelJson on BeaconSignalLevel {
@@ -47,7 +49,16 @@ class BeaconSignal {
     required this.estimatedDistanceMeters,
     required this.signalLevel,
     required this.lastDetectedAt,
-  });
+  })  : assert(beaconId.length > 0, 'beaconId must not be empty'),
+        assert(
+          rssi >= SensorModelValidation.minValidRssi &&
+              rssi <= SensorModelValidation.maxValidRssi,
+          'rssi must be between -127 and -1',
+        ),
+        assert(
+          estimatedDistanceMeters == null || estimatedDistanceMeters >= 0,
+          'estimatedDistanceMeters must be non-negative or null',
+        );
 
   bool get isLost => signalLevel == BeaconSignalLevel.lost;
 
@@ -90,32 +101,29 @@ class BeaconSignal {
     final signalLevel = json['signalLevel'];
     final lastDetectedAt = json['lastDetectedAt'];
 
-    if (beaconId is! String || beaconId.isEmpty) {
-      throw ArgumentError('BeaconSignal.beaconId must be a non-empty string.');
-    }
-    if (rssi is! num) {
-      throw ArgumentError('BeaconSignal.rssi must be a number.');
-    }
-    if (estimatedDistanceMeters != null && estimatedDistanceMeters is! num) {
-      throw ArgumentError(
-        'BeaconSignal.estimatedDistanceMeters must be a number or null.',
-      );
+    if (beaconId != null && beaconId is! String) {
+      throw ArgumentError('BeaconSignal.beaconId must be a string or null.');
     }
     if (signalLevel is! String) {
       throw ArgumentError('BeaconSignal.signalLevel must be a string.');
     }
-    if (lastDetectedAt is! String) {
-      throw ArgumentError('BeaconSignal.lastDetectedAt must be an ISO-8601 string.');
-    }
 
     return BeaconSignal(
-      beaconId: beaconId,
-      rssi: rssi.toInt(),
-      estimatedDistanceMeters: estimatedDistanceMeters == null
-          ? null
-          : (estimatedDistanceMeters as num).toDouble(),
+      beaconId: SensorModelValidation.normalizeBeaconId(beaconId as String?),
+      rssi: SensorModelValidation.requireValidRssi(
+        rssi,
+        fieldName: 'BeaconSignal.rssi',
+      ),
+      estimatedDistanceMeters:
+          SensorModelValidation.normalizeEstimatedDistanceMeters(
+        estimatedDistanceMeters,
+        fieldName: 'BeaconSignal.estimatedDistanceMeters',
+      ),
       signalLevel: BeaconSignalLevelJson.fromJsonValue(signalLevel),
-      lastDetectedAt: DateTime.parse(lastDetectedAt),
+      lastDetectedAt: SensorModelValidation.requireIsoTimestamp(
+        lastDetectedAt,
+        fieldName: 'BeaconSignal.lastDetectedAt',
+      ),
     );
   }
 
@@ -124,8 +132,8 @@ class BeaconSignal {
     DateTime? lastDetectedAt,
   }) {
     return BeaconSignal(
-      beaconId: beaconId,
-      rssi: -127,
+      beaconId: SensorModelValidation.normalizeBeaconId(beaconId),
+      rssi: SensorModelValidation.minValidRssi,
       estimatedDistanceMeters: null,
       signalLevel: BeaconSignalLevel.lost,
       lastDetectedAt: lastDetectedAt ?? DateTime.now(),
