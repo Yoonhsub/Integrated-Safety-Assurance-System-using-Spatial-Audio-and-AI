@@ -579,9 +579,9 @@ def test_ride_request_rejects_terminal_status_reversal() -> None:
 
     assert reversal_response.status_code == 409
     body = reversal_response.json()
-    assert body["detail"]["error"]["code"] == "INVALID_RIDE_REQUEST_STATUS_TRANSITION"
-    assert body["detail"]["error"]["detail"]["currentStatus"] == "COMPLETED"
-    assert body["detail"]["error"]["detail"]["requestedStatus"] == "ACCEPTED"
+    assert body["error"]["code"] == "INVALID_RIDE_REQUEST_STATUS_TRANSITION"
+    assert body["error"]["detail"]["currentStatus"] == "COMPLETED"
+    assert body["error"]["detail"]["requestedStatus"] == "ACCEPTED"
 
 
 def test_ride_request_get_unknown_request_returns_404() -> None:
@@ -590,6 +590,7 @@ def test_ride_request_get_unknown_request_returns_404() -> None:
     response = client.get("/ride-requests/missing-request")
 
     assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
 
 def test_ride_request_status_update_rejects_unknown_status() -> None:
     response = client.patch(
@@ -788,8 +789,8 @@ def test_bus_info_gateway_converts_public_data_exception_to_backend_error() -> N
 
     assert response.status_code == 503
     body = response.json()
-    assert body["detail"]["error"]["code"] == "PUBLIC_DATA_UNAVAILABLE"
-    assert body["detail"]["error"]["detail"]["stopId"] == "stop-public-data-down"
+    assert body["error"]["code"] == "PUBLIC_DATA_UNAVAILABLE"
+    assert body["error"]["detail"]["stopId"] == "stop-public-data-down"
 
 
 

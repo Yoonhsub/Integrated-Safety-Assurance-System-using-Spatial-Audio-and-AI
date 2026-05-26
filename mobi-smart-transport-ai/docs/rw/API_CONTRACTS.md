@@ -93,9 +93,11 @@ FastAPI 라우트는 `packages/shared_contracts/api/*.schema.json` 및 `backend/
 
 ### 2.2 실패 응답
 
-현재 실패 응답은 FastAPI 기본 오류 형식을 우선 사용한다. 따라서 request validation 오류는 FastAPI/Pydantic 기본 `detail` 배열로 반환될 수 있고, `HTTPException` 기반 404는 `detail` 문자열 또는 객체를 반환할 수 있다.
+V2 Section 10 기준으로 백엔드 서비스 오류와 명시적 `HTTPException` 오류는 앱이 공통으로 처리할 수 있도록 `error.code/message/detail` envelope를 반환한다.
 
-현재 백엔드의 `AppServiceError` handler는 아래 형태를 반환한다.
+Request validation 오류는 FastAPI/Pydantic 기본 `detail` 배열로 반환될 수 있다. 이 경우에도 HTTP status code는 앱의 1차 분기 기준으로 유지한다.
+
+현재 백엔드의 `AppServiceError`와 `HTTPException` handler는 아래 형태를 반환한다.
 
 ```json
 {
@@ -107,15 +109,7 @@ FastAPI 라우트는 `packages/shared_contracts/api/*.schema.json` 및 `backend/
 }
 ```
 
-프로젝트 공통 오류 모델이 필요한 경우 아래 형태는 V2 planned 목표로 보되, 성공 응답을 감싸는 wrapper로 확장하지 않는다. 앱이 모든 오류를 한 형태로 처리해야 하는지 여부는 현석 Section 10에서 확정한다.
-
-```json
-{
-  "errorCode": "INVALID_REQUEST",
-  "message": "요청값이 올바르지 않습니다.",
-  "details": {}
-}
-```
+주의: 성공 응답에는 wrapper를 추가하지 않는다.
 
 ### 2.3 기준 파일 우선순위
 
