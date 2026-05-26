@@ -646,6 +646,72 @@ def test_bus_info_gateway_uses_public_data_service_for_uncached_stop() -> None:
     assert body["arrivals"][0]["congestion"] == "NORMAL"
 
 
+def test_bus_info_gateway_fills_missing_updated_at_from_cache() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    firebase.set(
+        "/busArrivals/stop-missing-updated-at",
+        {
+            "stopId": "stop-missing-updated-at",
+            "arrivals": [
+                {
+                    "routeId": "CACHE-110",
+                    "busNo": "110",
+                    "arrivalMinutes": 4,
+                    "remainingStops": 1,
+                    "lowFloor": True,
+                    "congestion": "UNKNOWN",
+                }
+            ],
+        },
+    )
+
+    response = client.get("/bus-info/stops/stop-missing-updated-at/arrivals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stopId"] == "stop-missing-updated-at"
+    assert body["arrivals"][0]["updatedAt"]
+
+
+def test_bus_info_gateway_returns_empty_arrivals_for_empty_cache_payload() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    firebase.set("/busArrivals/stop-empty", {"stopId": "stop-empty"})
+
+    response = client.get("/bus-info/stops/stop-empty/arrivals")
+
+    assert response.status_code == 200
+    assert response.json() == {"stopId": "stop-empty", "arrivals": []}
+
+
+def test_bus_info_gateway_converts_public_data_exception_to_backend_error() -> None:
+    from app.api.routes import bus_info_gateway
+    from app.services.bus_info_gateway_service import BusInfoGatewayService
+
+    class BrokenPublicDataService:
+        def get_arrivals(self, stop_id: str):
+            raise RuntimeError(f"public_data unavailable for {stop_id}")
+
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    original_service = bus_info_gateway._service
+    bus_info_gateway._service = BusInfoGatewayService(
+        firebase=firebase,
+        public_data_service=BrokenPublicDataService(),
+    )
+
+    try:
+        response = client.get("/bus-info/stops/stop-public-data-down/arrivals")
+    finally:
+        bus_info_gateway._service = original_service
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["detail"]["error"]["code"] == "PUBLIC_DATA_UNAVAILABLE"
+    assert body["detail"]["error"]["detail"]["stopId"] == "stop-public-data-down"
+
+
 
 def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None:
     from datetime import datetime, timezone
