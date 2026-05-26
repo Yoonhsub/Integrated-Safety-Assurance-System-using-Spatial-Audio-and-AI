@@ -295,14 +295,16 @@ def validate_manifest() -> None:
     final_file_list = ROOT / "docs/read/FINAL_FILE_LIST.txt"
     if not final_file_list.exists():
         raise AssertionError("Missing docs/read/FINAL_FILE_LIST.txt")
-    listed = {line.strip() for line in final_file_list.read_text(encoding="utf-8").splitlines() if line.strip()}
-    actual = {
+    listed_raw = {line.strip() for line in final_file_list.read_text(encoding="utf-8").splitlines() if line.strip()}
+    actual_raw = {
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob("*")
         if _is_packaged_source_file(path)
     }
-    missing = sorted(listed - actual)
-    unlisted = sorted(actual - listed)
+    listed = {unicodedata.normalize("NFC", path): path for path in listed_raw}
+    actual = {unicodedata.normalize("NFC", path): path for path in actual_raw}
+    missing = [listed[key] for key in sorted(set(listed) - set(actual))]
+    unlisted = [actual[key] for key in sorted(set(actual) - set(listed))]
     if missing:
         raise AssertionError(f"docs/read/FINAL_FILE_LIST.txt contains missing files: {missing[:20]}")
     if unlisted:

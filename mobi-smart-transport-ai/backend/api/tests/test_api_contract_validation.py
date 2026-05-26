@@ -6,6 +6,35 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_v2_backend_current_routes_match_section_1_contract() -> None:
+    current_routes = {
+        (route.path, method)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    for path, method in {
+        ("/health", "GET"),
+        ("/bus-info/stops/{stopId}/arrivals", "GET"),
+        ("/ride-requests", "POST"),
+        ("/ride-requests/{requestId}", "GET"),
+        ("/ride-requests/{requestId}/status", "PATCH"),
+        ("/drivers/{driverId}/ride-requests", "GET"),
+        ("/geofence/check", "POST"),
+        ("/notifications/send", "POST"),
+    }:
+        assert (path, method) in current_routes
+
+
+def test_v2_backend_planned_routes_are_not_current_before_their_sections() -> None:
+    current_paths = {route.path for route in app.routes}
+
+    assert "/driver/ride-requests" not in current_paths
+    assert "/driver/ride-requests/{id}/status" not in current_paths
+    assert "/safety-events" not in current_paths
+    assert "/safety-events/recent" not in current_paths
+
+
 def test_geofence_rejects_extra_field_and_null_timestamp() -> None:
     base_payload = {
         "userId": "user001",
