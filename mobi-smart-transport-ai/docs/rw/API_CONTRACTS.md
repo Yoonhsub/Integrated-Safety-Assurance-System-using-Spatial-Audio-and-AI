@@ -24,7 +24,7 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 ## V2 통합 MVP App-Facing API 상태표
 
 이 표는 V2에서 Flutter 앱이 실제로 연결할 핵심 API를 `current`와 `V2 planned`로 구분한다.  
-상태는 2026-05-18 기준 backend route 파일 확인 결과를 따른다.
+상태는 2026-05-26 기준 backend route 파일 확인 결과를 따른다.
 
 | API | Status | 현재 repo 기준 | Notes |
 |---|---|---|---|
@@ -48,7 +48,7 @@ PATCH /ride-requests/{requestId}/status
 
 ### V2 Section 1 backend route audit
 
-2026-05-18 KST에 FastAPI app route를 확인한 current route는 다음과 같다.
+2026-05-26 KST에 FastAPI app route를 확인한 current route는 다음과 같다.
 
 ```txt
 GET /health
@@ -361,6 +361,15 @@ Cache payload shape: BusArrivalsResponse
 - backend는 RTDB cache miss 시 김도성 public_data 모듈의 `BusArrivalsService.get_arrivals(stop_id)`를 호출한다.
 - backend는 공공데이터 raw field를 직접 normalize하지 않는다.
 - public_data mock 응답과 live 응답은 모두 같은 normalized shape를 반환해야 한다.
+```
+
+V2 conflict resolution:
+
+```txt
+- GitHub issue #16 closed 기준으로 Option A를 current cache 계약으로 확정한다.
+- 김도성 public_data 측은 BusArrivalsResponse 7개 필드를 mock/live 표준 응답 기준으로 확인했다.
+- 안준환 sensor/audio cue 측은 routeId child listener 직접 구독 요구가 없다고 확인했다.
+- 따라서 backend, Firebase RTDB schema, architecture validator는 `/busArrivals/{stopId}` = BusArrivalsResponse 기준으로 맞춘다.
 ```
 
 선행 의존성:
