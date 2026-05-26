@@ -10,16 +10,52 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final VoiceGuideService _voiceGuideService = VoiceGuideService();
-  final BackendApiClient _backendApiClient = const BackendApiClient(
-    baseUrl: 'mock://passenger-app',
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'MOBI_API_BASE_URL',
+    defaultValue: 'http://localhost:8000',
   );
 
+  static const String _defaultBusStopId = 'mock-stop-001';
+
+BusArrivalSummary? _busArrivalSummary;
+bool _isLoadingBusArrivals = true;
+
+  final VoiceGuideService _voiceGuideService = VoiceGuideService();
+
+  final BackendApiClient _backendApiClient = const BackendApiClient(
+    baseUrl: _apiBaseUrl,
+    useMockData: false,
+  );
+
+  BackendHealthStatus? _backendHealthStatus;
+  bool _isLoadingBackendHealth = true;
+
+  RideRequestCreateResult? _rideRequestCreateResult;
+  bool _isCreatingRideRequest = false;
+
+  RideRequestStatusResult? _rideRequestStatusResult;
+  bool _isLoadingRideRequestStatus = false;
+
   @override
-  void initState() {
-    super.initState();
-    _loadPassengerHomeSnapshot();
-  }
+    void initState() {
+      super.initState();
+      _loadBackendHealthStatus();
+      _loadPassengerHomeSnapshot();
+      _loadBusArrivalSummary();
+}
+
+Future<void> _loadBusArrivalSummary() async {
+  final busArrivalSummary = await _backendApiClient.fetchBusArrivalSummary(
+    stopId: _defaultBusStopId,
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _busArrivalSummary = busArrivalSummary;
+    _isLoadingBusArrivals = false;
+  });
+}
 
   Future<void> _loadPassengerHomeSnapshot() async {
     final snapshot = await _backendApiClient.fetchPassengerHomeSnapshot();
@@ -31,6 +67,40 @@ class _HomePageState extends State<HomePage> {
       _isLoadingHomeSnapshot = false;
     });
   }
+
+  Future<void> _loadBackendHealthStatus() async {
+  final healthStatus = await _backendApiClient.fetchHealthStatus();
+
+  if (!mounted) return;
+
+  setState(() {
+    _backendHealthStatus = healthStatus;
+    _isLoadingBackendHealth = false;
+  });
+}
+
+Future<void> _createRideRequest() async {
+  setState(() {
+    _isCreatingRideRequest = true;
+  });
+
+  final result = await _backendApiClient.createRideRequest();
+
+  if (!mounted) return;
+
+  setState(() {
+    _rideRequestCreateResult = result;
+    _isCreatingRideRequest = false;
+  });
+
+  
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(result.description),
+    ),
+  );
+}
 
   PassengerHomeSnapshot? _homeSnapshot;
   bool _isLoadingHomeSnapshot = true;
@@ -84,11 +154,83 @@ class _HomePageState extends State<HomePage> {
     ).showSnackBar(SnackBar(content: Text(guideMessage)));
   }
 
+  Future<void> _speakCurrentStatusGuide() async {
+  final backendStatus = _isLoadingBackendHealth
+      ? '확인 중'
+      : (_backendHealthStatus?.isAvailable ?? false)
+          ? '연결 성공'
+          : '연결 실패';
+
+  final busArrivalStatus = _isLoadingBusArrivals
+      ? '불러오는 중'
+      : _busArrivalSummary?.statusLabel ?? '도착 정보 없음';
+
+  final rideRequestStatus = _isCreatingRideRequest
+      ? '요청 중'
+      : _isLoadingRideRequestStatus
+          ? '조회 중'
+          : _rideRequestStatusResult?.statusLabel ??
+              _rideRequestCreateResult?.statusLabel ??
+              _homeSnapshot?.rideRequestStatus.statusLabel ??
+              '요청 전';
+
+  final message = await _voiceGuideService.speakStatusGuide(
+    backendStatus: backendStatus,
+    busArrivalStatus: busArrivalStatus,
+    rideRequestStatus: rideRequestStatus,
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _voiceStatusMessage = message;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+    ),
+  );
+}
+  
+    Future<void> _loadRideRequestStatus() async {
+    final requestId = _rideRequestCreateResult?.requestId;
+
+    if (requestId == null || requestId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('조회할 탑승 요청 식별자가 없습니다.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoadingRideRequestStatus = true;
+    });
+
+    final result = await _backendApiClient.fetchRideRequestStatus(
+      requestId: requestId,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _rideRequestStatusResult = result;
+      _isLoadingRideRequestStatus = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.description),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final voiceButtonLabel = _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
     final safetyStatus = _homeSnapshot?.safetyStatus;
-    final busArrivalStatus = _homeSnapshot?.busArrivalStatus;
     final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
@@ -100,11 +242,44 @@ class _HomePageState extends State<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _HeaderSection(),
+              const SizedBox(height: 16),
+              _StatusCard(
+                title: '백엔드 연결 상태',
+                statusLabel: _isLoadingBackendHealth
+                  ? '확인 중'
+                  : (_backendHealthStatus?.isAvailable ?? false)
+                    ? '연결 성공'
+                    : '연결 실패',
+                description: _backendHealthStatus?.message ??
+                  '백엔드 연결 상태를 확인하는 중입니다.',
+                icon: Icons.cloud_done_outlined,
+                semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
+              ),
               const SizedBox(height: 24),
-              _VoiceActionButton(
+                          _VoiceActionButton(
                 label: voiceButtonLabel,
                 isListening: _isListening,
                 onPressed: _toggleVoiceInput,
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: '현재 상태 음성 안내',
+                hint: '두 번 탭하면 백엔드 연결 상태, 버스 도착 정보, 탑승 요청 상태를 음성으로 안내합니다.',
+                child: SizedBox(
+                  height: 64,
+                  child: OutlinedButton.icon(
+                    onPressed: _speakCurrentStatusGuide,
+                    icon: const Icon(Icons.record_voice_over_outlined),
+                    label: const Text(
+                      '현재 상태 음성 안내',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               _StatusCard(
@@ -131,26 +306,90 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 16),
               _StatusCard(
                 title: '버스 도착 정보',
-                statusLabel: _isLoadingHomeSnapshot
-                    ? '불러오는 중'
-                    : busArrivalStatus?.statusLabel ?? 'mock 대기',
-                description:
-                    busArrivalStatus?.description ?? '버스 도착 정보를 불러오는 중입니다.',
+                statusLabel: _isLoadingBusArrivals
+                   ? '불러오는 중'
+                   : _busArrivalSummary?.statusLabel ?? '도착 정보 없음',
+                description: _busArrivalSummary?.description ??
+                   '버스 도착 정보를 불러오는 중입니다.',
                 icon: Icons.directions_bus_outlined,
-                semanticHint: busArrivalStatus?.semanticHint ??
-                    '실제 버스 도착 API 연동 전 mock 도착 정보를 표시하는 영역입니다.',
-              ),
+                semanticHint: _busArrivalSummary?.semanticHint ??
+                   '버스 도착 정보 API 또는 mock 도착 정보를 불러오는 중입니다.',
+),
               const SizedBox(height: 16),
               _StatusCard(
                 title: '탑승 요청 상태',
-                statusLabel: _isLoadingHomeSnapshot
-                    ? '불러오는 중'
-                    : rideRequestStatus?.statusLabel ?? 'mock 대기',
-                description:
-                    rideRequestStatus?.description ?? '탑승 요청 상태를 불러오는 중입니다.',
+                statusLabel: _isCreatingRideRequest
+                  ? '요청 중'
+                  : _isLoadingRideRequestStatus
+                  ? '조회 중'
+                  : _rideRequestStatusResult?.statusLabel ??
+                    _rideRequestCreateResult?.statusLabel ??
+                    rideRequestStatus?.statusLabel ??
+                    '요청 전',
+                description: _isCreatingRideRequest
+                  ? '탑승 요청을 생성하는 중입니다.'
+                  : _isLoadingRideRequestStatus
+                  ? '탑승 요청 상태를 조회하는 중입니다.'
+                  : _rideRequestStatusResult?.description ??
+                     _rideRequestCreateResult?.description ??
+                     rideRequestStatus?.description ??
+                      '탑승 요청 상태를 불러오는 중입니다.',
                 icon: Icons.accessible_forward_outlined,
-                semanticHint: rideRequestStatus?.semanticHint ??
-                    '실제 탑승 요청 API 연동 전 mock 요청 상태를 표시하는 영역입니다.',
+                semanticHint: _rideRequestStatusResult?.semanticHint ??
+                     _rideRequestCreateResult?.semanticHint ??
+                     rideRequestStatus?.semanticHint ??
+                      '탑승 요청 생성 전 상태를 표시하는 영역입니다.',
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
+                hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
+                child: SizedBox(
+                  height: 64,
+                  child: ElevatedButton.icon(
+                    onPressed: _isCreatingRideRequest ? null : _createRideRequest,
+                    icon: Icon(
+                      _isCreatingRideRequest
+                          ? Icons.hourglass_empty
+                          : Icons.accessible_forward_outlined,
+                    ),
+                    label: Text(
+                      _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Semantics(
+                button: true,
+                label: _isLoadingRideRequestStatus
+                    ? '탑승 요청 상태 조회 중'
+                    : '탑승 요청 상태 조회',
+                hint: '두 번 탭하면 생성된 탑승 요청의 현재 상태를 조회합니다.',
+                child: SizedBox(
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        _isLoadingRideRequestStatus ? null : _loadRideRequestStatus,
+                    icon: Icon(
+                      _isLoadingRideRequestStatus
+                          ? Icons.hourglass_empty
+                          : Icons.refresh_outlined,
+                    ),
+                    label: Text(
+                      _isLoadingRideRequestStatus ? '상태 조회 중...' : '상태 조회',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
@@ -161,6 +400,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
 
 class _HeaderSection extends StatelessWidget {
   const _HeaderSection();

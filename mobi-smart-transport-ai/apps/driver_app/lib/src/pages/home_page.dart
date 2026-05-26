@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/backend_api_client.dart';
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -8,68 +10,252 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final List<_MockRideRequest> _rideRequests = const [
-    _MockRideRequest(
-      passengerLabel: '시각 보조가 필요한 승객',
-      boardingPointText: '중앙 정류장 인근',
-      destinationText: '시청 방향',
-      assistanceText: '탑승 위치 확인과 음성 안내가 필요한 요청입니다.',
-    ),
-  ];
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'MOBI_API_BASE_URL',
+    defaultValue: 'http://localhost:8000',
+  );
 
-  final Set<int> _confirmedRequestIndexes = <int>{};
+  static const String _driverId = 'ride-driver-001';
 
-  void _confirmRideRequest(int index) {
+  final BackendApiClient _backendApiClient = const BackendApiClient(
+    baseUrl: _apiBaseUrl,
+    useMockData: false,
+  );
+
+  BackendHealthStatus? _backendHealthStatus;
+  bool _isLoadingBackendHealth = true;
+
+  DriverRideRequestsResult? _rideRequestsResult;
+  bool _isLoadingRideRequests = true;
+
+  RideRequestStatusUpdateResult? _statusUpdateResult;
+  bool _isUpdatingRideRequestStatus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBackendHealthStatus();
+    _loadDriverRideRequests();
+  }
+
+  Future<void> _loadBackendHealthStatus() async {
+    final healthStatus = await _backendApiClient.fetchHealthStatus();
+
+    if (!mounted) return;
+
     setState(() {
-      _confirmedRequestIndexes.add(index);
+      _backendHealthStatus = healthStatus;
+      _isLoadingBackendHealth = false;
+    });
+  }
+
+  Future<void> _loadDriverRideRequests() async {
+    final result = await _backendApiClient.fetchDriverRideRequests(
+      driverId: _driverId,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _rideRequestsResult = result;
+      _isLoadingRideRequests = false;
+    });
+  }
+
+  Future<void> _refreshDriverRideRequests() async {
+    setState(() {
+      _isLoadingRideRequests = true;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('mock 탑승 요청을 확인 완료 상태로 변경했습니다.')),
-    );
+    await _loadDriverRideRequests();
   }
+
+  Future<void> _acceptRideRequest(String? requestId) async {
+  if (requestId == null || requestId.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('상태를 변경할 탑승 요청 식별자가 없습니다.'),
+      ),
+    );
+    return;
+  }
+
+  setState(() {
+    _isUpdatingRideRequestStatus = true;
+  });
+
+  final result = await _backendApiClient.updateRideRequestStatus(
+    requestId: requestId,
+    status: 'ACCEPTED',
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _statusUpdateResult = result;
+    _isUpdatingRideRequestStatus = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(result.description),
+    ),
+  );
+
+  if (result.isSuccess) {
+    await _refreshDriverRideRequests();
+  }
+}
 
   @override
   Widget build(BuildContext context) {
-    final pendingRequestCount =
-        _rideRequests.length - _confirmedRequestIndexes.length;
+    final rideRequests = _rideRequestsResult?.requests ?? const [];
 
     return Scaffold(
       appBar: AppBar(title: const Text('MOBI 기사 앱'), centerTitle: true),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: RefreshIndicator(
+          onRefresh: _refreshDriverRideRequests,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
             children: [
               const _HeaderSection(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               _InfoCard(
-                title: '운행 상태',
-                statusLabel: pendingRequestCount > 0 ? '요청 수신' : '대기 중',
-                description: pendingRequestCount > 0
-                    ? '확인 대기 중인 mock 탑승 요청이 $pendingRequestCount건 있습니다.'
-                    : '현재 확인 대기 중인 mock 탑승 요청이 없습니다.',
-                icon: Icons.directions_bus_filled_outlined,
-                semanticHint: '기사 앱 운행 상태와 mock 탑승 요청 수신 상태를 안내하는 영역입니다.',
+                title: '백엔드 연결 상태',
+                statusLabel: _isLoadingBackendHealth
+                    ? '확인 중'
+                    : (_backendHealthStatus?.isAvailable ?? false)
+                        ? '연결 성공'
+                        : '연결 실패',
+                description: _backendHealthStatus?.message ??
+                    '백엔드 연결 상태를 확인하는 중입니다.',
+                icon: Icons.cloud_done_outlined,
+                semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
               const _InfoCard(
-                title: '탑승 요청 연결',
-                statusLabel: 'mock 목록 표시',
-                description:
-                    '실제 GET /drivers/{driverId}/ride-requests API 연동 전까지 mock 탑승 요청 목록을 표시합니다.',
-                icon: Icons.notifications_active_outlined,
-                semanticHint: '실제 탑승 요청 API 연동 전 mock 목록을 표시하는 영역입니다.',
+                title: '운행 상태',
+                statusLabel: '대기 중',
+                description: '현재 운행 상태는 기사 앱 UI 확인용 기본 상태입니다.',
+                icon: Icons.directions_bus_filled_outlined,
+                semanticHint: '기사 운행 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
-              _RideRequestListSection(
-                rideRequests: _rideRequests,
-                confirmedRequestIndexes: _confirmedRequestIndexes,
-                onConfirm: _confirmRideRequest,
+              _InfoCard(
+                title: '탑승 요청 목록',
+                statusLabel: _isLoadingRideRequests
+                    ? '불러오는 중'
+                    : _rideRequestsResult?.statusLabel ?? '요청 없음',
+                description: _rideRequestsResult?.description ??
+                    '기사에게 배정된 탑승 요청 목록을 불러오는 중입니다.',
+                icon: Icons.accessible_forward_outlined,
+                semanticHint: '기사에게 배정된 탑승 요청 목록 상태를 표시하는 영역입니다.',
+              ),
+
+              if (_statusUpdateResult != null) ...[
+                const SizedBox(height: 12),
+                _InfoCard(
+                  title: '상태 변경 결과',
+                  statusLabel: _isUpdatingRideRequestStatus
+                      ? '변경 중'
+                      : _statusUpdateResult?.statusLabel ?? '대기',
+                  description: _statusUpdateResult?.description ??
+                      '탑승 요청 상태 변경 결과를 기다리는 중입니다.',
+                  icon: Icons.check_circle_outline,
+                  semanticHint: _statusUpdateResult?.semanticHint ??
+                      '탑승 요청 상태 변경 결과를 표시하는 영역입니다.',
+                ),
+              ],
+
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: _isLoadingRideRequests ? '탑승 요청 목록 새로고침 중' : '탑승 요청 목록 새로고침',
+                hint: '두 번 탭하면 기사에게 배정된 탑승 요청 목록을 다시 불러옵니다.',
+                child: SizedBox(
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        _isLoadingRideRequests ? null : _refreshDriverRideRequests,
+                    icon: Icon(
+                      _isLoadingRideRequests
+                          ? Icons.hourglass_empty
+                          : Icons.refresh_outlined,
+                    ),
+                    label: Text(
+                      _isLoadingRideRequests ? '불러오는 중...' : '요청 목록 새로고침',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
-              const _DriverMvpNoticeCard(),
+              if (_isLoadingRideRequests)
+                const _InfoCard(
+                  title: '요청 카드',
+                  statusLabel: '불러오는 중',
+                  description: '기사에게 배정된 탑승 요청을 불러오는 중입니다.',
+                  icon: Icons.hourglass_empty,
+                  semanticHint: '탑승 요청 목록 로딩 상태입니다.',
+                )
+              else if (rideRequests.isEmpty)
+                const _InfoCard(
+                  title: '요청 카드',
+                  statusLabel: '요청 없음',
+                  description: '현재 표시할 탑승 요청이 없습니다.',
+                  icon: Icons.inbox_outlined,
+                  semanticHint: '기사에게 배정된 탑승 요청이 없는 상태입니다.',
+                )
+              else
+              ...rideRequests.map(
+                (request) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _InfoCard(
+                        title: request.requestLabel,
+                        statusLabel: request.statusLabel,
+                        description: request.description,
+                        icon: Icons.assignment_outlined,
+                        semanticHint: request.semanticHint,
+                      ),
+                      const SizedBox(height: 8),
+                      Semantics(
+                        button: true,
+                        label: '${request.requestLabel} 수락',
+                        hint: '두 번 탭하면 해당 탑승 요청을 ACCEPTED 상태로 변경합니다.',
+                        child: SizedBox(
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            onPressed: _isUpdatingRideRequestStatus
+                                ? null
+                                : () => _acceptRideRequest(request.requestId),
+                            icon: Icon(
+                              _isUpdatingRideRequestStatus
+                                  ? Icons.hourglass_empty
+                                  : Icons.check_circle_outline,
+                            ),
+                            label: Text(
+                              _isUpdatingRideRequestStatus ? '처리 중...' : '요청 수락',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const _MvpNoticeCard(),
             ],
           ),
         ),
@@ -90,154 +276,17 @@ class _HeaderSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '탑승 요청을 안전하게 확인하세요',
+            '탑승 요청을 확인하세요',
             style: Theme.of(
               context,
             ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
-            '시각장애인과 노약자 승객의 탑승 요청을 확인할 수 있는 기사 앱 기본 화면입니다.',
+            '승객의 탑승 지원 요청을 확인하고 운행 흐름을 준비하는 기사 앱 화면입니다.',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _RideRequestListSection extends StatelessWidget {
-  const _RideRequestListSection({
-    required this.rideRequests,
-    required this.confirmedRequestIndexes,
-    required this.onConfirm,
-  });
-
-  final List<_MockRideRequest> rideRequests;
-  final Set<int> confirmedRequestIndexes;
-  final ValueChanged<int> onConfirm;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      container: true,
-      label: 'mock 탑승 요청 목록, 총 ${rideRequests.length}건',
-      hint: '실제 rideRequests API 연동 전 mock 요청 목록입니다.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '탑승 요청 목록',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          for (final entry in rideRequests.asMap().entries) ...[
-            _MockRideRequestCard(
-              request: entry.value,
-              isConfirmed: confirmedRequestIndexes.contains(entry.key),
-              onConfirm: () => onConfirm(entry.key),
-            ),
-            const SizedBox(height: 12),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MockRideRequestCard extends StatelessWidget {
-  const _MockRideRequestCard({
-    required this.request,
-    required this.isConfirmed,
-    required this.onConfirm,
-  });
-
-  final _MockRideRequest request;
-  final bool isConfirmed;
-  final VoidCallback onConfirm;
-
-  @override
-  Widget build(BuildContext context) {
-    final statusLabel = isConfirmed ? '확인 완료' : '확인 대기';
-
-    return Semantics(
-      container: true,
-      label:
-          'mock 탑승 요청, 상태 $statusLabel, ${request.passengerLabel}, 승차 위치 ${request.boardingPointText}, 목적지 ${request.destinationText}',
-      hint: '실제 API 요청이 아닌 기사 앱 화면 확인용 mock 탑승 요청입니다.',
-      child: Card(
-        elevation: 1,
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _StatusHeader(title: 'mock 탑승 요청', statusLabel: statusLabel),
-              const SizedBox(height: 14),
-              _RequestInfoRow(label: '승객', value: request.passengerLabel),
-              const SizedBox(height: 8),
-              _RequestInfoRow(label: '승차 위치', value: request.boardingPointText),
-              const SizedBox(height: 8),
-              _RequestInfoRow(label: '목적지', value: request.destinationText),
-              const SizedBox(height: 8),
-              _RequestInfoRow(label: '지원 필요 사항', value: request.assistanceText),
-              const SizedBox(height: 18),
-              Semantics(
-                button: true,
-                label: isConfirmed ? '이미 확인된 mock 탑승 요청' : 'mock 탑승 요청 확인',
-                hint: isConfirmed
-                    ? '이미 확인 완료된 요청입니다.'
-                    : '두 번 탭하면 mock 탑승 요청 상태를 확인 완료로 변경합니다.',
-                child: SizedBox(
-                  height: 64,
-                  child: ElevatedButton.icon(
-                    onPressed: isConfirmed ? null : onConfirm,
-                    icon: Icon(
-                      isConfirmed
-                          ? Icons.check_circle
-                          : Icons.check_circle_outline,
-                    ),
-                    label: Text(
-                      isConfirmed ? '확인 완료' : '요청 확인',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RequestInfoRow extends StatelessWidget {
-  const _RequestInfoRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: '$label, $value',
-      child: RichText(
-        text: TextSpan(
-          style: Theme.of(context).textTheme.bodyLarge,
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            TextSpan(text: value),
-          ],
-        ),
       ),
     );
   }
@@ -277,7 +326,7 @@ class _InfoCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _StatusHeader(title: title, statusLabel: statusLabel),
+                    _InfoHeader(title: title, statusLabel: statusLabel),
                     const SizedBox(height: 10),
                     Text(
                       description,
@@ -294,8 +343,8 @@ class _InfoCard extends StatelessWidget {
   }
 }
 
-class _StatusHeader extends StatelessWidget {
-  const _StatusHeader({required this.title, required this.statusLabel});
+class _InfoHeader extends StatelessWidget {
+  const _InfoHeader({required this.title, required this.statusLabel});
 
   final String title;
   final String statusLabel;
@@ -336,15 +385,15 @@ class _StatusHeader extends StatelessWidget {
   }
 }
 
-class _DriverMvpNoticeCard extends StatelessWidget {
-  const _DriverMvpNoticeCard();
+class _MvpNoticeCard extends StatelessWidget {
+  const _MvpNoticeCard();
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
-      label: 'MVP 안내, 현재 화면은 기사 앱 탑승 요청 흐름을 확인하기 위한 초안입니다.',
-      hint: '실제 탑승 요청 목록과 요청 처리 기능은 rideRequests 파이프라인 확정 후 연결됩니다.',
+      label: 'MVP 안내, 현재 화면은 기사 앱 핵심 흐름을 확인하기 위한 초안입니다.',
+      hint: '실제 탑승 요청 목록과 상태 변경 흐름은 담당 모듈 계약 확정 후 연결됩니다.',
       child: Card(
         elevation: 0,
         child: Padding(
@@ -356,8 +405,8 @@ class _DriverMvpNoticeCard extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
-                  '현재 화면은 4월 MVP 기준의 기사 앱 UI 초안입니다. '
-                  '실제 탑승 요청 목록과 요청 처리 기능은 rideRequests 파이프라인 확정 후 연결됩니다.',
+                  '현재 화면은 V2 기준의 기사 앱 요청 목록 연동 초안입니다. '
+                  '탑승 요청 상태 변경, 기사 수락 흐름, FCM 알림은 후속 섹션에서 검증합니다.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),
@@ -367,18 +416,4 @@ class _DriverMvpNoticeCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _MockRideRequest {
-  const _MockRideRequest({
-    required this.passengerLabel,
-    required this.boardingPointText,
-    required this.destinationText,
-    required this.assistanceText,
-  });
-
-  final String passengerLabel;
-  final String boardingPointText;
-  final String destinationText;
-  final String assistanceText;
 }
