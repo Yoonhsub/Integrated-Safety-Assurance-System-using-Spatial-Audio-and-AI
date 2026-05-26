@@ -844,3 +844,73 @@ def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None
     assert body["stopId"] == "stop-save"
     assert body["arrivals"][0]["routeId"] == "SAVE-777"
     assert body["arrivals"][0]["congestion"] == "NORMAL"
+
+
+# V2 Section 8 safety event behavior tests
+
+
+def test_safety_event_create_persists_and_recent_returns_utc_timestamp() -> None:
+    from datetime import datetime, timezone
+
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    create_response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "OBSTACLE_DETECTED",
+            "source": "ai_vision_mock",
+            "userId": "safety-user",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "confidence": 0.91,
+            "message": "전방 장애물이 감지되었습니다.",
+            "metadata": {"detectedObject": "bollard"},
+            "timestamp": "2026-05-26T09:30:00+09:00",
+        },
+    )
+
+    assert create_response.status_code == 200
+    body = create_response.json()
+    assert body["eventId"].startswith("safety-")
+    assert body["eventType"] == "OBSTACLE_DETECTED"
+    assert body["metadata"] == {"detectedObject": "bollard"}
+
+    timestamp = datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
+    assert timestamp.tzinfo is not None
+    assert timestamp.astimezone(timezone.utc).hour == 0
+    assert timestamp.astimezone(timezone.utc).minute == 30
+
+    stored = firebase.get(f"/safetyEvents/{body['eventId']}")
+    assert stored["eventType"] == "OBSTACLE_DETECTED"
+    assert "eventId" not in stored
+
+    recent_response = client.get("/safety-events/recent")
+    assert recent_response.status_code == 200
+    assert [event["eventId"] for event in recent_response.json()["events"]] == [body["eventId"]]
+
+
+def test_safety_event_rejects_invalid_event_type() -> None:
+    response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "UNKNOWN_EVENT",
+            "source": "sensor_mock",
+            "timestamp": "2026-05-26T00:30:00+00:00",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_safety_event_rejects_naive_timestamp() -> None:
+    response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "BEACON_NEAR",
+            "source": "ble_mock",
+            "timestamp": "2026-05-26T00:30:00",
+        },
+    )
+
+    assert response.status_code == 422
