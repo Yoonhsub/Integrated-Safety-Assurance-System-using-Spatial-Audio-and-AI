@@ -10,6 +10,15 @@ V2 documentation package validation:
 - Scope: documentation-only V2 packaging, metadata, and top-level README cleanup
 - Backend pytest environment note: system Python initially failed during collection because `fastapi` was unavailable. A temporary venv at `/tmp/mobi_backend_pytest_venv` was created, `backend/api/requirements.txt` plus `pytest` were installed there, and the backend test suite passed.
 
+V2 backend integration final validation:
+- Date: 2026-05-26 KST
+- Branch: v2/hyunseok-section1-api-contract-audit
+- python scripts/validate_architecture.py: PASS
+- Backend pytest: 42 passed
+- Backend smoke integration: PASS
+- Smoke command: `/tmp/isas-v2-backend-venv/bin/python scripts/smoke_backend_integration.py`
+- Scope: 현석 V2 Sections 1~12 backend/API/Firebase/mock-live/error/smoke work
+
 Executed checks from architecture validation:
 - python scripts/validate_architecture.py: PASS
 - JSON parse: PASS
