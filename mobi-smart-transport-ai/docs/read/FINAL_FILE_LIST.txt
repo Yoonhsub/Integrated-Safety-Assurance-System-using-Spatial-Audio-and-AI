@@ -133,6 +133,7 @@ packages/shared_contracts/api/ride_request.schema.json
 packages/shared_contracts/api/ride_request.status_update.request.schema.json
 packages/shared_contracts/events/event_types.json
 scripts/print_tree.py
+scripts/smoke_backend_integration.py
 scripts/validate_architecture.py
 services/public_data/README.md
 services/public_data/examples/mock_bus_arrivals.json
