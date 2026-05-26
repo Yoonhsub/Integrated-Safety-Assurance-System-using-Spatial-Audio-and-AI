@@ -208,10 +208,10 @@ class BoneConductionAudioCue {
           : (estimatedDistanceMeters as num).toDouble(),
       proximityTrend: proximityTrend == null
           ? null
-          : _proximityTrendFromJsonValue(proximityTrend),
+          : _proximityTrendFromJsonValue(proximityTrend as String),
       sourceEventType: sourceEventType == null
           ? null
-          : ProximityEventTypeJson.fromJsonValue(sourceEventType),
+          : ProximityEventTypeJson.fromJsonValue(sourceEventType as String),
       urgency: BoneConductionCueUrgencyJson.fromJsonValue(urgency),
       repeatIntervalMs: repeatIntervalMs.toInt(),
       shouldRepeat: shouldRepeat,
