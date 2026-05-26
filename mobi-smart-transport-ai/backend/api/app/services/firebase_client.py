@@ -74,7 +74,7 @@ def load_firebase_settings() -> FirebaseSettings:
         database_url=os.getenv("FIREBASE_DATABASE_URL") or None,
         service_account_path=service_account_path,
         storage_bucket=os.getenv("FIREBASE_STORAGE_BUCKET") or None,
-        use_mock_data=_env_bool("USE_MOCK_DATA", default=True),
+        use_mock_data=_env_bool("FIREBASE_USE_MOCK", default=_env_bool("USE_MOCK_DATA", default=True)),
     )
 
 

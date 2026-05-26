@@ -6,6 +6,41 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_v2_backend_current_routes_match_section_1_contract() -> None:
+    current_routes = {
+        (route.path, method)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    for path, method in {
+        ("/health", "GET"),
+        ("/bus-info/stops/{stopId}/arrivals", "GET"),
+        ("/ride-requests", "POST"),
+        ("/ride-requests/{requestId}", "GET"),
+        ("/ride-requests/{requestId}/status", "PATCH"),
+        ("/drivers/{driverId}/ride-requests", "GET"),
+        ("/driver/ride-requests", "GET"),
+        ("/driver/ride-requests/{requestId}/status", "PATCH"),
+        ("/safety-events", "POST"),
+        ("/safety-events/recent", "GET"),
+        ("/geofence/check", "POST"),
+        ("/notifications/send", "POST"),
+    }:
+        assert (path, method) in current_routes
+
+
+def test_v2_backend_driver_alias_routes_are_current_after_section_5() -> None:
+    current_routes = {
+        (route.path, method)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    assert ("/driver/ride-requests", "GET") in current_routes
+    assert ("/driver/ride-requests/{requestId}/status", "PATCH") in current_routes
+
+
 def test_geofence_rejects_extra_field_and_null_timestamp() -> None:
     base_payload = {
         "userId": "user001",
@@ -475,12 +510,87 @@ def test_ride_request_read_and_status_update_use_firebase_record() -> None:
     assert "requestId" not in stored
 
 
+def test_driver_alias_lists_and_updates_ride_request_status() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-alias",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+            "targetDriverId": "driver-alias",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    list_response = client.get("/driver/ride-requests", params={"driverId": "driver-alias"})
+    update_response = client.patch(f"/driver/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+
+    assert list_response.status_code == 200
+    assert list_response.json()["driverId"] == "driver-alias"
+    assert [item["requestId"] for item in list_response.json()["requests"]] == [request_id]
+    assert update_response.status_code == 200
+    assert update_response.json()["status"] == "ACCEPTED"
+
+
+def test_ride_request_allows_accept_then_complete_transition() -> None:
+    get_firebase_client().clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-complete",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    accept_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+    complete_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "COMPLETED"})
+
+    assert accept_response.status_code == 200
+    assert accept_response.json()["status"] == "ACCEPTED"
+    assert complete_response.status_code == 200
+    assert complete_response.json()["status"] == "COMPLETED"
+
+
+def test_ride_request_rejects_terminal_status_reversal() -> None:
+    get_firebase_client().clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-terminal",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    assert client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"}).status_code == 200
+    assert client.patch(f"/ride-requests/{request_id}/status", json={"status": "COMPLETED"}).status_code == 200
+    reversal_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+
+    assert reversal_response.status_code == 409
+    body = reversal_response.json()
+    assert body["error"]["code"] == "INVALID_RIDE_REQUEST_STATUS_TRANSITION"
+    assert body["error"]["detail"]["currentStatus"] == "COMPLETED"
+    assert body["error"]["detail"]["requestedStatus"] == "ACCEPTED"
+
+
 def test_ride_request_get_unknown_request_returns_404() -> None:
     get_firebase_client().clear_mock_store()
 
     response = client.get("/ride-requests/missing-request")
 
     assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
 
 def test_ride_request_status_update_rejects_unknown_status() -> None:
     response = client.patch(
@@ -617,6 +727,72 @@ def test_bus_info_gateway_uses_public_data_service_for_uncached_stop() -> None:
     assert body["arrivals"][0]["congestion"] == "NORMAL"
 
 
+def test_bus_info_gateway_fills_missing_updated_at_from_cache() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    firebase.set(
+        "/busArrivals/stop-missing-updated-at",
+        {
+            "stopId": "stop-missing-updated-at",
+            "arrivals": [
+                {
+                    "routeId": "CACHE-110",
+                    "busNo": "110",
+                    "arrivalMinutes": 4,
+                    "remainingStops": 1,
+                    "lowFloor": True,
+                    "congestion": "UNKNOWN",
+                }
+            ],
+        },
+    )
+
+    response = client.get("/bus-info/stops/stop-missing-updated-at/arrivals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stopId"] == "stop-missing-updated-at"
+    assert body["arrivals"][0]["updatedAt"]
+
+
+def test_bus_info_gateway_returns_empty_arrivals_for_empty_cache_payload() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    firebase.set("/busArrivals/stop-empty", {"stopId": "stop-empty"})
+
+    response = client.get("/bus-info/stops/stop-empty/arrivals")
+
+    assert response.status_code == 200
+    assert response.json() == {"stopId": "stop-empty", "arrivals": []}
+
+
+def test_bus_info_gateway_converts_public_data_exception_to_backend_error() -> None:
+    from app.api.routes import bus_info_gateway
+    from app.services.bus_info_gateway_service import BusInfoGatewayService
+
+    class BrokenPublicDataService:
+        def get_arrivals(self, stop_id: str):
+            raise RuntimeError(f"public_data unavailable for {stop_id}")
+
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+    original_service = bus_info_gateway._service
+    bus_info_gateway._service = BusInfoGatewayService(
+        firebase=firebase,
+        public_data_service=BrokenPublicDataService(),
+    )
+
+    try:
+        response = client.get("/bus-info/stops/stop-public-data-down/arrivals")
+    finally:
+        bus_info_gateway._service = original_service
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "PUBLIC_DATA_UNAVAILABLE"
+    assert body["error"]["detail"]["stopId"] == "stop-public-data-down"
+
+
 
 def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None:
     from datetime import datetime, timezone
@@ -669,3 +845,73 @@ def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None
     assert body["stopId"] == "stop-save"
     assert body["arrivals"][0]["routeId"] == "SAVE-777"
     assert body["arrivals"][0]["congestion"] == "NORMAL"
+
+
+# V2 Section 8 safety event behavior tests
+
+
+def test_safety_event_create_persists_and_recent_returns_utc_timestamp() -> None:
+    from datetime import datetime, timezone
+
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    create_response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "OBSTACLE_DETECTED",
+            "source": "ai_vision_mock",
+            "userId": "safety-user",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "confidence": 0.91,
+            "message": "전방 장애물이 감지되었습니다.",
+            "metadata": {"detectedObject": "bollard"},
+            "timestamp": "2026-05-26T09:30:00+09:00",
+        },
+    )
+
+    assert create_response.status_code == 200
+    body = create_response.json()
+    assert body["eventId"].startswith("safety-")
+    assert body["eventType"] == "OBSTACLE_DETECTED"
+    assert body["metadata"] == {"detectedObject": "bollard"}
+
+    timestamp = datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
+    assert timestamp.tzinfo is not None
+    assert timestamp.astimezone(timezone.utc).hour == 0
+    assert timestamp.astimezone(timezone.utc).minute == 30
+
+    stored = firebase.get(f"/safetyEvents/{body['eventId']}")
+    assert stored["eventType"] == "OBSTACLE_DETECTED"
+    assert "eventId" not in stored
+
+    recent_response = client.get("/safety-events/recent")
+    assert recent_response.status_code == 200
+    assert [event["eventId"] for event in recent_response.json()["events"]] == [body["eventId"]]
+
+
+def test_safety_event_rejects_invalid_event_type() -> None:
+    response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "UNKNOWN_EVENT",
+            "source": "sensor_mock",
+            "timestamp": "2026-05-26T00:30:00+00:00",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_safety_event_rejects_naive_timestamp() -> None:
+    response = client.post(
+        "/safety-events",
+        json={
+            "eventType": "BEACON_NEAR",
+            "source": "ble_mock",
+            "timestamp": "2026-05-26T00:30:00",
+        },
+    )
+
+    assert response.status_code == 422

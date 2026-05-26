@@ -295,14 +295,16 @@ def validate_manifest() -> None:
     final_file_list = ROOT / "docs/read/FINAL_FILE_LIST.txt"
     if not final_file_list.exists():
         raise AssertionError("Missing docs/read/FINAL_FILE_LIST.txt")
-    listed = {line.strip() for line in final_file_list.read_text(encoding="utf-8").splitlines() if line.strip()}
-    actual = {
+    listed_raw = {line.strip() for line in final_file_list.read_text(encoding="utf-8").splitlines() if line.strip()}
+    actual_raw = {
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob("*")
         if _is_packaged_source_file(path)
     }
-    missing = sorted(listed - actual)
-    unlisted = sorted(actual - listed)
+    listed = {unicodedata.normalize("NFC", path): path for path in listed_raw}
+    actual = {unicodedata.normalize("NFC", path): path for path in actual_raw}
+    missing = [listed[key] for key in sorted(set(listed) - set(actual))]
+    unlisted = [actual[key] for key in sorted(set(actual) - set(listed))]
     if missing:
         raise AssertionError(f"docs/read/FINAL_FILE_LIST.txt contains missing files: {missing[:20]}")
     if unlisted:
@@ -740,12 +742,20 @@ def validate_v7_remaining_consistency() -> None:
         assert_not_contains(path, "혼잡도 정보가 없을 경우 unknown 처리")
         assert_contains(path, "UNKNOWN")
 
-    # RTDB schema labels should match the integer API/Pydantic contract for bus arrivals.
+    # RTDB cache uses the same BusArrivalsResponse shape as the app-facing API.
     rtdb = load_json("infrastructure/firebase/realtime_database.schema.json")
-    bus = rtdb["busArrivals"]["$stopId"]["$routeId"]
-    if bus.get("arrivalMinutes") != "integer":
+    bus = rtdb["busArrivals"]["$stopId"]
+    if "$routeId" in bus:
+        raise AssertionError("RTDB busArrivals must use /busArrivals/{stopId} = BusArrivalsResponse")
+    if bus.get("stopId") != "string":
+        raise AssertionError("RTDB busArrivals cache must include stopId")
+    arrivals = bus.get("arrivals")
+    if not isinstance(arrivals, list) or not arrivals or not isinstance(arrivals[0], dict):
+        raise AssertionError("RTDB busArrivals cache must include arrivals[]")
+    arrival = arrivals[0]
+    if arrival.get("arrivalMinutes") != "integer":
         raise AssertionError("RTDB busArrivals arrivalMinutes must be labelled integer")
-    if bus.get("remainingStops") != "integer | null":
+    if arrival.get("remainingStops") != "integer | null":
         raise AssertionError("RTDB busArrivals remainingStops must be labelled integer | null")
 
     # Test documentation should use the reproducible pytest command used for this package.

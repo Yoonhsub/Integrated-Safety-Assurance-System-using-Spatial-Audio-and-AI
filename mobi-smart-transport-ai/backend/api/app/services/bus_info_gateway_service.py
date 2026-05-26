@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.schemas.bus_info import BusArrivalsResponse
 from app.services.firebase_client import FirebaseClient, get_firebase_client
 
@@ -45,12 +47,37 @@ class BusInfoGatewayService:
 
     def get_arrivals(self, stop_id: str) -> BusArrivalsResponse:
         """Return normalized bus arrival data without parsing provider raw fields."""
-        cached = self.firebase.get(self._firebase_path(stop_id))
-        if cached is not None:
-            return self._coerce_response(cached, fallback_stop_id=stop_id)
+        normalized_stop_id = stop_id.strip()
+        if not normalized_stop_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "code": "INVALID_STOP_ID",
+                        "message": "stopId must be a non-empty string.",
+                        "detail": {"stopId": stop_id},
+                    }
+                },
+            )
 
-        public_data_response = self.public_data_service.get_arrivals(stop_id)
-        return self._coerce_response(public_data_response, fallback_stop_id=stop_id)
+        cached = self.firebase.get(self._firebase_path(normalized_stop_id))
+        if cached is not None:
+            return self._coerce_response(cached, fallback_stop_id=normalized_stop_id)
+
+        try:
+            public_data_response = self.public_data_service.get_arrivals(normalized_stop_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": "PUBLIC_DATA_UNAVAILABLE",
+                        "message": "Bus arrivals are temporarily unavailable.",
+                        "detail": {"stopId": normalized_stop_id},
+                    }
+                },
+            ) from exc
+        return self._coerce_response(public_data_response, fallback_stop_id=normalized_stop_id)
 
     def save_arrivals(self, response: BusArrivalsResponse) -> None:
         """Store already-normalized arrivals at `/busArrivals/{stopId}`.
@@ -67,10 +94,14 @@ class BusInfoGatewayService:
     def _coerce_response(self, data: Any, *, fallback_stop_id: str | None = None) -> BusArrivalsResponse:
         if hasattr(data, "model_dump"):
             data = data.model_dump(mode="json")
+        if data is None:
+            data = {"stopId": fallback_stop_id, "arrivals": []}
         if isinstance(data, list):
             data = {"stopId": fallback_stop_id, "arrivals": data}
         if isinstance(data, dict) and "stopId" not in data and fallback_stop_id:
             data = {**data, "stopId": fallback_stop_id}
+        if isinstance(data, dict) and "arrivals" not in data:
+            data = {**data, "arrivals": []}
         data = self._ensure_arrival_timestamps(data)
         return BusArrivalsResponse.model_validate(data)
 

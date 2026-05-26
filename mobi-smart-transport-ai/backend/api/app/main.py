@@ -2,11 +2,11 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import bus_info_gateway, driver_ride_requests, geofence, notifications, ride_requests
+from app.api.routes import bus_info_gateway, driver_ride_requests, geofence, notifications, ride_requests, safety_events
 from app.services.firebase_client import get_firebase_client
 
 
@@ -48,6 +48,33 @@ async def app_service_error_handler(_: Request, exc: AppServiceError) -> JSONRes
     )
 
 
+def _http_error_code(status_code: int) -> str:
+    return {
+        400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "NOT_FOUND",
+        409: "CONFLICT",
+        422: "INVALID_REQUEST",
+        503: "SERVICE_UNAVAILABLE",
+    }.get(status_code, "HTTP_ERROR")
+
+
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, dict) and isinstance(exc.detail.get("error"), dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": _http_error_code(exc.status_code),
+                "message": str(exc.detail),
+                "detail": {"detail": exc.detail},
+            }
+        },
+    )
+
+
 _load_env()
 APP_ENV = os.getenv("APP_ENV", "development")
 CORS_ORIGINS = _csv_env("BACKEND_CORS_ORIGINS", ("http://localhost:3000", "http://localhost:5173"))
@@ -66,12 +93,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_exception_handler(AppServiceError, app_service_error_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
 
 app.include_router(geofence.router, prefix="/geofence", tags=["geofence"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 app.include_router(ride_requests.router, prefix="/ride-requests", tags=["ride-requests"])
 app.include_router(bus_info_gateway.router, prefix="/bus-info", tags=["bus-info-gateway"])
 app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver-ride-requests"])
+app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
+app.include_router(safety_events.router, prefix="/safety-events", tags=["safety-events"])
 
 
 @app.get("/health")

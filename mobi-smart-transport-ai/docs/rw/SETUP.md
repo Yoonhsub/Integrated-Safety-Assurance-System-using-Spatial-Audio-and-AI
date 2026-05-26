@@ -484,6 +484,14 @@ cd backend/api
 PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p no:cacheprovider
 ```
 
+Backend smoke integration:
+
+```bash
+python scripts/smoke_backend_integration.py
+```
+
+이 스크립트는 FastAPI 서버를 별도 실행하지 않고 TestClient로 `/health`, `/bus-info/stops/{stopId}/arrivals`, `/ride-requests`, `/driver/ride-requests`, `/driver/ride-requests/{requestId}/status` 흐름을 확인한다.
+
 Windows PowerShell:
 
 ```powershell

@@ -69,15 +69,18 @@
   },
   "busArrivals": {
     "$stopId": {
-      "$routeId": {
-        "routeId": "string",
-        "busNo": "string",
-        "arrivalMinutes": "integer",
-        "remainingStops": "integer | null",
-        "lowFloor": "boolean",
-        "congestion": "LOW | NORMAL | HIGH | UNKNOWN",
-        "updatedAt": "datetime"
-      }
+      "stopId": "string",
+      "arrivals": [
+        {
+          "routeId": "string",
+          "busNo": "string",
+          "arrivalMinutes": "integer",
+          "remainingStops": "integer | null",
+          "lowFloor": "boolean",
+          "congestion": "LOW | NORMAL | HIGH | UNKNOWN",
+          "updatedAt": "datetime"
+        }
+      ]
     }
   },
   "rideRequests": {
@@ -99,6 +102,20 @@
         "platform": "android | ios | web | unknown",
         "updatedAt": "datetime"
       }
+    }
+  },
+  "safetyEvents": {
+    "$eventId": {
+      "eventType": "OBSTACLE_DETECTED | BUS_APPROACHING | BEACON_NEAR | USER_OFF_ROUTE | CROSSWALK_RISK",
+      "source": "string",
+      "userId": "string | null",
+      "stopId": "string | null",
+      "routeId": "string | null",
+      "confidence": "number | null",
+      "message": "string | null",
+      "metadata": "map<string,string>",
+      "timestamp": "datetime",
+      "createdAt": "datetime"
     }
   },
   "systemLogs": {

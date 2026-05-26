@@ -247,3 +247,18 @@
 - `docs/read/FINAL_FILE_LIST.txt` includes `docs/rw/V2_SECTION_PLAN.md`.
 - `docs/read/PACKAGE_MANIFEST.txt` and `docs/read/architecture_validation_result.txt` metadata are refreshed for the V2 documentation package state, including Architecture validation PASS and backend pytest 29 passed.
 - Added a project-level overview in the top-level wrapper `README.md`; `docs/rw/README.md` remains the V2 working guide.
+
+## V2 backend integration sections 1-12 update
+
+- Refreshed the backend API current/planned contract audit and recorded the closed issue #16 Option A busArrivals cache decision.
+- Stabilized architecture validation on macOS Unicode filenames and added route-level backend contract tests.
+- Aligned Firebase `/busArrivals/{stopId}` schema and architecture validator with BusArrivalsResponse cache payloads.
+- Hardened bus_info_gateway fallback behavior for missing updatedAt, empty arrivals, and public_data failure conversion.
+- Added driver app alias routes under `/driver/ride-requests` and `/driver/ride-requests/{requestId}/status`.
+- Enforced ride request status transitions and terminal state rejection.
+- Added backend Safety Event API draft routes, schemas, Firebase schema placeholders, and mock storage service.
+- Added safety event tests for create/recent, invalid eventType, and timezone-aware UTC timestamp handling.
+- Wired `FIREBASE_USE_MOCK` and `FCM_USE_MOCK` into backend runtime selection and documented mock/live behavior.
+- Normalized explicit backend HTTP errors to an app-readable `error.code/message/detail` envelope.
+- Added `scripts/smoke_backend_integration.py` for health, bus arrivals, ride request creation, driver list, and status update smoke flow.
+- Final validation on 2026-05-26 KST: architecture validation PASS, backend pytest 42 passed, backend smoke integration PASS.

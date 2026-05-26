@@ -24,7 +24,7 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 ## V2 통합 MVP App-Facing API 상태표
 
 이 표는 V2에서 Flutter 앱이 실제로 연결할 핵심 API를 `current`와 `V2 planned`로 구분한다.  
-상태는 2026-05-17 기준 backend route 파일 확인 결과를 따른다.
+상태는 2026-05-26 기준 backend route 파일 확인 결과를 따른다.
 
 | API | Status | 현재 repo 기준 | Notes |
 |---|---|---|---|
@@ -32,10 +32,10 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 | `GET /bus-info/stops/{stopId}/arrivals` | current | `backend/api/app/api/routes/bus_info_gateway.py` | app-facing bus arrivals gateway. |
 | `POST /ride-requests` | current | `backend/api/app/api/routes/ride_requests.py` | 승객 요청 생성. |
 | `GET /ride-requests/{id}` | current | 현재 path parameter 이름은 `{requestId}` | V2 문서에서는 `{id}`가 shorthand일 수 있으나 OpenAPI는 `requestId`를 기준으로 한다. |
-| `GET /driver/ride-requests` | V2 planned | 현재는 `GET /drivers/{driverId}/ride-requests`만 존재 | driver app용 aggregate endpoint가 필요하면 V2에서 alias 또는 새 route로 확정한다. |
-| `PATCH /driver/ride-requests/{id}/status` | V2 planned | 현재는 `PATCH /ride-requests/{requestId}/status`만 존재 | driver-specific status endpoint 여부는 현석 Section 5~6에서 확정한다. |
-| `POST /safety-events` | V2 planned | route 없음 | Safety Event API는 현석 Section 7, 김도성 Section 7~10, 안준환 Section 5~8에 의존한다. |
-| `GET /safety-events/recent` | V2 planned | route 없음 | 앱 mock event stream 연결 전 backend contract 확정 필요. |
+| `GET /driver/ride-requests` | current | `driverId` query parameter 사용 | V2 Section 5에서 driver app alias로 추가했다. |
+| `PATCH /driver/ride-requests/{id}/status` | current | OpenAPI path parameter 이름은 `{requestId}` | V2 Section 5에서 driver app alias로 추가했다. |
+| `POST /safety-events` | current | `backend/api/app/api/routes/safety_events.py` | Sensor/AI mock safety event intake. |
+| `GET /safety-events/recent` | current | `backend/api/app/api/routes/safety_events.py` | 최근 safety event 목록 조회. |
 
 기존 current API 중 V2에서도 유지되는 보조 계약:
 
@@ -44,6 +44,34 @@ POST /geofence/check
 POST /notifications/send
 GET /drivers/{driverId}/ride-requests
 PATCH /ride-requests/{requestId}/status
+```
+
+### V2 Section 1 backend route audit
+
+2026-05-26 KST에 FastAPI app route를 확인한 current route는 다음과 같다.
+
+```txt
+GET /health
+GET /bus-info/stops/{stopId}/arrivals
+POST /ride-requests
+GET /ride-requests/{requestId}
+PATCH /ride-requests/{requestId}/status
+GET /drivers/{driverId}/ride-requests
+GET /driver/ride-requests
+PATCH /driver/ride-requests/{requestId}/status
+POST /safety-events
+GET /safety-events/recent
+POST /geofence/check
+POST /notifications/send
+```
+
+주의:
+
+```txt
+- V2 문서의 `{id}`는 shorthand이며, current FastAPI/OpenAPI path parameter 이름은 `requestId`이다.
+- driver app current route는 기존 `/drivers/{driverId}/ride-requests`와 V2 alias `/driver/ride-requests?driverId=...`를 함께 지원한다.
+- driver app status update alias는 `/driver/ride-requests/{requestId}/status`이다.
+- Safety Event API는 V2 Section 7에서 backend current 초안으로 추가되었다.
 ```
 
 ## 2. 공통 응답 원칙
@@ -65,15 +93,23 @@ FastAPI 라우트는 `packages/shared_contracts/api/*.schema.json` 및 `backend/
 
 ### 2.2 실패 응답
 
-실패 응답은 FastAPI 기본 오류 형식을 우선 사용한다. 프로젝트 공통 오류 모델이 필요한 경우 아래 형태를 목표로 하되, 성공 응답을 감싸는 wrapper로 확장하지 않는다.
+V2 Section 10 기준으로 백엔드 서비스 오류와 명시적 `HTTPException` 오류는 앱이 공통으로 처리할 수 있도록 `error.code/message/detail` envelope를 반환한다.
+
+Request validation 오류는 FastAPI/Pydantic 기본 `detail` 배열로 반환될 수 있다. 이 경우에도 HTTP status code는 앱의 1차 분기 기준으로 유지한다.
+
+현재 백엔드의 `AppServiceError`와 `HTTPException` handler는 아래 형태를 반환한다.
 
 ```json
 {
-  "errorCode": "INVALID_REQUEST",
-  "message": "요청값이 올바르지 않습니다.",
-  "details": {}
+  "error": {
+    "code": "SERVICE_ERROR",
+    "message": "서비스 오류가 발생했습니다.",
+    "detail": {}
+  }
 }
 ```
+
+주의: 성공 응답에는 wrapper를 추가하지 않는다.
 
 ### 2.3 기준 파일 우선순위
 
@@ -111,6 +147,18 @@ COMPLETED
 CANCELLED
 ```
 
+V2 backend lifecycle:
+
+```txt
+- 생성 직후 기본 상태는 WAITING이다. V2 문서의 REQUESTED 의미와 같은 passenger request 생성 상태로 본다.
+- targetDriverId가 있고 FCM mock/live 전송이 accepted이면 NOTIFIED로 전환된다.
+- driver app 수락은 ACCEPTED로 전환한다.
+- 운행/도착 중 상태는 current shared enum 안에서 ARRIVED로 표현한다.
+- 완료와 취소는 각각 COMPLETED, CANCELLED로 표현한다.
+- COMPLETED, CANCELLED는 terminal 상태이며 다시 ACCEPTED로 되돌릴 수 없다.
+- V2 예시의 ARRIVING, BOARDING을 별도 enum으로 추가하려면 packages/shared_contracts 변경 리뷰가 필요하므로 현 섹션에서는 추가하지 않는다.
+```
+
 ### 3.3 혼잡도 상태
 
 ```txt
@@ -145,9 +193,20 @@ GET /health
 ```json
 {
   "status": "ok",
-  "service": "mobi-backend-api"
+  "service": "mobi-backend-api",
+  "environment": "development",
+  "firebaseMode": "mock"
 }
 ```
+
+필드 설명:
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `status` | string | 정상 시 `ok` |
+| `service` | string | 백엔드 서비스 식별자 |
+| `environment` | string | `APP_ENV` 값. 기본값은 `development` |
+| `firebaseMode` | string | `mock` 또는 `firebase-admin` |
 
 ---
 
@@ -303,6 +362,15 @@ Cache payload shape: BusArrivalsResponse
 - backend는 RTDB cache miss 시 김도성 public_data 모듈의 `BusArrivalsService.get_arrivals(stop_id)`를 호출한다.
 - backend는 공공데이터 raw field를 직접 normalize하지 않는다.
 - public_data mock 응답과 live 응답은 모두 같은 normalized shape를 반환해야 한다.
+```
+
+V2 conflict resolution:
+
+```txt
+- GitHub issue #16 closed 기준으로 Option A를 current cache 계약으로 확정한다.
+- 김도성 public_data 측은 BusArrivalsResponse 7개 필드를 mock/live 표준 응답 기준으로 확인했다.
+- 안준환 sensor/audio cue 측은 routeId child listener 직접 구독 요구가 없다고 확인했다.
+- 따라서 backend, Firebase RTDB schema, architecture validator는 `/busArrivals/{stopId}` = BusArrivalsResponse 기준으로 맞춘다.
 ```
 
 선행 의존성:
@@ -593,6 +661,74 @@ HIGH, MEDIUM, LOW, UNKNOWN
 
 4월에는 이 계약을 확정하지 않는다.  
 AI 비전 파트는 데이터 수집 계획과 모델 리서치에 집중한다.
+
+---
+
+## 16. Safety Event API
+
+담당: 심현석  
+소비: 김도성 AI Vision mock event, 안준환 BLE/proximity event, 윤현섭 앱 safety 표시
+
+```txt
+POST /safety-events
+GET /safety-events/recent
+```
+
+요청:
+
+```json
+{
+  "eventType": "OBSTACLE_DETECTED",
+  "source": "ai_vision_mock",
+  "userId": "user001",
+  "stopId": "stop001",
+  "routeId": "route502",
+  "confidence": 0.92,
+  "message": "전방 장애물이 감지되었습니다.",
+  "metadata": {
+    "detectedObject": "bollard"
+  },
+  "timestamp": "2026-05-26T00:30:00+00:00"
+}
+```
+
+응답:
+
+```json
+{
+  "eventId": "safety-...",
+  "eventType": "OBSTACLE_DETECTED",
+  "source": "ai_vision_mock",
+  "userId": "user001",
+  "stopId": "stop001",
+  "routeId": "route502",
+  "confidence": 0.92,
+  "message": "전방 장애물이 감지되었습니다.",
+  "metadata": {
+    "detectedObject": "bollard"
+  },
+  "timestamp": "2026-05-26T00:30:00+00:00",
+  "createdAt": "2026-05-26T00:30:01+00:00"
+}
+```
+
+eventType enum:
+
+```txt
+OBSTACLE_DETECTED
+BUS_APPROACHING
+BEACON_NEAR
+USER_OFF_ROUTE
+CROSSWALK_RISK
+```
+
+주의:
+
+```txt
+- timestamp는 timezone-aware 값이어야 하며 backend 저장 시 UTC로 정규화한다.
+- metadata는 V2 초안에서 dict[str, str]로 제한한다.
+- shared_contracts 정식 safety event schema는 김도성/안준환 산출물과 추가 합의 후 별도 PR로 등록한다.
+```
 
 
 ## Machine-readable Ride Request Schemas

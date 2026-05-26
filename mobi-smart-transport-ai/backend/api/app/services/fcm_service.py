@@ -12,6 +12,15 @@ from app.schemas.base import StrictApiModel
 from app.schemas.notification import NotificationRequest, NotificationResponse, NotificationType
 from app.services.firebase_client import FirebaseClient, get_firebase_client
 
+_TRUE_VALUES = {"1", "true", "yes", "y", "on"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in _TRUE_VALUES
+
 
 class FcmOwnerType(str, Enum):
     USER = "users"
@@ -176,8 +185,9 @@ class FcmService:
         raise ValueError("NotificationRequest must contain one target.")
 
     def _should_use_mock_transport(self) -> bool:
-        fcm_enabled = os.getenv("FCM_ENABLED", "false").strip().lower() in {"1", "true", "yes", "y", "on"}
-        return not fcm_enabled or self.firebase.using_mock
+        fcm_enabled = _env_bool("FCM_ENABLED", default=False)
+        fcm_use_mock = _env_bool("FCM_USE_MOCK", default=not fcm_enabled)
+        return fcm_use_mock or not fcm_enabled or self.firebase.using_mock
 
     @staticmethod
     def _mock_message_id(target: FcmTarget) -> str:
