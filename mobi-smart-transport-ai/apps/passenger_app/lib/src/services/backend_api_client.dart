@@ -226,7 +226,13 @@ Future<BusArrivalSummary> fetchBusArrivalSummary({
             headers: const {
               'Content-Type': 'application/json',
             },
-            body: jsonEncode(const <String, Object?>{}),
+            body: jsonEncode(const <String, Object?>{
+              'userId': 'demo-passenger-001',
+              'stopId': 'mock-stop-001',
+              'routeId': 'route502',
+              'busNo': '502',
+              'targetDriverId': 'ride-driver-001',
+            }),
           )
           .timeout(timeout);
 
