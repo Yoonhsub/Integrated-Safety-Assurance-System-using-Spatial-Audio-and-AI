@@ -539,6 +539,54 @@ def test_driver_alias_lists_and_updates_ride_request_status() -> None:
     assert update_response.json()["status"] == "ACCEPTED"
 
 
+def test_ride_request_allows_accept_then_complete_transition() -> None:
+    get_firebase_client().clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-complete",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    accept_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+    complete_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "COMPLETED"})
+
+    assert accept_response.status_code == 200
+    assert accept_response.json()["status"] == "ACCEPTED"
+    assert complete_response.status_code == 200
+    assert complete_response.json()["status"] == "COMPLETED"
+
+
+def test_ride_request_rejects_terminal_status_reversal() -> None:
+    get_firebase_client().clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-terminal",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    assert client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"}).status_code == 200
+    assert client.patch(f"/ride-requests/{request_id}/status", json={"status": "COMPLETED"}).status_code == 200
+    reversal_response = client.patch(f"/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+
+    assert reversal_response.status_code == 409
+    body = reversal_response.json()
+    assert body["detail"]["error"]["code"] == "INVALID_RIDE_REQUEST_STATUS_TRANSITION"
+    assert body["detail"]["error"]["detail"]["currentStatus"] == "COMPLETED"
+    assert body["detail"]["error"]["detail"]["requestedStatus"] == "ACCEPTED"
+
+
 def test_ride_request_get_unknown_request_returns_404() -> None:
     get_firebase_client().clear_mock_store()
 
