@@ -14,6 +14,9 @@ class BackendApiClient {
   final bool useMockData;
   final Duration timeout;
 
+  // TODO(윤현섭): FCM 수신 핸들러 연동은 push notification setup 확정 후
+  // driver ride request refresh와 연결한다. 현재 V2 범위는 HTTP polling 계약 검증이다.
+
   Future<BackendHealthStatus> fetchHealthStatus() async {
     if (useMockData) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
