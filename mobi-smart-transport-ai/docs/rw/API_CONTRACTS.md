@@ -34,8 +34,8 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 | `GET /ride-requests/{id}` | current | 현재 path parameter 이름은 `{requestId}` | V2 문서에서는 `{id}`가 shorthand일 수 있으나 OpenAPI는 `requestId`를 기준으로 한다. |
 | `GET /driver/ride-requests` | current | `driverId` query parameter 사용 | V2 Section 5에서 driver app alias로 추가했다. |
 | `PATCH /driver/ride-requests/{id}/status` | current | OpenAPI path parameter 이름은 `{requestId}` | V2 Section 5에서 driver app alias로 추가했다. |
-| `POST /safety-events` | V2 planned | route 없음 | Safety Event API는 현석 Section 7, 김도성 Section 7~10, 안준환 Section 5~8에 의존한다. |
-| `GET /safety-events/recent` | V2 planned | route 없음 | 앱 mock event stream 연결 전 backend contract 확정 필요. |
+| `POST /safety-events` | current | `backend/api/app/api/routes/safety_events.py` | Sensor/AI mock safety event intake. |
+| `GET /safety-events/recent` | current | `backend/api/app/api/routes/safety_events.py` | 최근 safety event 목록 조회. |
 
 기존 current API 중 V2에서도 유지되는 보조 계약:
 
@@ -59,15 +59,10 @@ PATCH /ride-requests/{requestId}/status
 GET /drivers/{driverId}/ride-requests
 GET /driver/ride-requests
 PATCH /driver/ride-requests/{requestId}/status
-POST /geofence/check
-POST /notifications/send
-```
-
-아래 endpoint는 아직 구현되지 않은 V2 planned API이다.
-
-```txt
 POST /safety-events
 GET /safety-events/recent
+POST /geofence/check
+POST /notifications/send
 ```
 
 주의:
@@ -76,7 +71,7 @@ GET /safety-events/recent
 - V2 문서의 `{id}`는 shorthand이며, current FastAPI/OpenAPI path parameter 이름은 `requestId`이다.
 - driver app current route는 기존 `/drivers/{driverId}/ride-requests`와 V2 alias `/driver/ride-requests?driverId=...`를 함께 지원한다.
 - driver app status update alias는 `/driver/ride-requests/{requestId}/status`이다.
-- Safety Event API는 현석 Section 7~8 전까지 planned 상태로 둔다.
+- Safety Event API는 V2 Section 7에서 backend current 초안으로 추가되었다.
 ```
 
 ## 2. 공통 응답 원칙
@@ -672,6 +667,74 @@ HIGH, MEDIUM, LOW, UNKNOWN
 
 4월에는 이 계약을 확정하지 않는다.  
 AI 비전 파트는 데이터 수집 계획과 모델 리서치에 집중한다.
+
+---
+
+## 16. Safety Event API
+
+담당: 심현석  
+소비: 김도성 AI Vision mock event, 안준환 BLE/proximity event, 윤현섭 앱 safety 표시
+
+```txt
+POST /safety-events
+GET /safety-events/recent
+```
+
+요청:
+
+```json
+{
+  "eventType": "OBSTACLE_DETECTED",
+  "source": "ai_vision_mock",
+  "userId": "user001",
+  "stopId": "stop001",
+  "routeId": "route502",
+  "confidence": 0.92,
+  "message": "전방 장애물이 감지되었습니다.",
+  "metadata": {
+    "detectedObject": "bollard"
+  },
+  "timestamp": "2026-05-26T00:30:00+00:00"
+}
+```
+
+응답:
+
+```json
+{
+  "eventId": "safety-...",
+  "eventType": "OBSTACLE_DETECTED",
+  "source": "ai_vision_mock",
+  "userId": "user001",
+  "stopId": "stop001",
+  "routeId": "route502",
+  "confidence": 0.92,
+  "message": "전방 장애물이 감지되었습니다.",
+  "metadata": {
+    "detectedObject": "bollard"
+  },
+  "timestamp": "2026-05-26T00:30:00+00:00",
+  "createdAt": "2026-05-26T00:30:01+00:00"
+}
+```
+
+eventType enum:
+
+```txt
+OBSTACLE_DETECTED
+BUS_APPROACHING
+BEACON_NEAR
+USER_OFF_ROUTE
+CROSSWALK_RISK
+```
+
+주의:
+
+```txt
+- timestamp는 timezone-aware 값이어야 하며 backend 저장 시 UTC로 정규화한다.
+- metadata는 V2 초안에서 dict[str, str]로 제한한다.
+- shared_contracts 정식 safety event schema는 김도성/안준환 산출물과 추가 합의 후 별도 PR로 등록한다.
+```
 
 
 ## Machine-readable Ride Request Schemas

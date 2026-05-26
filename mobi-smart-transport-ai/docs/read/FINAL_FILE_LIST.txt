@@ -32,6 +32,7 @@ backend/api/app/api/routes/driver_ride_requests.py
 backend/api/app/api/routes/geofence.py
 backend/api/app/api/routes/notifications.py
 backend/api/app/api/routes/ride_requests.py
+backend/api/app/api/routes/safety_events.py
 backend/api/app/main.py
 backend/api/app/schemas/__init__.py
 backend/api/app/schemas/base.py
@@ -39,12 +40,14 @@ backend/api/app/schemas/bus_info.py
 backend/api/app/schemas/geofence.py
 backend/api/app/schemas/notification.py
 backend/api/app/schemas/ride_request.py
+backend/api/app/schemas/safety_event.py
 backend/api/app/services/__init__.py
 backend/api/app/services/bus_info_gateway_service.py
 backend/api/app/services/fcm_service.py
 backend/api/app/services/firebase_client.py
 backend/api/app/services/geofence_service.py
 backend/api/app/services/ride_request_service.py
+backend/api/app/services/safety_event_service.py
 backend/api/requirements.txt
 backend/api/tests/test_api_contract_validation.py
 backend/api/tests/test_health.py

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import bus_info_gateway, driver_ride_requests, geofence, notifications, ride_requests
+from app.api.routes import bus_info_gateway, driver_ride_requests, geofence, notifications, ride_requests, safety_events
 from app.services.firebase_client import get_firebase_client
 
 
@@ -73,6 +73,7 @@ app.include_router(ride_requests.router, prefix="/ride-requests", tags=["ride-re
 app.include_router(bus_info_gateway.router, prefix="/bus-info", tags=["bus-info-gateway"])
 app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver-ride-requests"])
 app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
+app.include_router(safety_events.router, prefix="/safety-events", tags=["safety-events"])
 
 
 @app.get("/health")

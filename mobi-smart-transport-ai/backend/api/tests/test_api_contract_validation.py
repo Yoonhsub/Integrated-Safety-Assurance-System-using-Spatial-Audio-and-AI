@@ -20,6 +20,10 @@ def test_v2_backend_current_routes_match_section_1_contract() -> None:
         ("/ride-requests/{requestId}", "GET"),
         ("/ride-requests/{requestId}/status", "PATCH"),
         ("/drivers/{driverId}/ride-requests", "GET"),
+        ("/driver/ride-requests", "GET"),
+        ("/driver/ride-requests/{requestId}/status", "PATCH"),
+        ("/safety-events", "POST"),
+        ("/safety-events/recent", "GET"),
         ("/geofence/check", "POST"),
         ("/notifications/send", "POST"),
     }:
@@ -35,13 +39,6 @@ def test_v2_backend_driver_alias_routes_are_current_after_section_5() -> None:
 
     assert ("/driver/ride-requests", "GET") in current_routes
     assert ("/driver/ride-requests/{requestId}/status", "PATCH") in current_routes
-
-
-def test_v2_backend_safety_event_routes_are_not_current_before_section_7() -> None:
-    current_paths = {route.path for route in app.routes}
-
-    assert "/safety-events" not in current_paths
-    assert "/safety-events/recent" not in current_paths
 
 
 def test_geofence_rejects_extra_field_and_null_timestamp() -> None:

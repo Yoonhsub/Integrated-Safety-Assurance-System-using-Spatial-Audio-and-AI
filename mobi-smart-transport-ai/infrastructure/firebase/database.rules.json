@@ -47,6 +47,10 @@
         }
       }
     },
+    "safetyEvents": {
+      ".read": false,
+      ".write": false
+    },
     "systemLogs": {
       ".read": false,
       ".write": false
