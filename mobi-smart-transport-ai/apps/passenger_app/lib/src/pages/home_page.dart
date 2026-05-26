@@ -15,6 +15,10 @@ class _HomePageState extends State<HomePage> {
     defaultValue: 'http://localhost:8000',
   );
 
+  static const String _demoUserId = 'passenger-demo-user';
+  static const String _demoStopId = 'mock-stop-001';
+  static const String _demoRouteId = 'MOCK-502';
+  static const String _demoBusNo = '502';
   static const String _defaultBusStopId = 'mock-stop-001';
 
 BusArrivalSummary? _busArrivalSummary;
@@ -84,7 +88,12 @@ Future<void> _createRideRequest() async {
     _isCreatingRideRequest = true;
   });
 
-  final result = await _backendApiClient.createRideRequest();
+  final result = await _backendApiClient.createRideRequest(
+    userId: _demoUserId,
+    stopId: _demoStopId,
+    routeId: _demoRouteId,
+    busNo: _demoBusNo,
+  );
 
   if (!mounted) return;
 
