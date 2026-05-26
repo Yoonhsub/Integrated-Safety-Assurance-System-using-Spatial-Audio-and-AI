@@ -69,15 +69,18 @@
   },
   "busArrivals": {
     "$stopId": {
-      "$routeId": {
-        "routeId": "string",
-        "busNo": "string",
-        "arrivalMinutes": "integer",
-        "remainingStops": "integer | null",
-        "lowFloor": "boolean",
-        "congestion": "LOW | NORMAL | HIGH | UNKNOWN",
-        "updatedAt": "datetime"
-      }
+      "stopId": "string",
+      "arrivals": [
+        {
+          "routeId": "string",
+          "busNo": "string",
+          "arrivalMinutes": "integer",
+          "remainingStops": "integer | null",
+          "lowFloor": "boolean",
+          "congestion": "LOW | NORMAL | HIGH | UNKNOWN",
+          "updatedAt": "datetime"
+        }
+      ]
     }
   },
   "rideRequests": {

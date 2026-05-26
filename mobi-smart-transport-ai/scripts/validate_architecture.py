@@ -742,12 +742,20 @@ def validate_v7_remaining_consistency() -> None:
         assert_not_contains(path, "혼잡도 정보가 없을 경우 unknown 처리")
         assert_contains(path, "UNKNOWN")
 
-    # RTDB schema labels should match the integer API/Pydantic contract for bus arrivals.
+    # RTDB cache uses the same BusArrivalsResponse shape as the app-facing API.
     rtdb = load_json("infrastructure/firebase/realtime_database.schema.json")
-    bus = rtdb["busArrivals"]["$stopId"]["$routeId"]
-    if bus.get("arrivalMinutes") != "integer":
+    bus = rtdb["busArrivals"]["$stopId"]
+    if "$routeId" in bus:
+        raise AssertionError("RTDB busArrivals must use /busArrivals/{stopId} = BusArrivalsResponse")
+    if bus.get("stopId") != "string":
+        raise AssertionError("RTDB busArrivals cache must include stopId")
+    arrivals = bus.get("arrivals")
+    if not isinstance(arrivals, list) or not arrivals or not isinstance(arrivals[0], dict):
+        raise AssertionError("RTDB busArrivals cache must include arrivals[]")
+    arrival = arrivals[0]
+    if arrival.get("arrivalMinutes") != "integer":
         raise AssertionError("RTDB busArrivals arrivalMinutes must be labelled integer")
-    if bus.get("remainingStops") != "integer | null":
+    if arrival.get("remainingStops") != "integer | null":
         raise AssertionError("RTDB busArrivals remainingStops must be labelled integer | null")
 
     # Test documentation should use the reproducible pytest command used for this package.
