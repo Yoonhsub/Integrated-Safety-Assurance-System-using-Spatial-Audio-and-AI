@@ -26,11 +26,20 @@ def test_v2_backend_current_routes_match_section_1_contract() -> None:
         assert (path, method) in current_routes
 
 
-def test_v2_backend_planned_routes_are_not_current_before_their_sections() -> None:
+def test_v2_backend_driver_alias_routes_are_current_after_section_5() -> None:
+    current_routes = {
+        (route.path, method)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    assert ("/driver/ride-requests", "GET") in current_routes
+    assert ("/driver/ride-requests/{requestId}/status", "PATCH") in current_routes
+
+
+def test_v2_backend_safety_event_routes_are_not_current_before_section_7() -> None:
     current_paths = {route.path for route in app.routes}
 
-    assert "/driver/ride-requests" not in current_paths
-    assert "/driver/ride-requests/{id}/status" not in current_paths
     assert "/safety-events" not in current_paths
     assert "/safety-events/recent" not in current_paths
 
@@ -502,6 +511,32 @@ def test_ride_request_read_and_status_update_use_firebase_record() -> None:
     stored = firebase.get(f"/rideRequests/{request_id}")
     assert stored["status"] == "ACCEPTED"
     assert "requestId" not in stored
+
+
+def test_driver_alias_lists_and_updates_ride_request_status() -> None:
+    firebase = get_firebase_client()
+    firebase.clear_mock_store()
+
+    create_response = client.post(
+        "/ride-requests",
+        json={
+            "userId": "ride-user-alias",
+            "stopId": "stop-test",
+            "routeId": "route502",
+            "busNo": "502",
+            "targetDriverId": "driver-alias",
+        },
+    )
+    request_id = create_response.json()["requestId"]
+
+    list_response = client.get("/driver/ride-requests", params={"driverId": "driver-alias"})
+    update_response = client.patch(f"/driver/ride-requests/{request_id}/status", json={"status": "ACCEPTED"})
+
+    assert list_response.status_code == 200
+    assert list_response.json()["driverId"] == "driver-alias"
+    assert [item["requestId"] for item in list_response.json()["requests"]] == [request_id]
+    assert update_response.status_code == 200
+    assert update_response.json()["status"] == "ACCEPTED"
 
 
 def test_ride_request_get_unknown_request_returns_404() -> None:

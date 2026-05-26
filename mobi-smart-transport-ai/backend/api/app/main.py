@@ -72,6 +72,7 @@ app.include_router(notifications.router, prefix="/notifications", tags=["notific
 app.include_router(ride_requests.router, prefix="/ride-requests", tags=["ride-requests"])
 app.include_router(bus_info_gateway.router, prefix="/bus-info", tags=["bus-info-gateway"])
 app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver-ride-requests"])
+app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
 
 
 @app.get("/health")

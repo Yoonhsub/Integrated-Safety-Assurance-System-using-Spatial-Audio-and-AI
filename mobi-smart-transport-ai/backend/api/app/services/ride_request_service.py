@@ -21,6 +21,14 @@ class RideRequestService:
     """
 
     ROOT_PATH = "/rideRequests"
+    ALLOWED_TRANSITIONS: dict[RideRequestStatus, set[RideRequestStatus]] = {
+        RideRequestStatus.WAITING: {RideRequestStatus.ACCEPTED, RideRequestStatus.CANCELLED},
+        RideRequestStatus.NOTIFIED: {RideRequestStatus.ACCEPTED, RideRequestStatus.CANCELLED},
+        RideRequestStatus.ACCEPTED: {RideRequestStatus.ARRIVED, RideRequestStatus.COMPLETED, RideRequestStatus.CANCELLED},
+        RideRequestStatus.ARRIVED: {RideRequestStatus.COMPLETED, RideRequestStatus.CANCELLED},
+        RideRequestStatus.COMPLETED: set(),
+        RideRequestStatus.CANCELLED: set(),
+    }
 
     def __init__(self, firebase_client: FirebaseClient | None = None, fcm_service: FcmService | None = None) -> None:
         self.firebase = firebase_client or get_firebase_client()
@@ -70,7 +78,24 @@ class RideRequestService:
         return self._record_from_raw(request_id, raw)
 
     def update_status(self, request_id: str, status: RideRequestStatus) -> RideRequestRecord:
-        _ = self.get(request_id)
+        current = self.get(request_id)
+        if current.status == status:
+            return current
+        if status not in self.ALLOWED_TRANSITIONS[current.status]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "INVALID_RIDE_REQUEST_STATUS_TRANSITION",
+                        "message": "Ride request status transition is not allowed.",
+                        "detail": {
+                            "requestId": request_id,
+                            "currentStatus": current.status.value,
+                            "requestedStatus": status.value,
+                        },
+                    }
+                },
+            )
         updated_at = self._utc_now()
         self.firebase.update(
             self._record_path(request_id),

@@ -32,8 +32,8 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 | `GET /bus-info/stops/{stopId}/arrivals` | current | `backend/api/app/api/routes/bus_info_gateway.py` | app-facing bus arrivals gateway. |
 | `POST /ride-requests` | current | `backend/api/app/api/routes/ride_requests.py` | 승객 요청 생성. |
 | `GET /ride-requests/{id}` | current | 현재 path parameter 이름은 `{requestId}` | V2 문서에서는 `{id}`가 shorthand일 수 있으나 OpenAPI는 `requestId`를 기준으로 한다. |
-| `GET /driver/ride-requests` | V2 planned | 현재는 `GET /drivers/{driverId}/ride-requests`만 존재 | driver app용 aggregate endpoint가 필요하면 V2에서 alias 또는 새 route로 확정한다. |
-| `PATCH /driver/ride-requests/{id}/status` | V2 planned | 현재는 `PATCH /ride-requests/{requestId}/status`만 존재 | driver-specific status endpoint 여부는 현석 Section 5~6에서 확정한다. |
+| `GET /driver/ride-requests` | current | `driverId` query parameter 사용 | V2 Section 5에서 driver app alias로 추가했다. |
+| `PATCH /driver/ride-requests/{id}/status` | current | OpenAPI path parameter 이름은 `{requestId}` | V2 Section 5에서 driver app alias로 추가했다. |
 | `POST /safety-events` | V2 planned | route 없음 | Safety Event API는 현석 Section 7, 김도성 Section 7~10, 안준환 Section 5~8에 의존한다. |
 | `GET /safety-events/recent` | V2 planned | route 없음 | 앱 mock event stream 연결 전 backend contract 확정 필요. |
 
@@ -57,6 +57,8 @@ POST /ride-requests
 GET /ride-requests/{requestId}
 PATCH /ride-requests/{requestId}/status
 GET /drivers/{driverId}/ride-requests
+GET /driver/ride-requests
+PATCH /driver/ride-requests/{requestId}/status
 POST /geofence/check
 POST /notifications/send
 ```
@@ -64,8 +66,6 @@ POST /notifications/send
 아래 endpoint는 아직 구현되지 않은 V2 planned API이다.
 
 ```txt
-GET /driver/ride-requests
-PATCH /driver/ride-requests/{id}/status
 POST /safety-events
 GET /safety-events/recent
 ```
@@ -74,8 +74,8 @@ GET /safety-events/recent
 
 ```txt
 - V2 문서의 `{id}`는 shorthand이며, current FastAPI/OpenAPI path parameter 이름은 `requestId`이다.
-- driver app current route는 `/drivers/{driverId}/ride-requests`이다.
-- `/driver/ride-requests`와 `/driver/ride-requests/{id}/status` alias 여부는 현석 Section 5~6에서 확정한다.
+- driver app current route는 기존 `/drivers/{driverId}/ride-requests`와 V2 alias `/driver/ride-requests?driverId=...`를 함께 지원한다.
+- driver app status update alias는 `/driver/ride-requests/{requestId}/status`이다.
 - Safety Event API는 현석 Section 7~8 전까지 planned 상태로 둔다.
 ```
 
@@ -156,6 +156,18 @@ ACCEPTED
 ARRIVED
 COMPLETED
 CANCELLED
+```
+
+V2 backend lifecycle:
+
+```txt
+- 생성 직후 기본 상태는 WAITING이다. V2 문서의 REQUESTED 의미와 같은 passenger request 생성 상태로 본다.
+- targetDriverId가 있고 FCM mock/live 전송이 accepted이면 NOTIFIED로 전환된다.
+- driver app 수락은 ACCEPTED로 전환한다.
+- 운행/도착 중 상태는 current shared enum 안에서 ARRIVED로 표현한다.
+- 완료와 취소는 각각 COMPLETED, CANCELLED로 표현한다.
+- COMPLETED, CANCELLED는 terminal 상태이며 다시 ACCEPTED로 되돌릴 수 없다.
+- V2 예시의 ARRIVING, BOARDING을 별도 enum으로 추가하려면 packages/shared_contracts 변경 리뷰가 필요하므로 현 섹션에서는 추가하지 않는다.
 ```
 
 ### 3.3 혼잡도 상태
