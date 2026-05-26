@@ -7,20 +7,37 @@
 
 ---
 
+## V2 단계 진입 노트 (2026-05~ 진행)
+
+본 영역은 4월 V1 단계의 4가지 산출물(데이터 수집 계획, 라벨링 기준, 모델 후보 리서치, 향후 파이프라인 초안)에 더해 V2 단계에서 다음을 보강한다:
+
+- **V2 섹션 7 — Safety Event Schema 후보**: `pipelines/README.md` §3.4에 detection + risk interpretation을 합본한 backend 호환 후보 schema를 정리. 정식 등록은 안준환 협의 후 (V2 섹션 11 또는 2학기 단계 2).
+- **V2 섹션 8 — Mock AI Inference Pipeline** (완료): `pipelines/mock_inference_pipeline.py` + `pipelines/fixtures/mock_safety_events.json` (Safety Event 샘플 4건, riskLevel 3종 + 빈 detections 케이스 cover).
+- **V2 섹션 9 — class taxonomy 정밀화** (완료): `dataset_plan/class_taxonomy.json` v0.2.0 → v0.3.0. 7 학습 클래스 각각에 `default_risk_level` / `detection_threshold` / `user_message_templates` / `related_reasons` 4 필드 추가 + top-level에 `reason_codes` 카탈로그(6종) 신설. V2 섹션 7 §3.4 schema + V2 섹션 8 fixture와 cross-check 5/5 PASS.
+- **V2 섹션 10 — mock pipeline 검증**: V2 섹션 8 산출물의 5 시나리오 검증 예정.
+
+V2 단계에서도 학습/추론 코드는 작성하지 않는다 — 단지 통합 단계에서 다른 팀이 사용할 schema·fixture·taxonomy를 미리 정리할 뿐. 실제 모델 학습은 2학기 단계 1 (`pipelines/README.md` §3.3 통합 단계 표기).
+
+---
+
 ## 1. 4월 산출물 인덱스 (섹션 8 결과)
 
 ```txt
 ai_vision/
 ├── README.md                          ← 이 파일 (영역 인덱스)
 ├── dataset_plan/
-│   ├── class_taxonomy.json            ← 7개 클래스 정의 (v0.2) + 어노테이션 형식 + 우선순위
+│   ├── class_taxonomy.json            ← 7개 클래스 정의 (v0.3) + 어노테이션 형식 + 우선순위 + V2 정밀화 (risk/threshold/message/reason_codes)
 │   ├── data_collection_guide.md       ← 환경 분포 / PII 보호 / 양·품질 기준 / 메타데이터
 │   └── labeling_standards.md          ← bbox 규칙 / 클래스별 세부 / IAA / 미정 보고 절차
 ├── model_research/
 │   ├── model_candidates.csv           ← 5개 후보 정량 표 (입력 해상도/COCO mAP/라이선스 포함)
 │   └── model_comparison.md            ← 5개 차원 정성 비교 + 4월 결정/유보 분리
 └── pipelines/
-    └── README.md                       ← 향후 통합 흐름·인터페이스 후보 메모
+    ├── README.md                       ← 향후 통합 흐름·인터페이스 후보 메모 (+ V2 섹션 7 §3.4 + V2 섹션 8 §3.5)
+    ├── mock_inference_pipeline.py      ← V2 섹션 8 — stub-only mock pipeline + fixture 로더
+    └── fixtures/
+        ├── __init__.py
+        └── mock_safety_events.json     ← V2 섹션 8 — Safety Event 샘플 4건
 ```
 
 ---
@@ -48,7 +65,7 @@ medium : sidewalk, obstacle
 ### 3.1 4월에 결정한 것
 
 ```txt
-- 7개 학습 클래스와 우선순위 (taxonomy v0.2)
+- 7개 학습 클래스와 우선순위 (taxonomy v0.3)
 - 어노테이션 형식: bbox (segmentation은 4월 범위에서 제외)
 - PII 보호 정책: 얼굴/번호판 블러, EXIF GPS 제거 (옵션 A)
 - 라벨링 일관성 절차: peer review + IAA + 미정 케이스 보고

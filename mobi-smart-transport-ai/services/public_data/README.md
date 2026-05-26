@@ -27,6 +27,236 @@ packages/shared_contracts/api/bus_arrivals.response.schema.json
 - `congestion` 정보가 없을 때도 필드를 생략하지 말고 명시적으로 `UNKNOWN`으로 표준화한다.
 - 정의되지 않은 extra field는 normalized 모델 단계에서 허용하지 않는다.
 
+## V2 단계 진입 노트 (2026-05~ 진행)
+
+본 프로젝트는 4~5월 mock-first MVP 스캐폴딩을 마치고 V2 통합 MVP 고도화 단계에 있다(`docs/rw/V2_SECTION_PLAN.md` §5). 본 README 안에서:
+
+- §"V2 Public Data Client 계약 (섹션 1)" — V2 호출자(심현석 backend gateway 등)가 참조할 공식 계약(입력/출력/환경변수/실패 모드).
+- §"4월 구현 범위" / §"공공데이터 API 조사 결과 (섹션 2)" — 4~5월 mock-first MVP 시점에 정리된 1차 조사·매핑 결과 (V2에서도 기준 자료로 유효).
+
+V2 핵심 원칙:
+
+- 홀수 섹션은 구현/정리, 짝수 섹션은 검증/패치/문서화 중심 (이전 v4 트리거의 짝수/홀수 규칙은 무시).
+- shared contract(`packages/shared_contracts/`), backend gateway 코드는 김도성이 직접 수정하지 않는다 — 필요 시 `docs/rw/충돌 이슈.md`에 기록.
+- mock/live 양 경로 모두 `BusArrivalsResponse`(=`NormalizedBusArrivalsResponse`) 표준 출력을 보장한다.
+
+## V2 Public Data Client 계약 (섹션 1)
+
+> 본 절은 V2 단계에서 김도성의 에이전트가 정리한 `DataGoKrClient` + `BusArrivalsService` 공식 계약이다. 코드 구현은 4~5월 산출물(`public_data_client/`)에 이미 존재하며, 본 절은 V2 호출자(심현석 backend gateway 등)가 참조해야 할 입력·출력·환경변수·실패 모드를 한 곳에 모은다.
+
+### 1. 외부 호출자 진입점
+
+외부 호출자는 다음 한 줄만 사용한다.
+
+```python
+from public_data_client import BusArrivalsService
+
+service = BusArrivalsService()
+response = service.get_arrivals(stop_id="ANY_STOP_ID")
+# response: NormalizedBusArrivalsResponse (= BusArrivalsResponse 계약)
+```
+
+- `DataGoKrClient`는 transport-only 계층이므로 외부 호출자가 **직접 사용하지 않는다**. 디버깅 외 목적의 직접 import는 비권장.
+- `BusArrivalsService`는 `PUBLIC_DATA_USE_MOCK` 환경변수에 따라 내부에서 mock/live provider를 분기한다.
+
+### 2. `BusArrivalsService.get_arrivals(stop_id)` 계약
+
+| 항목 | 값 |
+|---|---|
+| 입력 | `stop_id: str` — 정류장 식별자. mock 모드에서는 임의 문자열도 허용(stopId만 응답에 그대로 반환). live 모드 활성화 후에는 정류장 표준 ID. |
+| 출력 (성공) | `NormalizedBusArrivalsResponse` (Pydantic). shared schema `bus_arrivals.response.schema.json`의 `BusArrivalsResponse` 계약과 정합. |
+| 출력 (정류장에 운행 버스 없음) | `arrivals=[]` 정상 응답. 빈 list는 정상 경로이며 예외가 아니다. |
+| 예외 (mock 모드) | mock JSON 자체 손상 시 Pydantic `ValidationError`. 평상 시 0건. |
+| 예외 (live 모드) | `PublicDataServiceKeyMissingError`, `PublicDataNetworkError` 두 종류. `PublicDataEmptyResponseError`는 내부 catch되어 빈 응답으로 변환. |
+
+### 3. `BusArrivalsResponse` 필드 (계약 강제)
+
+| 위치 | 필드 | 타입 | 필수 | 비고 |
+|---|---|---|:---:|---|
+| top | `stopId` | string | ✓ | 호출자가 넘긴 값이 그대로 반환됨 |
+| top | `arrivals[]` | array | ✓ | 빈 배열 허용 |
+| arrival | `routeId` | string | ✓ | 노선 식별자 (DB·매칭용) |
+| arrival | `busNo` | string | ✓ | 사용자 안내용 노선명 |
+| arrival | `arrivalMinutes` | integer (ge=0) | ✓ | 분 단위. 초 응답은 `round(seconds/60)` |
+| arrival | `remainingStops` | integer \| null | — | 데이터 없으면 null |
+| arrival | `lowFloor` | boolean | ✓ | 미상 시 안전 기본값 false |
+| arrival | `congestion` | enum 4종 | ✓ | LOW / NORMAL / HIGH / UNKNOWN |
+| arrival | `updatedAt` | string (RFC3339) | ✓ | 호출 시점 UTC datetime |
+
+추가 보장:
+
+- 모든 응답은 `StrictPublicDataModel`(`extra="forbid"`)을 통과한다. 비계약 필드 침투 시 즉시 `ValidationError`.
+- mock·live 두 provider 모두 동일한 시그니처 `def get_arrivals(self, stop_id: str) -> NormalizedBusArrivalsResponse`를 가진다.
+
+### 4. 환경변수 계약
+
+`docs/rw/ENVIRONMENT_VARIABLES.md` 및 `.env.example`과 1:1 일치한다.
+
+| 변수 | 책임 모듈 | 기본값 | V2 단계 |
+|---|---|---|---|
+| `PUBLIC_DATA_API_KEY` | `DataGoKrClient` | `""` (미설정) | current |
+| `PUBLIC_DATA_BASE_URL` | `DataGoKrClient` | `https://apis.data.go.kr` | current |
+| `PUBLIC_DATA_CITY_CODE` | `DataGoKrClient` | `""` → 내부에서 `None`으로 정규화 | current |
+| `PUBLIC_DATA_USE_MOCK` | `BusArrivalsService` (분기) / `DataGoKrClient`는 평가하지 않음 | `true` (미설정 시 mock 기본) | current |
+
+우선순위 규칙 (`DataGoKrClient.__init__`):
+
+```
+명시 인자 > os.getenv > 기본값
+```
+
+`PUBLIC_DATA_USE_MOCK` 평가 규칙 (`bus_arrivals_service._is_mock_mode()`):
+
+```
+미설정         → True  (mock-first 정책)
+true/1/yes/on  → True
+false/0/no/off → False
+그 외 값        → True  (보수적 fallback. 운영에서는 명시값 권장)
+```
+
+타임아웃: `DataGoKrClient(timeout=...)`는 명시 인자만 받는다(환경변수 분리하지 않음). 기본값 `DEFAULT_TIMEOUT_SECONDS = 10.0`. 호출자가 다른 값이 필요하면 인자로 지정한다.
+
+### 5. mock / live provider 분리
+
+| Provider | 역할 | 사용 시점 |
+|---|---|---|
+| `MockBusArrivalsProvider` | `examples/mock_bus_arrivals.json` 로드 → `BusArrivalsResponse` 변환 | V2 기본 (`PUBLIC_DATA_USE_MOCK=true`) |
+| `LiveBusArrivalsProvider` | 실제 공공데이터 API 호출 → normalize → `BusArrivalsResponse` 변환 | `PUBLIC_DATA_USE_MOCK=false` + 인증키 확보 + 명세 확정 후 활성화 |
+
+V2 단계 동작:
+
+- mock 모드: `mock_bus_arrivals.json` 4건(congestion 4종 + lowFloor T/F + remainingStops null/0/정수)을 반환. 호출자(앱·백엔드)가 모든 분기 케이스를 검증 가능.
+- live 모드: `LiveBusArrivalsProvider.get_arrivals` 본체가 활성화 직전에서 `NotImplementedError`를 발생시킨다(silent fallback 차단). 활성화 절차는 §6.
+
+`BusArrivalsService`는 `LiveBusArrivalsProvider`와 `DataGoKrClient`를 lazy 생성한다. mock 모드에서는 `httpx.Client`가 절대 만들어지지 않는다.
+
+### 6. live 모드 활성화 절차
+
+운영 환경 명세를 확보한 후 다음 순서로 활성화한다.
+
+```
+1. PUBLIC_DATA_API_KEY 환경변수에 발급받은 서비스키 설정 (코드/ZIP에 키 포함 절대 금지)
+2. (선택) PUBLIC_DATA_CITY_CODE에 TAGO 도시코드 설정 — 서울 BIS만 사용 시 미설정 가능
+3. PUBLIC_DATA_USE_MOCK=false 로 mock 모드 해제
+4. LiveBusArrivalsProvider.get_arrivals 본체의 raise NotImplementedError 제거
+5. _call_arrivals_api 안의 STEP 박스 주석(코드 라인) 활성화 (STEP 헤더 ====[ STEP N ]==== 자체는 그대로 둘 것)
+6. 단위 통합 테스트로 응답 normalize 1회 확인
+```
+
+활성화 전까지 `PUBLIC_DATA_USE_MOCK=true`(기본값) 유지가 정상 운영 모드다.
+
+### 7. backend gateway와의 계약 관계
+
+- backend gateway(`backend/api/app/services/bus_info_gateway_service.py`)는 RTDB cache miss 시 `BusArrivalsService.get_arrivals(stop_id)`를 호출한다.
+- gateway가 받은 `BusArrivalsResponse`는 cache에 그대로 직렬화(`model_dump_json`)하고, app에 그대로 반환한다 — 변환 단계 0회.
+- `/busArrivals/{stopId}` cache payload와 `/bus-info/stops/{stopId}/arrivals` API 응답은 같은 `BusArrivalsResponse` 구조 (`docs/rw/API_CONTRACTS.md` §6·7, CONFLICT-20260518-1338-심현석-001에서 Option A로 합의).
+- gateway의 단위 테스트(`backend/api/tests/`)는 김도성 mock provider로 통과한다 — backend pytest 29 passed 기준선 유지.
+- **V2 섹션 6 검증 결과 (2026-05~)**: shared schema ↔ 김도성 `NormalizedBusArrivalsResponse` ↔ 심현석 `BusArrivalsResponse` 3 계약 필드명·타입·required·enum **1:1 일치, 불일치 0건**. backend gateway의 `_coerce_response`가 김도성 정상 출력에 영향 없음(`model_dump` 자동 변환). `_ensure_arrival_timestamps`의 fallback도 김도성 출력에 발동되지 않음(항상 `updatedAt` 포함). 자세한 검증 결과는 `docs/rw/공통 진행사항.md` V2 기록 0006 참조.
+
+### 8. 알려진 제약 / V2 후속 항목
+
+- `_call_arrivals_api` 본격 활성화는 인증키 발급 + 운영 환경 명세 확보 시점 의존. V2 섹션 6(Backend Gateway와 계약 검증)에서 backend gateway compatibility 검증 + 필요 시 충돌 이슈 기록.
+- Pydantic 인스턴스 통합 smoke는 컨테이너 환경 제약(네트워크 차단으로 pip 설치 불가)으로 일부 검증 단계에서 NOT_RUN 처리됨. 실제 코드 동작은 stdlib + Fake 시뮬레이션으로 검증.
+- `docs/rw/ENVIRONMENT_VARIABLES.md` 요약 표(맨 위)에 `PUBLIC_DATA_API_KEY`·`PUBLIC_DATA_CITY_CODE` 항목이 누락되어 있음(본문에는 존재). 표 갱신은 공통 문서 영역이라 김도성 측에서 직접 수정하지 않고 V2 섹션 2(검증) 시점에 충돌 이슈 또는 협의 사항으로 처리 검토.
+
+## V2 통합 정리 (섹션 11) — 누적 인지 사항 + 협의 필요 사항 집계
+
+### 김도성 V2 12 섹션 진척 요약
+
+| 영역 | V2 섹션 | 핵심 산출물 | 상태 |
+|---|---|---|---|
+| public_data | §1 계약 정리 | README §V2 섹션 1 8 sub-section | PASS |
+| public_data | §2 검증 | 5 시나리오 검증 + DEBUG V2-0001 | PASS |
+| public_data | §3 정규화 강화 | `_normalize_arrivals` TAGO 분기 + timestamp 우선 | PASS |
+| public_data | §4 테스트 | `tests/test_bus_arrivals_service.py` 30 tests (skipped=2) | PASS |
+| public_data | §5 접근성 필터 | `low_floor_filter.py` V2 강화 (AccessibilityMode 4종) | PASS |
+| public_data | §6 Backend Gateway 검증 | 3 계약 필드명 불일치 0건 | PASS |
+| ai_vision | §7 Safety Event Schema | `pipelines/README.md` §3.4 (9 필드 후보) | PASS |
+| ai_vision | §8 Mock Pipeline | `mock_inference_pipeline.py` + fixture 4건 | PASS |
+| ai_vision | §9 Taxonomy 정밀화 | `class_taxonomy.json` v0.3.0 (reason_codes 6종) | PASS |
+| ai_vision | §10 Mock Pipeline 검증 | `tests/test_mock_inference_pipeline.py` 37 tests | PASS |
+| 통합 | §11 통합 정리 | 본 절 (누적 인지 사항 집계) | PASS |
+| 통합 | §12 최종 검증 | 다음 섹션 | TODO |
+
+### 누적 인지 사항 — 다른 팀원 협의 필요
+
+| # | 항목 | 발생 섹션 | 협의 대상 | 긴급도 |
+|---|---|---|---|---|
+| 1 | `ENVIRONMENT_VARIABLES.md` 요약 표에 `PUBLIC_DATA_API_KEY`·`PUBLIC_DATA_CITY_CODE` 누락 | §1 | 공통 문서 관리자 (전체) | 낮음 — 본문에는 존재 |
+| 2 | TAGO `vehicletp` 필드 저상버스 코드 매핑 미확정 | §3 | 공공데이터 API 명세 확인 후 자체 처리 | 2학기 |
+| 3 | TAGO 응답 timestamp 필드명 미확정 (`createdAt`/`responseTime` 2개 시도 + fallback) | §3 | 동일 | 2학기 |
+| 4 | `AccessibilityMode.STRICT` 혼잡도 임계값 (LOW/NORMAL만 통과) | §5 | 윤현섭 (UX) | 2학기 |
+| 5 | `include_congestion=True` 옵션 활성화 시점 | §5 | 윤현섭 (Flutter UI) | 2학기 |
+| 6 | backend 라우터에 accessibility query parameter 추가 여부 | §6 | 심현석 (backend) | 2학기 |
+| 7 | `riskLevel` enum 3종 + `reason` snake_case 5종 UX 확정 | §7 | 윤현섭 (UX) + 심현석 (이벤트 가공) | 2학기 |
+| 8 | `primaryClass` ↔ `detections[].classId` cross-field validator 위치 (Pydantic vs backend) | §7 | 안준환 (shared_contracts) + 심현석 | 2학기 |
+| 9 | `vision_safety_event.*.schema.json` 정식 등록 | §7 | 안준환 (`packages/shared_contracts/`) | 2학기 |
+| 10 | `detection_threshold` V1 default (0.5±0.1) → 실 학습 후 재조정 | §9 | 자체 (모델 학습 후) | 2학기 |
+| 11 | `user_message_templates` 다국어 (en/ja) 확장 | §9 | 윤현섭 (i18n) | 2학기 |
+| 12 | `sidewalk` 클래스 `related_reasons` 빈 list — 보도 안전 안내 reason 추가 여부 | §9 | 윤현섭 (UX) | 2학기 |
+
+### 누적 인지 사항 — 김도성 자체 해결 (2학기)
+
+| # | 항목 | 상태 |
+|---|---|---|
+| A | `LiveBusArrivalsProvider._call_arrivals_api` 실 구현 | stub (NotImplementedError) |
+| B | V1 docstring 섹션 번호 → V2 용어 갱신 | **V2 섹션 11에서 처리 완료** |
+| C | `_normalize_arrivals` TAGO 실 응답 검증 | 2학기 활성화 시점 |
+| D | 실 모델 학습 후 detection_threshold 재조정 | 2학기 단계 1·2 |
+
+### 김도성 V2 산출물 통합 인덱스
+
+```
+services/public_data/
+├── README.md                              ← V2 섹션 1 계약 + V2 섹션 6 검증 + V2 섹션 11 통합 정리
+├── examples/
+│   └── mock_bus_arrivals.json             ← V1 mock 4건 (shared schema 정합)
+├── public_data_client/
+│   ├── __init__.py                        ← V2 섹션 5 export 갱신 (7종 V2 신규 + 2종 V1 호환)
+│   ├── schemas.py                         ← V1 StrictPublicDataModel + 7 필드
+│   ├── exceptions.py                      ← V1 4 예외 계층
+│   ├── data_go_kr_client.py               ← V1 + V2 섹션 11 docstring 갱신
+│   ├── bus_arrivals_service.py             ← V2 섹션 3 TAGO 분기 + timestamp 우선 + V2 섹션 11 docstring 갱신
+│   ├── normalize.py                       ← V1 3 헬퍼 (seconds_to_minutes, vehicle_to_low_floor, reride_to_congestion)
+│   └── low_floor_filter.py                ← V2 섹션 5 강화 (AccessibilityMode 4종 + dispatch)
+└── tests/
+    └── test_bus_arrivals_service.py        ← V2 섹션 4 (30 tests, skipped=2)
+
+ai_vision/
+├── README.md                              ← V2 단계 진입 노트 + V2 섹션 7~10 안내
+├── dataset_plan/
+│   ├── class_taxonomy.json                ← V2 섹션 9 v0.3.0 (reason_codes 6종 + V2 4 필드)
+│   ├── data_collection_guide.md           ← V1
+│   └── labeling_standards.md              ← V1
+├── model_research/
+│   ├── model_candidates.csv               ← V1
+│   └── model_comparison.md                ← V1
+└── pipelines/
+    ├── README.md                          ← V2 섹션 7 §3.4 + V2 섹션 8 §3.5
+    ├── mock_inference_pipeline.py          ← V2 섹션 8 (stub-only, fixture 로더)
+    ├── fixtures/
+    │   ├── __init__.py
+    │   └── mock_safety_events.json        ← V2 섹션 8 (Safety Event 4건)
+    └── tests/
+        ├── __init__.py
+        └── test_mock_inference_pipeline.py ← V2 섹션 10 (37 tests)
+```
+
+### 테스트 현황 요약
+
+| 패키지 | 테스트 수 | 결과 | 비고 |
+|---|---|---|---|
+| `services.public_data.tests` | 30 (skipped=2) | OK | Pydantic/httpx 미설치 시 인스턴스 2건 skip |
+| `ai_vision.pipelines.tests` | 37 | OK | stdlib만으로 완전 실행 |
+| **합계** | **67 (skipped=2)** | **OK** | |
+
+### V2 섹션 11에서 처리한 것
+
+- V1 docstring 섹션 번호 4건 → V2 용어로 갱신 (`bus_arrivals_service.py` 3건 + `data_go_kr_client.py` 1건)
+- 누적 인지 사항 12건 + 자체 해결 4건 한 곳에 집계
+- 두 담당 영역 통합 인덱스 작성
+- 테스트 현황 요약
+
 ## 공공데이터 API 조사 결과 (섹션 2)
 
 > 이 절은 4월 섹션 2에서 김도성의 에이전트가 실제 공식 출처를 확인하고 정리한 1차 조사 결과이다.

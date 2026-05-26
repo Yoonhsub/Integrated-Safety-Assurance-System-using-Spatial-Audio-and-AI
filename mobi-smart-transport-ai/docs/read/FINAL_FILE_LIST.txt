@@ -9,6 +9,13 @@ ai_vision/dataset_plan/labeling_standards.md
 ai_vision/model_research/model_candidates.csv
 ai_vision/model_research/model_comparison.md
 ai_vision/pipelines/README.md
+ai_vision/pipelines/fixtures/.gitkeep
+ai_vision/pipelines/fixtures/__init__.py
+ai_vision/pipelines/fixtures/mock_safety_events.json
+ai_vision/pipelines/mock_inference_pipeline.py
+ai_vision/pipelines/tests/.gitkeep
+ai_vision/pipelines/tests/__init__.py
+ai_vision/pipelines/tests/test_mock_inference_pipeline.py
 apps/driver_app/README.md
 apps/driver_app/lib/main.dart
 apps/driver_app/lib/src/app.dart
@@ -139,3 +146,6 @@ services/public_data/public_data_client/low_floor_filter.py
 services/public_data/public_data_client/normalize.py
 services/public_data/public_data_client/schemas.py
 services/public_data/requirements.txt
+services/public_data/tests/.gitkeep
+services/public_data/tests/__init__.py
+services/public_data/tests/test_bus_arrivals_service.py
