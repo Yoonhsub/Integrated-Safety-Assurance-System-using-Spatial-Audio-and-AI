@@ -10,7 +10,7 @@
 ```txt
 - API 계약은 임의로 변경하지 않는다.
 - 필드명을 바꾸려면 shared contract 변경 PR과 관련 팀원 리뷰가 필요하다.
-- 변경이 필요하면 docs/rw/충돌 이슈.md에 기록한다.
+- 변경이 필요하면 docs/rw/충돌 이슈.md에 기록한다.
 - shared_contracts에 반영할 경우 모든 소비 모듈을 확인한다.
 - 실제 구현 전 mock JSON도 이 문서와 packages/shared_contracts의 형식을 따른다.
 ```

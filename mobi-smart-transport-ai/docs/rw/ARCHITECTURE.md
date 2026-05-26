@@ -219,7 +219,7 @@ FastAPI 기반 백엔드 영역이다.
 
 ```txt
 shared_contracts는 여러 팀원이 참조하는 공통 계약 영역이다.
-임의 수정 시 반드시 docs/rw/충돌 이슈.md에 기록하고 관련 팀원과 협의해야 한다.
+임의 수정 시 반드시 docs/rw/충돌 이슈.md에 기록하고 관련 팀원과 협의해야 한다.
 ```
 
 ---
@@ -463,7 +463,7 @@ backend/api
 
 ## 6. 선행작업 의존성 요약
 
-자세한 내용은 `docs/rw/선행작업의존성 정리.md`를 따른다.
+자세한 내용은 `docs/rw/선행작업의존성 정리.md`를 따른다.
 
 강한 의존성:
 
@@ -522,11 +522,11 @@ backend/api
 ```txt
 1. 변경 필요성 확인
 2. 영향받는 팀원 식별
-3. docs/rw/충돌 이슈.md 기록
+3. docs/rw/충돌 이슈.md 기록
 4. 관련 팀원과 협의
 5. docs/rw/ARCHITECTURE.md 수정
 6. docs/rw/API_CONTRACTS.md 또는 docs/rw/DATA_SCHEMA.md 수정 필요 여부 확인
-7. docs/rw/공통 진행사항.md에 기록
+7. docs/rw/공통 진행사항.md에 기록
 8. PR로 병합
 ```
 

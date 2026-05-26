@@ -58,12 +58,12 @@ def validate_required_paths() -> None:
     required = [
         "docs/rw/README.md",
         "docs/read/AGENT_REQUIRED_READING.md",
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
         "docs/rw/API_CONTRACTS.md",
         "docs/rw/DATA_SCHEMA.md",
         "docs/rw/MODULE_OWNERSHIP.md",
         "docs/read/PULL_REQUEST_RULES.md",
-        "docs/rw/선행작업의존성 정리.md",
+        "docs/rw/선행작업의존성 정리.md",
         ".github/CODEOWNERS",
         ".github/pull_request_template.md",
         "docs/01_요구사항명세서.md",
@@ -197,8 +197,8 @@ def validate_pr_template() -> None:
         "문서 최신화",
         "검증 결과",
         "병합 전 주의사항",
-        "docs/rw/선행작업의존성 정리.md",
-        "docs/rw/충돌 이슈.md",
+        "docs/rw/선행작업의존성 정리.md",
+        "docs/rw/충돌 이슈.md",
         "최종 개발 보고서",
         "관련 없음",
     ]:
@@ -222,9 +222,9 @@ def validate_ownership() -> None:
         "docs/rw/DATA_SCHEMA.md",
         "scripts/**",
         "docs/read/AGENT_REQUIRED_READING.md",
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
-        "docs/rw/충돌 이슈.md",
-        "docs/rw/공통 진행사항.md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/rw/충돌 이슈.md",
+        "docs/rw/공통 진행사항.md",
         "docs/read/CONTRIBUTING.md",
         "docs/read/BRANCH_STRATEGY.md",
         "docs/read/COMMIT_CONVENTION.md",
@@ -233,11 +233,11 @@ def validate_ownership() -> None:
         "docs/rw/SETUP.md",
         "docs/rw/ENVIRONMENT_VARIABLES.md",
         "docs/rw/PATCH_NOTES.md",
-        "docs/read/심현석의 에이전트 필독사항.md",
-        "docs/read/윤현섭의 에이전트 필독사항.md",
-        "docs/read/안준환의 에이전트 필독사항.md",
-        "docs/read/김도성의 에이전트 필독사항.md",
-        "docs/rw/선행작업의존성 정리.md",
+        "docs/read/심현석의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/read/김도성의 에이전트 필독사항.md",
+        "docs/rw/선행작업의존성 정리.md",
         "docs/read/architecture_validation_result.txt",
     ]:
         if path not in common_paths:
@@ -406,7 +406,7 @@ def validate_codeowners_alignment() -> None:
         "/docs/read/FINAL_FILE_LIST.txt",
         "/docs/rw/PATCH_NOTES.md",
         "/docs/read/architecture_validation_result.txt",
-        r"/docs/rw/선행작업의존성\ 정리.md",
+        r"/docs/rw/선행작업의존성\ 정리.md",
     ]:
         line = f"{path} {all_reviewers}"
         if line not in codeowners:
@@ -414,7 +414,7 @@ def validate_codeowners_alignment() -> None:
 
 
 def validate_agent_reading_prompt() -> None:
-    prompt_name = "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md"
+    prompt_name = "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md"
     assert_contains("docs/read/AGENT_REQUIRED_READING.md", f"`{prompt_name}`")
     assert_contains("docs/rw/README.md", f"`{prompt_name}`")
 
@@ -472,12 +472,12 @@ def validate_enum_consistency() -> None:
 
 
 def validate_meta_document_consistency() -> None:
-    for path in ["docs/rw/충돌 이슈.md", "docs/read/COMMIT_CONVENTION.md", "docs/read/PULL_REQUEST_RULES.md", "docs/rw/선행작업의존성 정리.md", "docs/rw/공통 진행사항.md"]:
+    for path in ["docs/rw/충돌 이슈.md", "docs/read/COMMIT_CONVENTION.md", "docs/read/PULL_REQUEST_RULES.md", "docs/rw/선행작업의존성 정리.md", "docs/rw/공통 진행사항.md"]:
         assert_not_contains(path, "CONFLICT-000")
-    assert_contains("docs/rw/충돌 이슈.md", "CONFLICT-YYYYMMDD-HHMM-담당자명-번호")
+    assert_contains("docs/rw/충돌 이슈.md", "CONFLICT-YYYYMMDD-HHMM-담당자명-번호")
     assert_contains("docs/read/COMMIT_CONVENTION.md", "CONFLICT-YYYYMMDD-HHMM-담당자명-번호")
-    assert_contains("docs/read/CONTRIBUTING.md", "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`의 §2.1")
-    assert_contains("docs/rw/공통 진행사항.md", "## 공통 진행사항")
+    assert_contains("docs/read/CONTRIBUTING.md", "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`의 §2.1")
+    assert_contains("docs/rw/공통 진행사항.md", "## 공통 진행사항")
 
 
 
@@ -537,19 +537,19 @@ def validate_setup_and_env() -> None:
 
 def validate_dependency_wording() -> None:
     for path in [
-        "docs/read/심현석의 에이전트 필독사항.md",
-        "docs/read/윤현섭의 에이전트 필독사항.md",
-        "docs/read/안준환의 에이전트 필독사항.md",
-        "docs/read/김도성의 에이전트 필독사항.md",
+        "docs/read/심현석의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/read/김도성의 에이전트 필독사항.md",
     ]:
         assert_contains(path, "선행 산출물이 필요한 하위 작업만 보류")
         assert_not_contains(path, "선행 섹션이 (미구현)이면 해당 섹션 작업을 중단한다")
-    assert_contains("docs/rw/선행작업의존성 정리.md", "선행 산출물이 필요한 하위 작업만 보류")
+    assert_contains("docs/rw/선행작업의존성 정리.md", "선행 산출물이 필요한 하위 작업만 보류")
 
 
 def validate_priority_and_scope_docs() -> None:
     for path in [
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
         "docs/read/CONTRIBUTING.md",
     ]:
         assert_contains(path, "계약 영역별 우선순위 분리")
@@ -682,20 +682,20 @@ def validate_v6_doc_contract_cleanup() -> None:
 
     # Old conflict placeholder must not survive in any operational markdown.
     for path in [
-        "docs/read/안준환의 에이전트 필독사항.md",
-        "docs/rw/충돌 이슈.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/rw/충돌 이슈.md",
         "docs/read/COMMIT_CONVENTION.md",
         "docs/read/PULL_REQUEST_RULES.md",
     ]:
         assert_not_contains(path, "CONFLICT-XXXX")
-    assert_contains("docs/read/안준환의 에이전트 필독사항.md", "CONFLICT-YYYYMMDD-HHMM-담당자명-번호")
+    assert_contains("docs/read/안준환의 에이전트 필독사항.md", "CONFLICT-YYYYMMDD-HHMM-담당자명-번호")
 
     # Reading order and contract-specific priority wording must be explicit.
     assert_contains("docs/read/AGENT_REQUIRED_READING.md", "읽기 권장 순서")
     assert_contains("docs/read/AGENT_REQUIRED_READING.md", "충돌 해결 우선순위가 아니라")
     assert_not_contains("docs/read/AGENT_REQUIRED_READING.md", "| 우선순위 | 파일 | 목적 |")
-    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", "일반 업무/역할 범위 우선순위")
-    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", "계약 영역별 우선순위가 이 일반 우선순위보다 우선")
+    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", "일반 업무/역할 범위 우선순위")
+    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", "계약 영역별 우선순위가 이 일반 우선순위보다 우선")
 
     # DATA_SCHEMA role description must match RTDB enum.
     assert_contains("docs/rw/DATA_SCHEMA.md", "passenger, driver, admin")
@@ -714,10 +714,10 @@ def validate_openapi_contract_notice() -> None:
 def validate_v7_remaining_consistency() -> None:
     # No stale mobile sensor field aliases should remain in operational markdown.
     for path in [
-        "docs/read/심현석의 에이전트 필독사항.md",
-        "docs/read/윤현섭의 에이전트 필독사항.md",
-        "docs/read/안준환의 에이전트 필독사항.md",
-        "docs/read/김도성의 에이전트 필독사항.md",
+        "docs/read/심현석의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/read/김도성의 에이전트 필독사항.md",
         "docs/01_요구사항명세서.md",
         "docs/02_4월_개인별_구현범위_수정안.md",
         "docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md",
@@ -734,7 +734,7 @@ def validate_v7_remaining_consistency() -> None:
 
     # Congestion enum wording must use the official uppercase UNKNOWN when referring to the contract.
     for path in [
-        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
         "docs/02_4월_개인별_구현범위_수정안.md",
         "docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md",
     ]:
@@ -777,14 +777,14 @@ def validate_v8_service_datetime_and_env() -> None:
 
 
 def validate_v8_policy_docs() -> None:
-    assert_contains("module_ownership.json", "docs/rw/선행작업의존성 정리.md")
+    assert_contains("module_ownership.json", "docs/rw/선행작업의존성 정리.md")
     assert_contains("module_ownership.json", "docs/read/architecture_validation_result.txt")
-    assert_contains(".github/CODEOWNERS", "/docs/rw/선행작업의존성\\ 정리.md")
+    assert_contains(".github/CODEOWNERS", "/docs/rw/선행작업의존성\\ 정리.md")
     assert_contains(".github/CODEOWNERS", "/docs/read/architecture_validation_result.txt")
     assert_contains("apps/passenger_app/README.md", "mobi_mobile_sensors")
     assert_contains("apps/passenger_app/README.md", "placeholder/mock 기반 UI shell")
-    assert_contains("docs/rw/선행작업의존성 정리.md", "mobi_mobile_sensors")
-    assert_contains("docs/rw/선행작업의존성 정리.md", "mock/placeholder 소비 구조")
+    assert_contains("docs/rw/선행작업의존성 정리.md", "mobi_mobile_sensors")
+    assert_contains("docs/rw/선행작업의존성 정리.md", "mock/placeholder 소비 구조")
     assert_contains("docs/rw/DATA_SCHEMA.md", "FCM 토큰 등록 책임은 Flutter 클라이언트")
     assert_contains("docs/rw/DATA_SCHEMA.md", "/fcmTokens/users/{auth.uid}")
     assert_contains("docs/rw/DATA_SCHEMA.md", "/fcmTokens/drivers/{auth.uid}")
@@ -799,10 +799,10 @@ def validate_v8_srs_examples_and_reading_order() -> None:
     assert_contains("docs/01_요구사항명세서.md", "eventId`는 이벤트가 생성되지 않은 경우 `null`")
     for path in [
         "docs/read/AGENT_REQUIRED_READING.md",
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
     ]:
         assert_contains(path, "프로젝트 4월분 개발에 관한 공통 프롬프트")
-        assert_contains(path, "docs/rw/선행작업의존성 정리.md")
+        assert_contains(path, "docs/rw/선행작업의존성 정리.md")
         assert_contains(path, "docx")
         assert_contains(path, "제출/공유용 참고 문서")
 
@@ -821,15 +821,15 @@ def validate_v9_minor_consistency_cleanup() -> None:
 
     # The mock file is a sample; shared JSON Schema is the contract source of truth.
     assert_contains(
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
         "busArrivals 표준 응답의 공식 계약은 `packages/shared_contracts/api/bus_arrivals.response.schema.json`",
     )
     assert_contains(
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
         "mock_bus_arrivals.json`은 해당 계약을 따르는 검증용 샘플",
     )
     assert_not_contains(
-        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
+        "docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md",
         "busArrivals 표준 응답은 services/public_data의 mock_bus_arrivals.json을 기준",
     )
 
@@ -856,31 +856,31 @@ def validate_section7_carryover_doc_policy() -> None:
 
 
 def validate_section8_role_ownership_patch() -> None:
-    priority_text = """1순위: 이 문서, docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md
+    priority_text = """1순위: 이 문서, docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md
 2순위: 각 팀원별 에이전트 필독사항.md
-3순위: docs/rw/선행작업의존성 정리.md
+3순위: docs/rw/선행작업의존성 정리.md
 4순위: docs/02_4월_개인별_구현범위_수정안.md"""
-    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", priority_text)
-    assert_contains("docs/read/CONTRIBUTING.md", "3. docs/rw/선행작업의존성 정리.md\n4. docs/02_4월_개인별_구현범위_수정안.md")
+    assert_contains("docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md", priority_text)
+    assert_contains("docs/read/CONTRIBUTING.md", "3. docs/rw/선행작업의존성 정리.md\n4. docs/02_4월_개인별_구현범위_수정안.md")
     assert_contains("docs/read/CONTRIBUTING.md", "역할/범위/섹션 진행 기준의 3순위 문서")
 
     ownership = load_json("module_ownership.json")
     exceptions = ownership.get("limited_update_exceptions", {})
-    if "docs/rw/공통 진행사항.md" not in exceptions or "docs/rw/선행작업의존성 정리.md" not in exceptions:
+    if "docs/rw/공통 진행사항.md" not in exceptions or "docs/rw/선행작업의존성 정리.md" not in exceptions:
         raise AssertionError("module_ownership.json must document limited update exceptions")
     assert_contains("docs/rw/MODULE_OWNERSHIP.md", "## 4.2.1 공통 문서 제한적 최신화 예외")
     assert_contains("docs/rw/MODULE_OWNERSHIP.md", "자기 팀원 기록 공간만 수정 가능")
     assert_contains("docs/rw/MODULE_OWNERSHIP.md", "자신이 완료한 선행 섹션의 상태/산출물 정보만 제한적으로 최신화 가능")
 
     agent_required_paths = [
-        "docs/read/윤현섭의 에이전트 필독사항.md",
-        "docs/read/안준환의 에이전트 필독사항.md",
-        "docs/read/심현석의 에이전트 필독사항.md",
-        "docs/read/김도성의 에이전트 필독사항.md",
+        "docs/read/윤현섭의 에이전트 필독사항.md",
+        "docs/read/안준환의 에이전트 필독사항.md",
+        "docs/read/심현석의 에이전트 필독사항.md",
+        "docs/read/김도성의 에이전트 필독사항.md",
     ]
     for path in agent_required_paths:
-        assert_contains(path, "docs/rw/선행작업의존성 정리.md           # 자신의 선행 섹션 상태/산출물 정보만 제한적으로 최신화")
-        assert_contains(path, "3순위: docs/rw/선행작업의존성 정리.md")
+        assert_contains(path, "docs/rw/선행작업의존성 정리.md           # 자신의 선행 섹션 상태/산출물 정보만 제한적으로 최신화")
+        assert_contains(path, "3순위: docs/rw/선행작업의존성 정리.md")
 
     for path in [
         "docs/02_4월_개인별_구현범위_수정안.md",
@@ -1047,7 +1047,7 @@ def validate_section18_operations_packaging_patch() -> None:
         "## 8. 문서 최신화",
         "## 10. 병합 전 주의사항",
         "최종 개발 보고서 최신화",
-        "docs/rw/선행작업의존성 정리.md",
+        "docs/rw/선행작업의존성 정리.md",
         "관련 없음",
     ]:
         if needle not in pr_template:

@@ -10,7 +10,7 @@
 ```txt
 - Firebase 경로는 임의로 변경하지 않는다.
 - app-facing 필드명은 docs/rw/API_CONTRACTS.md 및 packages/shared_contracts와 일치시킨다.
-- 변경이 필요하면 docs/rw/충돌 이슈.md에 기록한다.
+- 변경이 필요하면 docs/rw/충돌 이슈.md에 기록한다.
 - shared_contracts와 불일치하면 PR 병합을 보류한다.
 - 개인정보와 위치 정보는 최소한으로 저장한다.
 ```
@@ -437,7 +437,7 @@ drivers
 ```txt
 1. 변경 필요성 확인
 2. 영향받는 API/앱/서비스 확인
-3. docs/rw/충돌 이슈.md 기록
+3. docs/rw/충돌 이슈.md 기록
 4. 관련 팀원 협의
 5. docs/rw/DATA_SCHEMA.md 수정
 6. docs/rw/API_CONTRACTS.md 수정 필요 여부 확인

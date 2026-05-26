@@ -61,9 +61,9 @@ Notes:
 
 
 Section 8 validation additions:
-- Role/scope priority includes docs/rw/선행작업의존성 정리.md before docs/02.
+- Role/scope priority includes docs/rw/선행작업의존성 정리.md before docs/02.
 - Common protected document limited-update exceptions are documented.
-- Agent required-reading files include limited docs/rw/선행작업의존성 정리.md update permission.
+- Agent required-reading files include limited docs/rw/선행작업의존성 정리.md update permission.
 - Sensor output wording does not imply 안준환 can modify Flutter app UI.
 
 Section 10 validation additions:
@@ -99,3 +99,13 @@ Section 20 validation additions:
 - `/users/{uid}/currentLocation` and `/drivers/{driverId}/currentLocation` Firebase rules both require exact `lat`, `lng`, `updatedAt` children, numeric coordinate values, coordinate bounds, and string `updatedAt`.
 - AI Vision wording across top-level and docs/02 documents explicitly excludes April model training/inference code and Flutter/backend real-time integration.
 - Final package still excludes `.docx` content analysis, Korean filename encoding issues, mock/stub/TODO incompleteness, and future placeholder existence from defect scope.
+
+V2 Hyunseok documentation cleanup validation:
+- Date: 2026-05-26 KST
+- Korean documentation filenames: canonical NFC names only; decomposed duplicate paths removed
+- Legacy requirement-spec markdown copies: removed
+- python scripts/validate_architecture.py: PASS
+- Backend pytest: PASS, 42 passed
+- Backend smoke integration: PASS
+- Scope: documentation filename normalization, Hyunseok V2 progress/final report reconciliation, conflict #16 resolution record
+

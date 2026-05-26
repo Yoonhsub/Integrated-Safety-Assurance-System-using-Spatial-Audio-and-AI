@@ -51,16 +51,14 @@ backend/api/app/services/safety_event_service.py
 backend/api/requirements.txt
 backend/api/tests/test_api_contract_validation.py
 backend/api/tests/test_health.py
-docs/00_원본_모비_프로젝트_계획서.docx
-docs/01_요구사항명세서.docx
-docs/01_요구사항명세서.md
-docs/01_요구사항명세서_legacy.md
-docs/02_4월_개인별_구현범위_수정안.md
-docs/agent_required_reading/00_원본_모비_프로젝트_계획서.docx
-docs/agent_required_reading/01_요구사항명세서.docx
-docs/agent_required_reading/01_요구사항명세서.md
-docs/agent_required_reading/01_요구사항명세서_legacy.md
-docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md
+docs/00_원본_모비_프로젝트_계획서.docx
+docs/01_요구사항명세서.docx
+docs/01_요구사항명세서.md
+docs/02_4월_개인별_구현범위_수정안.md
+docs/agent_required_reading/00_원본_모비_프로젝트_계획서.docx
+docs/agent_required_reading/01_요구사항명세서.docx
+docs/agent_required_reading/01_요구사항명세서.md
+docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md
 docs/read/AGENT_REQUIRED_READING.md
 docs/read/BRANCH_STRATEGY.md
 docs/read/COMMIT_CONVENTION.md
@@ -70,12 +68,12 @@ docs/read/PACKAGE_MANIFEST.txt
 docs/read/PREDEPENDENCY_PATCH_AGENT_PROMPT.md
 docs/read/PULL_REQUEST_RULES.md
 docs/read/architecture_validation_result.txt
+docs/read/김도성의 에이전트 필독사항.md
 docs/read/섹션 추가
-docs/read/김도성의 에이전트 필독사항.md
-docs/read/심현석의 에이전트 필독사항.md
-docs/read/안준환의 에이전트 필독사항.md
-docs/read/윤현섭의 에이전트 필독사항.md
-docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md
+docs/read/심현석의 에이전트 필독사항.md
+docs/read/안준환의 에이전트 필독사항.md
+docs/read/윤현섭의 에이전트 필독사항.md
+docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md
 docs/rw/API_CONTRACTS.md
 docs/rw/ARCHITECTURE.md
 docs/rw/DATA_SCHEMA.md
@@ -91,17 +89,13 @@ docs/rw/공통 진행사항.md
 docs/rw/김도성_디버그 리포트.md
 docs/rw/김도성_최종 개발 보고서.md
 docs/rw/선행작업의존성 정리.md
-docs/rw/공통 진행사항.md
-docs/rw/김도성_디버그 리포트.md
-docs/rw/김도성_최종 개발 보고서.md
-docs/rw/선행작업의존성 정리.md
-docs/rw/심현석_디버그 리포트.md
-docs/rw/심현석_최종 개발 보고서.md
-docs/rw/안준환_디버그 리포트.md
-docs/rw/안준환_최종 개발 보고서.md
-docs/rw/윤현섭_디버그 리포트.md
-docs/rw/윤현섭_최종 개발 보고서.md
-docs/rw/충돌 이슈.md
+docs/rw/심현석_디버그 리포트.md
+docs/rw/심현석_최종 개발 보고서.md
+docs/rw/안준환_디버그 리포트.md
+docs/rw/안준환_최종 개발 보고서.md
+docs/rw/윤현섭_디버그 리포트.md
+docs/rw/윤현섭_최종 개발 보고서.md
+docs/rw/충돌 이슈.md
 future_modules/README.md
 future_modules/head_tracking/README.md
 future_modules/head_tracking/contracts/head_tracking_event.schema.json
@@ -113,12 +107,12 @@ infrastructure/firebase/realtime_database.schema.json
 module_ownership.json
 packages/mobile_sensors/README.md
 packages/mobile_sensors/lib/mobi_mobile_sensors.dart
-packages/mobile_sensors/lib/src/bone_conduction_audio_cue.dart
 packages/mobile_sensors/lib/src/beacon_audio_cue_factory.dart
 packages/mobile_sensors/lib/src/beacon_distance_estimator.dart
-packages/mobile_sensors/lib/src/beacon_scanner.dart
 packages/mobile_sensors/lib/src/beacon_proximity_tracker.dart
+packages/mobile_sensors/lib/src/beacon_scanner.dart
 packages/mobile_sensors/lib/src/beacon_signal.dart
+packages/mobile_sensors/lib/src/bone_conduction_audio_cue.dart
 packages/mobile_sensors/lib/src/direction_sensor.dart
 packages/mobile_sensors/pubspec.yaml
 packages/shared_contracts/README.md

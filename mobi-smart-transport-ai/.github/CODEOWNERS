@@ -10,9 +10,9 @@
 /docs/rw/README.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /.env.example @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/read/AGENT_REQUIRED_READING.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/read/프로젝트\ 4월분\ 개발에\ 관한\ 공통\ 프롬프트(AI\ 절대필독!).md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/충돌\ 이슈.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/공통\ 진행사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/프로젝트\ 4월분\ 개발에\ 관한\ 공통\ 프롬프트(AI\ 절대필독!).md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/충돌\ 이슈.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/공통\ 진행사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/read/CONTRIBUTING.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/read/BRANCH_STRATEGY.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/read/COMMIT_CONVENTION.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
@@ -27,19 +27,19 @@
 /docs/read/FINAL_FILE_LIST.txt @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/rw/PATCH_NOTES.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 /docs/read/architecture_validation_result.txt @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/선행작업의존성\ 정리.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/read/심현석의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/read/윤현섭의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/read/안준환의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/read/김도성의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/심현석_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/심현석_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/윤현섭_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/윤현섭_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/안준환_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/안준환_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/김도성_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
-/docs/rw/김도성_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/선행작업의존성\ 정리.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/심현석의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/윤현섭의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/안준환의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/read/김도성의\ 에이전트\ 필독사항.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/심현석_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/심현석_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/윤현섭_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/윤현섭_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/안준환_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/안준환_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/김도성_디버그\ 리포트.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
+/docs/rw/김도성_최종\ 개발\ 보고서.md @Yoonhsub @ajh1206 @loremipsum0116 @doseong13
 
 /apps/passenger_app/ @Yoonhsub
 /apps/driver_app/ @Yoonhsub

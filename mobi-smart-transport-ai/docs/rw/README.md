@@ -100,7 +100,7 @@ python scripts/validate_architecture.py
 
 모든 팀원의 생성형 AI 에이전트는 코드 수정 전 `docs/read/AGENT_REQUIRED_READING.md`의 읽기 순서를 따른다. 핵심 순서는 다음과 같다.
 
-1. `docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`
+1. `docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`
 2. `docs/read/AGENT_REQUIRED_READING.md`
 3. `docs/01_요구사항명세서.md`
 4. `docs/agent_required_reading/01_요구사항명세서.md`
@@ -109,7 +109,7 @@ python scripts/validate_architecture.py
 7. `module_ownership.json`
 8. `.github/CODEOWNERS`
 9. 자신의 팀원 전용 에이전트 필독사항
-10. `docs/rw/선행작업의존성 정리.md`
+10. `docs/rw/선행작업의존성 정리.md`
 
 `.docx` 파일은 전체 프로젝트 배경 이해에 도움이 되는 제출/공유용 보조 원문이다. 에이전트가 참고할 수는 있지만, 공식 계약·정합성 판단 기준은 markdown 문서와 machine-readable schema를 우선한다.
 

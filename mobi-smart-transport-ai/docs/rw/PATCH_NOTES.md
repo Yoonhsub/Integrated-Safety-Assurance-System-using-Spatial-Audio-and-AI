@@ -53,7 +53,7 @@
 
 ### 반영한 항목
 
-1. `docs/read/AGENT_REQUIRED_READING.md`와 `docs/rw/README.md`의 AI 에이전트 필독 목록에 `docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`를 최우선 문서로 추가했다.
+1. `docs/read/AGENT_REQUIRED_READING.md`와 `docs/rw/README.md`의 AI 에이전트 필독 목록에 `docs/read/프로젝트 4월분 개발에 관한 공통 프롬프트(AI 절대필독!).md`를 최우선 문서로 추가했다.
 2. `docs/01_요구사항명세서.md`의 버스 도착 API 경로를 `/bus-info/stops/{stopId}/arrivals`로 통일하고, `/bus/locations?routeId=`는 4월 MVP 활성 API가 아닌 future 후보로 강등했다.
 3. `busArrivals`의 `stopName`/`source`는 app-facing 응답에서 제외하고, 필요 시 내부 캐시/로그 메타데이터로만 다루도록 SRS에 명시했다.
 4. `docs/rw/DATA_SCHEMA.md`의 `geofences` 구조를 `infrastructure/firebase/realtime_database.schema.json`과 동일한 배열 기반 구조로 통일했다.
@@ -149,7 +149,7 @@
 ## v8 consistency patch
 
 - Service layer timestamp values now pass `datetime` objects into Pydantic models instead of `.isoformat()` strings, avoiding `model_copy(update=...)` validation bypass.
-- Added `docs/rw/선행작업의존성 정리.md` and `docs/read/architecture_validation_result.txt` to common ownership/protected paths and CODEOWNERS.
+- Added `docs/rw/선행작업의존성 정리.md` and `docs/read/architecture_validation_result.txt` to common ownership/protected paths and CODEOWNERS.
 - Kept `passenger_app` → `mobi_mobile_sensors` dependency as future integration scaffolding, but documented that April work may use placeholder/mock sensor UI.
 - Updated SRS examples: `routeId` now uses `route502`, and geofence response includes optional `eventId`.
 - Documented FCM token registration responsibility and `driverId == Firebase Auth UID` policy.
@@ -177,9 +177,9 @@
 
 ## section 8 role/ownership consistency patch
 
-- 역할/범위/섹션 진행 우선순위에 `docs/rw/선행작업의존성 정리.md`를 3순위로 명시했다.
-- `docs/rw/공통 진행사항.md`와 `docs/rw/선행작업의존성 정리.md`는 공통 보호 파일이지만 자기 기록 공간/자기 선행 섹션 상태에 한해 제한적 최신화가 가능하다고 정리했다.
-- 팀원별 에이전트 필독사항의 수정 가능 문서 목록에 `docs/rw/선행작업의존성 정리.md`의 제한적 최신화 권한을 추가했다.
+- 역할/범위/섹션 진행 우선순위에 `docs/rw/선행작업의존성 정리.md`를 3순위로 명시했다.
+- `docs/rw/공통 진행사항.md`와 `docs/rw/선행작업의존성 정리.md`는 공통 보호 파일이지만 자기 기록 공간/자기 선행 섹션 상태에 한해 제한적 최신화가 가능하다고 정리했다.
+- 팀원별 에이전트 필독사항의 수정 가능 문서 목록에 `docs/rw/선행작업의존성 정리.md`의 제한적 최신화 권한을 추가했다.
 - 안준환 센서 출력 설명을 실제 Flutter UI 수정이 아니라 `packages/mobile_sensors` 내부 예제 또는 로그 출력으로 명확히 했다.
 
 ## section 10 core documentation consistency patch
