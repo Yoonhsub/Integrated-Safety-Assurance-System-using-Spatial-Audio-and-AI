@@ -19,8 +19,9 @@
 - `POST /geofence/check`
 - `GET /bus-info/stops/{stopId}/arrivals`
 - `POST /ride-requests`
+- `GET /ride-requests/{requestId}`
 
-현재 `backend_api_client.dart`는 병렬 개발용 TODO skeleton이며, 실제 HTTP 연동은 shared API 계약과 백엔드 산출물을 확인한 뒤 구현한다.
+현재 `backend_api_client.dart`는 shared API 계약 기준으로 실제 HTTP 요청을 시도한다. `POST /ride-requests` live mode payload는 화면 상태의 passenger/user id, 선택된 stop id, 선택된 route id, bus number, 선택적 target driver id를 조합해 생성하며, 클라이언트 내부 고정 demo JSON을 전송하지 않는다.
 
 ## 경계
 

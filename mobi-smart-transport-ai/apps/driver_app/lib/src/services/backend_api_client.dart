@@ -14,8 +14,9 @@ class BackendApiClient {
   final bool useMockData;
   final Duration timeout;
 
-  // TODO(윤현섭): FCM 수신 핸들러 연동은 push notification setup 확정 후
-  // driver ride request refresh와 연결한다. 현재 V2 범위는 HTTP polling 계약 검증이다.
+  // V2 driver app refreshes ride requests through explicit HTTP polling.
+  // TODO(윤현섭): FCM 수신 핸들러 연동은 Firebase Messaging setup 확정 후
+  // 기존 HTTP refresh callback을 깨우는 역할로 연결한다.
 
   Future<BackendHealthStatus> fetchHealthStatus() async {
     if (useMockData) {
@@ -80,8 +81,7 @@ class BackendApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return DriverRideRequestsResult(
           statusLabel: '조회 실패',
-          description:
-              '기사 탑승 요청 목록 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+          description: '기사 탑승 요청 목록 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
           requests: const [],
         );
       }
@@ -138,13 +138,14 @@ class BackendApiClient {
             return DriverRideRequestItem(
               requestId: requestId,
               requestLabel: title,
-              statusLabel:
-                status == null || status.isEmpty ? '상태 확인 필요' : status,
+              statusLabel: status == null || status.isEmpty
+                  ? '상태 확인 필요'
+                  : status,
               description: details.isEmpty
-                 ? '탑승 요청 세부 정보는 응답 계약 확정 후 표시합니다.'
-                 : details.join(', '),
+                  ? '탑승 요청 세부 정보는 응답 계약 확정 후 표시합니다.'
+                  : details.join(', '),
               semanticHint: '기사 앱 탑승 요청 목록에 표시되는 요청 카드입니다.',
-          );
+            );
           })
           .take(5)
           .toList();
@@ -152,8 +153,7 @@ class BackendApiClient {
       if (requestItems.isEmpty) {
         return DriverRideRequestsResult(
           statusLabel: '${requests.length}건 수신',
-          description:
-              '탑승 요청 ${requests.length}건을 수신했지만 표시 가능한 요청 정보가 없습니다.',
+          description: '탑승 요청 ${requests.length}건을 수신했지만 표시 가능한 요청 정보가 없습니다.',
           requests: const [],
         );
       }
@@ -179,82 +179,77 @@ class BackendApiClient {
   }
 
   Future<RideRequestStatusUpdateResult> updateRideRequestStatus({
-  required String requestId,
-  required String status,
-}) async {
-  if (useMockData) {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    required String requestId,
+    required String status,
+  }) async {
+    if (useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
 
-    return RideRequestStatusUpdateResult(
-      isSuccess: true,
-      statusLabel: status,
-      description: 'mock 탑승 요청 상태를 $status 상태로 변경했습니다.',
-      semanticHint: 'mock 탑승 요청 상태 변경 성공 상태입니다.',
-    );
-  }
-
-  try {
-    final response = await http
-        .patch(
-          _buildUri('/ride-requests/$requestId/status'),
-          headers: const {
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(<String, Object?>{
-            'status': status,
-          }),
-        )
-        .timeout(timeout);
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
       return RideRequestStatusUpdateResult(
-        isSuccess: false,
-        statusLabel: '상태 변경 실패',
-        description:
-            '탑승 요청 상태 변경 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
-        semanticHint: '탑승 요청 상태 변경 API 응답 실패 상태입니다.',
+        isSuccess: true,
+        statusLabel: status,
+        description: 'mock 탑승 요청 상태를 $status 상태로 변경했습니다.',
+        semanticHint: 'mock 탑승 요청 상태 변경 성공 상태입니다.',
       );
     }
 
-    final decodedBody = jsonDecode(response.body);
+    try {
+      final response = await http
+          .patch(
+            _buildUri('/ride-requests/$requestId/status'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(<String, Object?>{'status': status}),
+          )
+          .timeout(timeout);
 
-    if (decodedBody is! Map<String, dynamic>) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return RideRequestStatusUpdateResult(
+          isSuccess: false,
+          statusLabel: '상태 변경 실패',
+          description: '탑승 요청 상태 변경 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+          semanticHint: '탑승 요청 상태 변경 API 응답 실패 상태입니다.',
+        );
+      }
+
+      final decodedBody = jsonDecode(response.body);
+
+      if (decodedBody is! Map<String, dynamic>) {
+        return const RideRequestStatusUpdateResult(
+          isSuccess: false,
+          statusLabel: '응답 확인 필요',
+          description: '탑승 요청 상태 변경 API 응답 형식이 예상과 다릅니다.',
+          semanticHint: '탑승 요청 상태 변경 응답 형식 확인이 필요한 상태입니다.',
+        );
+      }
+
+      final updatedStatus = decodedBody['status']?.toString();
+
+      return RideRequestStatusUpdateResult(
+        isSuccess: true,
+        statusLabel: updatedStatus == null || updatedStatus.isEmpty
+            ? status
+            : updatedStatus,
+        description: updatedStatus == null || updatedStatus.isEmpty
+            ? '탑승 요청 상태 변경 요청이 완료되었습니다.'
+            : '탑승 요청 상태가 $updatedStatus 상태로 변경되었습니다.',
+        semanticHint: '탑승 요청 상태 변경 성공 상태입니다.',
+      );
+    } on TimeoutException {
       return const RideRequestStatusUpdateResult(
         isSuccess: false,
-        statusLabel: '응답 확인 필요',
-        description: '탑승 요청 상태 변경 API 응답 형식이 예상과 다릅니다.',
-        semanticHint: '탑승 요청 상태 변경 응답 형식 확인이 필요한 상태입니다.',
+        statusLabel: '상태 변경 시간 초과',
+        description: '탑승 요청 상태 변경 API 연결 시간이 초과되었습니다.',
+        semanticHint: '탑승 요청 상태 변경 API 연결 시간이 초과된 상태입니다.',
+      );
+    } catch (_) {
+      return const RideRequestStatusUpdateResult(
+        isSuccess: false,
+        statusLabel: '상태 변경 실패',
+        description: '탑승 요청 상태 변경 API에 연결할 수 없습니다.',
+        semanticHint: '탑승 요청 상태 변경 API 연결 실패 상태입니다.',
       );
     }
-
-    final updatedStatus = decodedBody['status']?.toString();
-
-    return RideRequestStatusUpdateResult(
-      isSuccess: true,
-      statusLabel: updatedStatus == null || updatedStatus.isEmpty
-          ? status
-          : updatedStatus,
-      description: updatedStatus == null || updatedStatus.isEmpty
-          ? '탑승 요청 상태 변경 요청이 완료되었습니다.'
-          : '탑승 요청 상태가 $updatedStatus 상태로 변경되었습니다.',
-      semanticHint: '탑승 요청 상태 변경 성공 상태입니다.',
-    );
-  } on TimeoutException {
-    return const RideRequestStatusUpdateResult(
-      isSuccess: false,
-      statusLabel: '상태 변경 시간 초과',
-      description: '탑승 요청 상태 변경 API 연결 시간이 초과되었습니다.',
-      semanticHint: '탑승 요청 상태 변경 API 연결 시간이 초과된 상태입니다.',
-    );
-  } catch (_) {
-    return const RideRequestStatusUpdateResult(
-      isSuccess: false,
-      statusLabel: '상태 변경 실패',
-      description: '탑승 요청 상태 변경 API에 연결할 수 없습니다.',
-      semanticHint: '탑승 요청 상태 변경 API 연결 실패 상태입니다.',
-    );
   }
-}
 
   Uri _buildUri(String path) {
     final normalizedBaseUrl = baseUrl.endsWith('/')
@@ -266,10 +261,7 @@ class BackendApiClient {
 }
 
 class BackendHealthStatus {
-  const BackendHealthStatus({
-    required this.isAvailable,
-    required this.message,
-  });
+  const BackendHealthStatus({required this.isAvailable, required this.message});
 
   final bool isAvailable;
   final String message;

@@ -20,12 +20,11 @@ void main() {
     };
 
     BoneConductionAudioCue decodeCue(Map<String, Object?> overrides) {
-      final json = <String, Object?>{
-        ...baseJson,
-        ...overrides,
-      };
+      final json = <String, Object?>{...baseJson, ...overrides};
       final decoded = jsonDecode(jsonEncode(json)) as Map<String, dynamic>;
-      return BoneConductionAudioCue.fromJson(Map<String, Object?>.from(decoded));
+      return BoneConductionAudioCue.fromJson(
+        Map<String, Object?>.from(decoded),
+      );
     }
 
     test('decodes a valid jsonDecode payload', () {
@@ -44,28 +43,46 @@ void main() {
     });
 
     test('allows nullable enum/string conversion fields to stay null', () {
-      final cue = decodeCue({
-        'proximityTrend': null,
-        'sourceEventType': null,
-      });
+      final cue = decodeCue({'proximityTrend': null, 'sourceEventType': null});
 
       expect(cue.proximityTrend, isNull);
       expect(cue.sourceEventType, isNull);
     });
 
-    test('rejects non-string proximityTrend values before enum conversion', () {
+    test('rejects missing or empty required string fields', () {
+      expect(() => decodeCue({'cueId': ''}), throwsA(isA<ArgumentError>()));
       expect(
-        () => decodeCue({'proximityTrend': <String, Object?>{'value': 'APPROACHING'}}),
+        () => decodeCue({'beaconId': null}),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decodeCue({
+          'message': <String, Object?>{'text': 'near stop'},
+        }),
         throwsA(isA<ArgumentError>()),
       );
     });
 
-    test('rejects non-string sourceEventType values before enum conversion', () {
+    test('rejects non-string proximityTrend values before enum conversion', () {
       expect(
-        () => decodeCue({'sourceEventType': <String, Object?>{'value': 'BEACON_NEAR'}}),
+        () => decodeCue({
+          'proximityTrend': <String, Object?>{'value': 'APPROACHING'},
+        }),
         throwsA(isA<ArgumentError>()),
       );
     });
+
+    test(
+      'rejects non-string sourceEventType values before enum conversion',
+      () {
+        expect(
+          () => decodeCue({
+            'sourceEventType': <String, Object?>{'value': 'BEACON_NEAR'},
+          }),
+          throwsA(isA<ArgumentError>()),
+        );
+      },
+    );
 
     test('rejects unknown proximityTrend strings', () {
       expect(

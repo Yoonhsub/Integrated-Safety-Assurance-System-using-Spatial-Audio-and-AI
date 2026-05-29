@@ -99,3 +99,10 @@ v9 minor consistency cleanup checks: PASS
 - `docs/rw/공통 진행사항.md`: Hyunseok V2 Sections 2~12 records and PASS status table were restored.
 - `docs/rw/심현석_디버그 리포트.md` and `docs/rw/심현석_최종 개발 보고서.md`: V2 final backend validation and handoff notes were added.
 - `CONFLICT-20260518-1338-심현석-001`: resolved as Option A (`/busArrivals/{stopId}` = `BusArrivalsResponse`).
+
+[V2 issue #23-#25 follow-up]
+- packages/mobile_sensors/test/bone_conduction_audio_cue_json_test.dart: malformed required string payload coverage added.
+- apps/passenger_app: ride request live payload now comes from screen state instead of fixed demo JSON.
+- apps/driver_app: HTTP polling path and FCM receive-handler follow-up boundary documented.
+- docs/read/FINAL_FILE_LIST.txt: existing mobile_sensors JSON test file added to manifest.
+- Validation: architecture validation PASS, backend pytest 42 passed, passenger/driver flutter analyze PASS, mobile_sensors flutter test 29 passed.

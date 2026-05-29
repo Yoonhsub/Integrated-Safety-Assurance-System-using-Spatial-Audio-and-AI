@@ -109,3 +109,13 @@ V2 Hyunseok documentation cleanup validation:
 - Backend smoke integration: PASS
 - Scope: documentation filename normalization, Hyunseok V2 progress/final report reconciliation, conflict #16 resolution record
 
+V2 issue follow-up validation:
+- Date: 2026-05-29 KST
+- Issues: #23, #24, #25
+- python scripts/validate_architecture.py: PASS
+- Backend pytest: PASS, 42 passed
+- Flutter analyze in apps/passenger_app: PASS
+- Flutter analyze in apps/driver_app: PASS
+- Flutter test in packages/mobile_sensors: PASS, 29 tests passed
+- Manifest follow-up: docs/read/FINAL_FILE_LIST.txt now includes packages/mobile_sensors/test/bone_conduction_audio_cue_json_test.dart
+- Scope: mobile_sensors JSON decode test coverage, app ride request payload contract, driver HTTP polling/FCM boundary documentation, backend documentation/manifest follow-up

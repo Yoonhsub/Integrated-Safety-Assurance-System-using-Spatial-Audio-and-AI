@@ -136,6 +136,7 @@ packages/mobile_sensors/lib/src/proximity_event_stream.dart
 packages/mobile_sensors/lib/src/sensor_model_validation.dart
 packages/mobile_sensors/pubspec.yaml
 packages/mobile_sensors/test/audio_cue_factory_test.dart
+packages/mobile_sensors/test/bone_conduction_audio_cue_json_test.dart
 packages/mobile_sensors/test/passenger_sensor_lifecycle_test.dart
 packages/mobile_sensors/test/proximity_event_replay_test.dart
 packages/mobile_sensors/test/rssi_smoothing_test.dart

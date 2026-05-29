@@ -17,11 +17,17 @@
 
 ## 기사 앱 API 연동 대상
 
-- FCM 클라이언트 수신 핸들러 연동
 - `GET /drivers/{driverId}/ride-requests`
 - `PATCH /ride-requests/{requestId}/status`
 
-현재 `backend_api_client.dart`는 병렬 개발용 TODO skeleton이며, 실제 HTTP/FCM 연동은 shared API 계약과 백엔드 산출물을 확인한 뒤 구현한다.
+현재 `backend_api_client.dart`는 V2 범위에서 HTTP polling 계약을 검증한다. 요청 목록 새로고침 버튼과 향후 FCM callback은 같은 refresh 경로를 호출하되, FCM 수신 핸들러 자체는 Firebase Messaging 설정이 확정된 뒤 후속 작업으로 연결한다.
+
+## FCM 후속 경계
+
+- HTTP polling: 현재 앱이 직접 실행하는 요청 목록 조회 및 상태 변경 경로이다.
+- FCM 클라이언트 수신 핸들러 연동: Firebase Messaging 설정 확정 후 진행할 후속 작업이다.
+- FCM 수신 핸들러: 후속 작업에서 push notification setup이 확정되면 새 요청 알림을 받고 기존 HTTP refresh 경로를 깨우는 역할만 맡는다.
+- FCM payload parsing, token registration, foreground/background notification 처리는 이번 V2 app integration follow-up 범위에 포함하지 않는다.
 
 ## 경계
 
