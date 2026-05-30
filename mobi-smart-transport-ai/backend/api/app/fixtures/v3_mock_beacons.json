@@ -1,0 +1,27 @@
+{
+  "demo_scenario_bus1_near_bus2_mid": [
+    {
+      "busId": "BUS_1",
+      "routeNo": "511",
+      "distanceLevel": "near",
+      "rssi": -45,
+      "relativePosition": "front"
+    },
+    {
+      "busId": "BUS_2",
+      "routeNo": "502",
+      "distanceLevel": "mid",
+      "rssi": -63,
+      "relativePosition": "rear"
+    }
+  ],
+  "demo_scenario_bus2_near": [
+    {
+      "busId": "BUS_2",
+      "routeNo": "502",
+      "distanceLevel": "near",
+      "rssi": -50,
+      "relativePosition": "front"
+    }
+  ]
+}
