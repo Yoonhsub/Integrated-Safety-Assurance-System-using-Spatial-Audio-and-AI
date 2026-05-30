@@ -3,6 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.schemas.guidance import (
+    BoardingConfirmRequest,
+    BoardingConfirmResponse,
+    BusEventRequest,
+    BusEventResponse,
     CreateSessionRequest,
     GuidanceSession,
     ResetRequest,
@@ -49,3 +53,8 @@ def start_guidance(req: StartGuidanceRequest) -> GuidanceSession:
 @router.post("/transition", response_model=GuidanceSession)
 def make_transition(req: TransitionRequest) -> GuidanceSession:
     return svc.transition(req.sessionId, req.targetState)
+
+
+@router.post("/boarding-confirm", response_model=BoardingConfirmResponse)
+def boarding_confirm(req: BoardingConfirmRequest) -> BoardingConfirmResponse:
+    return svc.confirm_boarding(req.sessionId, req.boarded)

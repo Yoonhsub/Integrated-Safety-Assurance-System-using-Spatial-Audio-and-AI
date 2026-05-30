@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import agent, bus_info_gateway, bus_v3, driver_ride_requests, geofence, guidance, mock_beacons, mock_geofence, notifications, ride_requests, safety_events
+from app.api.routes import agent, bus_info_gateway, bus_v3, driver_ride_requests, geofence, guidance, mock_beacons, mock_bus_event, mock_geofence, notifications, ride_requests, safety_events
 from app.services.firebase_client import get_firebase_client
 
 
@@ -107,6 +107,7 @@ app.include_router(bus_v3.router, prefix="/bus", tags=["bus-v3"])
 app.include_router(agent.router, prefix="/agent", tags=["agent"])
 app.include_router(mock_geofence.router, prefix="/mock", tags=["mock"])
 app.include_router(mock_beacons.router, prefix="/mock", tags=["mock"])
+app.include_router(mock_bus_event.router, prefix="/mock", tags=["mock"])
 
 
 @app.get("/health")

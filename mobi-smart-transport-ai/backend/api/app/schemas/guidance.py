@@ -85,3 +85,30 @@ class TransitionRequest(BaseModel):
 
 class ResetRequest(BaseModel):
     sessionId: str
+
+
+class BoardingConfirmRequest(BaseModel):
+    sessionId: str
+    boarded: bool
+
+
+class BoardingConfirmResponse(BaseModel):
+    guidanceState: str
+    previousState: str | None = None
+    nextRouteNo: str | None = None
+    nextArrivalMinutes: int | None = None
+    message: str
+    shouldSpeak: bool = True
+    cue: dict | None = None
+    fallbackSource: str | None = None
+
+
+class BusEventRequest(BaseModel):
+    sessionId: str
+    event: str
+
+
+class BusEventResponse(BaseModel):
+    guidanceState: str
+    message: str
+    shouldSpeak: bool = True
