@@ -541,3 +541,116 @@ V2 mock/live 모드 확인 기준:
 [ ] 변경 예정 파일이 자기 담당 영역인지 확인했다.
 [ ] 사용할 mock/live 모드와 실행할 테스트 명령을 정했다.
 ```
+
+---
+
+## 18. V3 음성 기반 버스 탑승 보조 에이전트 실행
+
+담당 브랜치: `v3/hyunseok-bus-guidance-agent`
+
+V3는 V2 main 브랜치 위에서 별도 브랜치로 개발되었다. V3 기능을 실행하려면 해당 브랜치를 체크아웃한다.
+
+### 18.1 백엔드 서버 실행
+
+```bash
+cd backend/api
+python -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Python 3.13 이상 권장 (3.10/3.11은 `datetime.UTC` 미지원으로 일부 서비스 오류 발생).
+
+### 18.2 환경변수 (V3 추가 항목)
+
+```txt
+GEMINI_API_KEY   선택사항. 없으면 rule-based fallback 자동 사용.
+                  안전 판단은 Gemini가 아니라 backend rule engine이 담당.
+MOBI_API_BASE_URL Flutter 앱이 참조하는 backend URL.
+                  Android emulator: http://10.0.2.2:8000
+                  로컬 직접 실행: http://127.0.0.1:8000 (기본값)
+V3_API_BASE_URL  smoke_v3_guidance.py가 참조하는 URL.
+                  기본값: http://127.0.0.1:8000
+```
+
+### 18.3 V3 backend 테스트 실행
+
+pytest.ini가 루트에 있어 루트에서 실행한다.
+
+```bash
+cd /path/to/mobi-smart-transport-ai
+python -m pytest backend/api/tests -q
+```
+
+또는 Python 3.13 명시:
+
+```bash
+/opt/homebrew/bin/python3.13 -m pytest backend/api/tests -q
+```
+
+V3 섹션 10 기준 예상 출력:
+
+```txt
+128 passed
+```
+
+### 18.4 V3 smoke test 실행
+
+서버를 별도 터미널에서 먼저 실행한 뒤:
+
+```bash
+python scripts/smoke_v3_guidance.py
+```
+
+대상 서버를 바꾸려면:
+
+```bash
+V3_API_BASE_URL=http://10.0.2.2:8000 python scripts/smoke_v3_guidance.py
+```
+
+정상 출력 예시:
+
+```txt
+=== V3 Guidance Smoke Test === BASE_URL=http://127.0.0.1:8000
+
+[PASS] 1. GET /health
+[PASS] 2. POST /guidance/session
+...
+[PASS] 14. GET /guidance/state
+
+==================================================
+ALL PASSED (14 steps)
+==================================================
+```
+
+### 18.5 Flutter 앱 실행 (V3 안내 화면)
+
+```bash
+cd apps/passenger_app
+flutter pub get
+flutter run
+```
+
+앱 실행 후 AppBar 우측 버스 아이콘을 탭하면 V3GuidancePage로 진입한다.
+
+flutter analyze 기준 예상 출력:
+
+```txt
+No issues found!
+```
+
+### 18.6 V3 demo 흐름 (발표용 체크리스트)
+
+```txt
+[ ] backend 서버 실행 확인 (GET /health → {"status":"ok"})
+[ ] flutter run 또는 APK 빌드 완료
+[ ] smoke_v3_guidance.py ALL PASSED 확인
+[ ] GEMINI_API_KEY 없어도 rule fallback 동작 확인
+[ ] mock-stop-001 geofence mock 버튼 동작 확인
+[ ] BUS_1(511번) WRONG_BUS_NEAR 경고 동작 확인
+[ ] BUS_2(502번) TARGET_BUS_NEAR 빠른 비프음 동작 확인
+[ ] REPORT_MISSED_BUS 후 25분 뒤 버스 안내 확인
+```
+
+V3 상세 시연 순서는 `docs/rw/V3_DEMO_SCRIPT.md`를 따른다.
