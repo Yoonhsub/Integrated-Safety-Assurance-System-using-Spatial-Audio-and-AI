@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/backend_api_client.dart';
 import '../services/voice_guide_service.dart';
+import 'v3_guidance_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -269,7 +270,20 @@ class _HomePageState extends State<HomePage> {
     final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('MOBI 승객 앱'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('MOBI 승객 앱'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.directions_bus),
+            tooltip: 'V3 버스 탑승 안내',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const V3GuidancePage()),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),

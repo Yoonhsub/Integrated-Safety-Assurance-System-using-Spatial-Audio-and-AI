@@ -1,5 +1,7 @@
-// V3 Guidance Page — placeholder
+// V3 Guidance Page
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/v3_agent_api_client.dart';
 import '../widgets/debug_panel.dart';
@@ -15,10 +17,15 @@ class V3GuidancePage extends StatefulWidget {
 
 class _V3GuidancePageState extends State<V3GuidancePage> {
   final _client = V3AgentApiClient();
+  final _tts = FlutterTts();
+  final _stt = SpeechToText();
+
   GuidanceSession? _session;
   String _lastMessage = '';
   String _sttResult = '';
   bool _showDebug = true;
+  bool _isListening = false;
+  bool _sttReady = false;
   String? _geofenceStatus;
   String? _lastApi;
 
@@ -27,7 +34,26 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void initState() {
     super.initState();
+    _initTts();
+    _initStt();
     _initSession();
+  }
+
+  @override
+  void dispose() {
+    _tts.stop();
+    _stt.stop();
+    super.dispose();
+  }
+
+  Future<void> _initTts() async {
+    await _tts.setLanguage('ko-KR');
+    await _tts.setSpeechRate(0.5);
+  }
+
+  Future<void> _initStt() async {
+    _sttReady = await _stt.initialize();
+    setState(() {});
   }
 
   Future<void> _initSession() async {
@@ -35,6 +61,42 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       final s = await _client.createSession(sessionId: _sessionId);
       setState(() => _session = s);
     } catch (_) {}
+  }
+
+  Future<void> _speak(String text) async {
+    await _tts.stop();
+    await _tts.speak(text);
+  }
+
+  Future<void> _startListening() async {
+    if (!_sttReady) {
+      setState(() {
+        _lastMessage = '음성을 정확히 인식하지 못했습니다. 다시 말씀하시거나 화면 버튼을 선택해주세요.';
+      });
+      return;
+    }
+    setState(() => _isListening = true);
+    await _stt.listen(
+      onResult: (result) {
+        if (result.finalResult) {
+          setState(() {
+            _sttResult = result.recognizedWords;
+            _isListening = false;
+          });
+          if (_sttResult.isNotEmpty) {
+            _handleUtterance(_sttResult);
+          }
+        } else {
+          setState(() => _sttResult = result.recognizedWords);
+        }
+      },
+      localeId: 'ko-KR',
+    );
+  }
+
+  Future<void> _stopListening() async {
+    await _stt.stop();
+    setState(() => _isListening = false);
   }
 
   Future<void> _handleUtterance(String utterance) async {
@@ -50,11 +112,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _lastMessage = resp.message;
         _lastApi = '/agent/converse';
       });
-      _refreshSession();
+      if (resp.shouldSpeak && resp.message.isNotEmpty) {
+        await _speak(resp.message);
+      }
+      await _refreshSession();
     } catch (_) {
-      setState(() {
-        _lastMessage = '음성을 정확히 인식하지 못했습니다. 다시 말씀하시거나 화면 버튼을 선택해주세요.';
-      });
+      const errMsg = '음성을 정확히 인식하지 못했습니다. 다시 말씀하시거나 화면 버튼을 선택해주세요.';
+      setState(() => _lastMessage = errMsg);
+      await _speak(errMsg);
     }
   }
 
@@ -66,24 +131,30 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         case 'DANGER_ZONE':
         case 'RETURNED_TO_STOP':
           final r = await _client.mockGeofence(sessionId: _sessionId, mockStatus: action);
+          final msg = r['message'] as String? ?? '';
           setState(() {
             _geofenceStatus = r['geofenceStatus'] as String?;
-            _lastMessage = r['message'] as String? ?? '';
+            _lastMessage = msg;
             _lastApi = '/mock/geofence';
           });
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         case 'BUS1_NEAR':
-          await _client.mockBeacons(sessionId: _sessionId, beacons: [
+          final r = await _client.mockBeacons(sessionId: _sessionId, beacons: [
             {'busId': 'BUS_1', 'routeNo': '511', 'distanceLevel': 'near', 'rssi': -45, 'relativePosition': 'front'},
             {'busId': 'BUS_2', 'routeNo': '502', 'distanceLevel': 'mid', 'rssi': -63, 'relativePosition': 'rear'},
           ]);
-          setState(() => _lastApi = '/mock/beacons');
+          final msg = r['message'] as String? ?? '';
+          setState(() { _lastMessage = msg; _lastApi = '/mock/beacons'; });
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         case 'BUS2_NEAR':
-          await _client.mockBeacons(sessionId: _sessionId, beacons: [
+          final r = await _client.mockBeacons(sessionId: _sessionId, beacons: [
             {'busId': 'BUS_2', 'routeNo': '502', 'distanceLevel': 'near', 'rssi': -50, 'relativePosition': 'front'},
           ]);
-          setState(() => _lastApi = '/mock/beacons');
+          final msg = r['message'] as String? ?? '';
+          setState(() { _lastMessage = msg; _lastApi = '/mock/beacons'; });
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         case 'BUS2_FAR':
           await _client.mockBeacons(sessionId: _sessionId, beacons: [
@@ -93,34 +164,39 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           break;
         case 'BUS_PASSED':
           final r = await _client.mockBusEvent(sessionId: _sessionId, event: 'BUS_PASSED');
-          setState(() {
-            _lastMessage = r['message'] as String? ?? '';
-            _lastApi = '/mock/bus-event';
-          });
+          final msg = r['message'] as String? ?? '';
+          setState(() { _lastMessage = msg; _lastApi = '/mock/bus-event'; });
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         case 'BOARDED':
           final r = await _client.boardingConfirm(sessionId: _sessionId, boarded: true);
-          setState(() => _lastMessage = r['message'] as String? ?? '');
+          final msg = r['message'] as String? ?? '';
+          setState(() => _lastMessage = msg);
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         case 'MISSED':
           final r = await _client.boardingConfirm(sessionId: _sessionId, boarded: false);
-          setState(() => _lastMessage = r['message'] as String? ?? '');
+          final msg = r['message'] as String? ?? '';
+          setState(() => _lastMessage = msg);
+          if (msg.isNotEmpty) await _speak(msg);
           break;
         default:
           break;
       }
-      _refreshSession();
+      await _refreshSession();
     } catch (_) {}
   }
 
   Future<void> _reset() async {
     try {
+      await _tts.stop();
       final s = await _client.resetState(_sessionId);
       setState(() {
         _session = s;
         _lastMessage = '';
         _sttResult = '';
         _geofenceStatus = null;
+        _lastApi = null;
       });
     } catch (_) {}
   }
@@ -141,6 +217,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         actions: [
           IconButton(
             icon: Icon(_showDebug ? Icons.bug_report : Icons.bug_report_outlined),
+            tooltip: 'Debug Panel',
             onPressed: () => setState(() => _showDebug = !_showDebug),
           ),
         ],
@@ -152,14 +229,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           children: [
             _statusCard(s),
             const SizedBox(height: 8),
-            Text('마지막 안내: $_lastMessage', style: const TextStyle(fontSize: 13)),
-            const SizedBox(height: 4),
-            Text('STT: $_sttResult', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            _messageBox(),
+            const SizedBox(height: 8),
+            _voiceButton(),
             const Divider(),
-            const Text('빠른 선택', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('빠른 선택', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 4),
             QuickActionPanel(onUtterance: _handleUtterance, onReset: _reset),
             const Divider(),
-            const Text('Mock Control', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Mock Control', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 4),
             MockControlPanel(onAction: _handleMockAction),
             if (_showDebug) ...[
               const Divider(),
@@ -169,6 +248,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                 lastApi: _lastApi,
               ),
             ],
+            const SizedBox(height: 20),
           ],
         ),
       ),
@@ -182,13 +262,51 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('상태: ${s?.guidanceState.name ?? '-'}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(
+              '상태: ${s?.guidanceState.name ?? '-'}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             Text('목적지: ${s?.destination ?? '-'}'),
             Text('정류장: ${s?.selectedStopName ?? '-'}'),
-            Text('노선: ${s?.selectedRouteNo ?? '-'}번'),
+            Text('노선: ${s?.selectedRouteNo != null ? '${s!.selectedRouteNo}번' : '-'}'),
             Text('도착 예정: ${s?.targetArrivalMinutes != null ? '${s!.targetArrivalMinutes}분 뒤' : '-'}'),
             Text('호출어: ${s?.wakeWord ?? '자비스'}'),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _messageBox() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.indigo[50],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('안내: $_lastMessage', style: const TextStyle(fontSize: 13)),
+          if (_sttResult.isNotEmpty)
+            Text('STT: $_sttResult', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _voiceButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton.icon(
+        icon: Icon(_isListening ? Icons.stop : Icons.mic),
+        label: Text(_isListening ? '듣는 중... (탭하여 중지)' : '음성 입력'),
+        onPressed: _isListening ? _stopListening : _startListening,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _isListening ? Colors.red[400] : Colors.indigo,
+          foregroundColor: Colors.white,
         ),
       ),
     );
