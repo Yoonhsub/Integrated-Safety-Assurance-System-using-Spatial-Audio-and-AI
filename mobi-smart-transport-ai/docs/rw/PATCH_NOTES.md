@@ -262,3 +262,16 @@
 - Normalized explicit backend HTTP errors to an app-readable `error.code/message/detail` envelope.
 - Added `scripts/smoke_backend_integration.py` for health, bus arrivals, ride request creation, driver list, and status update smoke flow.
 - Final validation on 2026-05-26 KST: architecture validation PASS, backend pytest 42 passed, backend smoke integration PASS.
+
+## V3 버스 탑승 안내 에이전트 (Section 1)
+
+- pytest.ini 추가: testpaths = backend/api/tests, services/public_data/tests, pythonpath = backend/api .
+- ai_vision 테스트는 기본 V3 pytest에서 제외
+- V3 demo 기본 stopId = mock-stop-001, geofence_service에 mock-stop-001 등록
+- stop001은 alias로 유지 (기존 V2 호환)
+- V3 frontend placeholder 추가: v3_guidance_page.dart, v3_agent_api_client.dart, v3_guidance_models.dart, debug_panel.dart, mock_control_panel.dart, quick_action_panel.dart
+- V3 backend placeholder 추가: schemas/guidance.py, services/guidance_session_store.py, services/guidance_state_service.py, api/routes/guidance.py
+- Flutter 환경변수: MOBI_API_BASE_URL (Android emulator: http://10.0.2.2:8000, local: http://127.0.0.1:8000)
+- docs/rw/V3_SECTION_PLAN.md, V3_API_CONTRACTS.md, V3_DEMO_SCRIPT.md 추가
+- 안전 경고는 Gemini TTS에만 의존하지 않음 (SAFETY_LOCAL 모드 별도 유지)
+- Gemini는 의도 파악/슬롯 추출/문장 생성만 담당, 위험 판단은 backend rule engine
