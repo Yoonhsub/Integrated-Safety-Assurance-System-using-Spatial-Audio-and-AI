@@ -36,8 +36,8 @@ class BusRouteService(DataGoKrClient):
 
         try:
             body = data.get("response", {}).get("body", {})
-            items = body.get("items", {})
-            if not items:
+            items = body.get("items")
+            if not items or isinstance(items, str):
                 return NormalizedBusRouteStopsResponse(routeId=routeId, nodes=[])
 
             item_list = items.get("item", [])

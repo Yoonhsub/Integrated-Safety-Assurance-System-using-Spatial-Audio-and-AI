@@ -38,8 +38,8 @@ class BusLocationService(DataGoKrClient):
 
         try:
             body = data.get("response", {}).get("body", {})
-            items = body.get("items", {})
-            if not items:
+            items = body.get("items")
+            if not items or isinstance(items, str):
                 return NormalizedBusLocationResponse(routeId=routeId, locations=[])
 
             item_list = items.get("item", [])

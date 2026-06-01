@@ -195,10 +195,11 @@ class LiveBusArrivalsProvider:
         content_type = response.headers.get("content-type", "").lower()
         if "json" in content_type:
             payload = response.json()
-            items = (
-                payload.get("response", {}).get("body", {}).get("items", {}).get("item")
-                or []
-            )
+            items = payload.get("response", {}).get("body", {}).get("items")
+            if not items or isinstance(items, str):
+                return []
+            item_list = items.get("item", [])
+            items = item_list if isinstance(item_list, list) else [item_list]
         else:
             import xml.etree.ElementTree as ET
             try:
