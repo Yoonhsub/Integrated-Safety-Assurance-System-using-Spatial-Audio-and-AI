@@ -293,17 +293,21 @@ class LiveBusArrivalsProvider:
         results: list[NormalizedBusArrival] = []
         for item in raw_items:
             # 노선 식별 (서울 BIS → TAGO 순 fallback)
+            # TAGO 응답은 키가 소문자(routeid/routeno)이므로 camelCase 키 뒤에 함께 시도한다.
             route_id = str(
                 item.get("rtNm")
                 or item.get("busRouteId")
                 or item.get("routeId")
+                or item.get("routeid")
                 or item.get("routeNo")
+                or item.get("routeno")
                 or ""
             )
             bus_no = str(
                 item.get("busRouteAbrv")
                 or item.get("rtNm")
                 or item.get("routeNo")
+                or item.get("routeno")
                 or route_id
                 or ""
             )
@@ -318,8 +322,10 @@ class LiveBusArrivalsProvider:
                 raw_secs = 0
             arrival_minutes = seconds_to_arrival_minutes(raw_secs)
 
-            # 남은 정류장 수 (서울 BIS staOrd만 — TAGO 미제공)
+            # 남은 정류장 수 (서울 BIS staOrd → TAGO arrprevstationcnt)
             remaining_stops = item.get("staOrd")
+            if remaining_stops is None:
+                remaining_stops = item.get("arrprevstationcnt")  # TAGO key
             if remaining_stops is not None:
                 try:
                     remaining_stops = int(remaining_stops)
