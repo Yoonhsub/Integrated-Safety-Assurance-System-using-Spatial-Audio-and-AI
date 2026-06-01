@@ -163,6 +163,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           sessionId: _sessionId,
           wakeWord: _wakeWord,
           utterance: text,
+          mode: widget.dataMode,
         );
         final state = await _client.fetchState(sessionId: _sessionId);
         V3RouteRecommendResponse? recommendation;
@@ -172,6 +173,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             destination: state.selectedDestination!,
             originLat: planningPreparation?.position?.latitude,
             originLng: planningPreparation?.position?.longitude,
+            mode: widget.dataMode,
           );
           planningStatus = _completedPlanningStatus(
             preparation: planningPreparation!,
@@ -233,6 +235,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           destination: destination,
           originLat: preparation.position?.latitude,
           originLng: preparation.position?.longitude,
+          mode: widget.dataMode,
         );
         setState(() {
           _lastRouteRecommendation = recommendation;
@@ -318,7 +321,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       final state = _sessionState;
       final stopId = state?.selectedStopId ?? 'mock-stop-001';
       final routeNo = state?.selectedRouteNo ?? '502';
-      final arrivals = await _client.arrivals(stopId: stopId, routeNo: routeNo);
+      final arrivals = await _client.arrivals(stopId: stopId, routeNo: routeNo, mode: widget.dataMode);
       setState(() {
         _lastArrivals = arrivals;
       });

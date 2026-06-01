@@ -96,11 +96,13 @@ class V3AgentApiClient {
     required String sessionId,
     required String wakeWord,
     required String utterance,
+    String? mode,
   }) async {
     final json = await _postJson('/agent/converse', <String, Object?>{
       'sessionId': sessionId,
       'wakeWord': wakeWord,
       'utterance': utterance,
+      if (mode != null) 'mode': mode,
     });
     return V3AgentResponse.fromJson(json);
   }
@@ -134,6 +136,7 @@ class V3AgentApiClient {
     required String destination,
     double? originLat,
     double? originLng,
+    String? mode,
   }) async {
     final query = <String, String>{
       'destination': destination,
@@ -142,6 +145,9 @@ class V3AgentApiClient {
       query['originLat'] = originLat.toString();
       query['originLng'] = originLng.toString();
     }
+    if (mode != null) {
+      query['mode'] = mode;
+    }
     final json = await _getJson('/bus/route-recommend', query);
     return V3RouteRecommendResponse.fromJson(json);
   }
@@ -149,10 +155,14 @@ class V3AgentApiClient {
   Future<V3BusArrivalsResponse> arrivals({
     required String stopId,
     String? routeNo,
+    String? mode,
   }) async {
     final query = <String, String>{'stopId': stopId};
     if (routeNo != null && routeNo.trim().isNotEmpty) {
       query['routeNo'] = routeNo.trim();
+    }
+    if (mode != null) {
+      query['mode'] = mode;
     }
     final json = await _getJson('/bus/arrivals', query);
     return V3BusArrivalsResponse.fromJson(json);

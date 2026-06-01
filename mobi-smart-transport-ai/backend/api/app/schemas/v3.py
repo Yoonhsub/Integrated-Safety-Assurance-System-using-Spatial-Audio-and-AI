@@ -111,6 +111,8 @@ class AgentConverseRequest(StrictApiModel):
     utterance: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
     sessionId: str = Field(default="demo-session", min_length=1, pattern=NON_BLANK_PATTERN)
     wakeWord: str = Field(default="자비스", min_length=1, pattern=NON_BLANK_PATTERN)
+    # 요청별 데이터 모드("live"|"mock"). 지정 시 전역 PUBLIC_DATA_USE_MOCK보다 우선한다.
+    mode: str | None = None
 
 
 class AgentConverseResponse(StrictApiModel):

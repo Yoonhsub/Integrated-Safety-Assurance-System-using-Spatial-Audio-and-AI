@@ -34,6 +34,18 @@ from app.services.v3_guidance_store import v3_guidance_store
 def _is_live_mode() -> bool:
     return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
 
+
+def _resolve_live(mode: str | None) -> bool:
+    """요청별 mode가 오면 그것을 우선 적용하고, 없으면 전역 env로 폴백한다.
+
+    프론트의 'API 데이터 테스트' 화면은 항상 mode='live'를 보내므로, 전역 토글
+    상태나 서버 재시작과 무관하게 그 요청은 반드시 실데이터 경로를 탄다.
+    """
+    if mode:
+        return mode.strip().lower() == "live"
+    return _is_live_mode()
+
+
 router = APIRouter()
 
 _DESTINATION_ALIASES: tuple[tuple[str, str], ...] = (
@@ -78,6 +90,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     session = v3_guidance_store.get(payload.sessionId, wake_word=payload.wakeWord)
     utterance = payload.utterance.strip()
     wake_word = session.wake_word.strip()
+    live = _resolve_live(payload.mode)
 
     keyword_intent = _detect_intent(utterance, wake_word)
     # 키워드로 의도를 못 잡으면 Flash가 1차로 의도/복잡도/목적지를 분류한다.
@@ -100,7 +113,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     # NLP가 목적지를 잡았는데 아직 세션에 없으면 먼저 해석해 둔다.
     # 그래야 도착/탑승 질의가 엉뚱한 정류소(직전 목적지나 기본값)를 쓰지 않는다.
     if nlp_destination is not None and nlp_destination != session.selected_destination:
-        synced = cheongju_route_catalog.resolve_or_mock(nlp_destination, live=_is_live_mode())
+        synced = cheongju_route_catalog.resolve_or_mock(nlp_destination, live=live)
         if synced is not None:
             session.selected_destination = synced.destination
             session.selected_route_no = synced.routeNo
@@ -118,9 +131,9 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         message = "네, 말씀하세요."
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
         destination = _extract_destination(utterance) or nlp_destination or session.selected_destination or "사창사거리"
-        resolved = cheongju_route_catalog.resolve_or_mock(destination, live=_is_live_mode())
+        resolved = cheongju_route_catalog.resolve_or_mock(destination, live=live)
         if resolved is None:
-            resolved = cheongju_route_catalog.resolve_or_mock("사창사거리", live=_is_live_mode())
+            resolved = cheongju_route_catalog.resolve_or_mock("사창사거리", live=live)
         session.selected_destination = resolved.destination
         session.selected_route_no = resolved.routeNo
         session.selected_route_id = resolved.routeId
@@ -132,7 +145,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         session.target_bus = None
         session.state = GuidanceState.ROUTE_RECOMMENDED
         
-        if _is_live_mode():
+        if live:
             try:
                 stops = BusRouteService().get_route_stops("33010", session.selected_route_id)
                 context_data = {
@@ -160,9 +173,9 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         stop_id = session.selected_stop_id or "CJB283000215"
         route_id = session.selected_route_id or "CJB270007300"
         
-        if _is_live_mode():
+        if live:
             try:
-                arrivals_res = BusArrivalsService().get_arrivals(stop_id)
+                arrivals_res = BusArrivalsService(use_mock=not live).get_arrivals(stop_id)
                 route_arrivals = [a for a in arrivals_res.arrivals if a.routeId == route_id]
                 context_data = {
                     "stop_name": stop_name,
@@ -188,7 +201,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         message = "6분 뒤 오는 버스로 안내할게. 정류장에 도착하면 대기 범위 감지를 시작할게."
 
     elif intent == AgentIntent.ASK_CAN_BOARD_CURRENT_BUS:
-        if _is_live_mode():
+        if live:
             route_id = session.selected_route_id or "CJB270007300"
             stop_id = session.selected_stop_id or "CJB283000215"
             try:

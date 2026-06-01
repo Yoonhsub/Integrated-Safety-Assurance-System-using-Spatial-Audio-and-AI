@@ -14,6 +14,8 @@ from app.schemas.v3 import (
 )
 import os
 
+from services.public_data.public_data_client import BusArrivalsService
+
 from app.services import cheongju_route_catalog
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
@@ -25,6 +27,22 @@ _stop_catalog = CheongjuBusStopsService()
 
 def _is_live_mode() -> bool:
     return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
+
+
+def _resolve_live(mode: str | None) -> bool:
+    """요청별 mode가 오면 우선 적용하고, 없으면 전역 env로 폴백한다.
+
+    'API 데이터 테스트' 화면은 항상 mode='live'를 보내므로, 전역 토글 상태나
+    서버 재시작과 무관하게 해당 요청은 반드시 실데이터 경로를 탄다.
+    """
+    if mode:
+        return mode.strip().lower() == "live"
+    return _is_live_mode()
+
+
+def _gateway_for(live: bool) -> BusInfoGatewayService:
+    """요청별 모드를 강제한 게이트웨이. 전역 env와 무관하게 mock/live를 고정한다."""
+    return BusInfoGatewayService(public_data_service=BusArrivalsService(use_mock=not live))
 
 
 def _key(value: str) -> str:
@@ -141,9 +159,11 @@ def route_recommend(
     destination: str = Query(min_length=1),
     originLat: float | None = Query(default=None, ge=-90, le=90),
     originLng: float | None = Query(default=None, ge=-180, le=180),
+    mode: str | None = Query(default=None),
 ) -> RouteRecommendResponse:
+    live = _resolve_live(mode)
     canonical = _DESTINATION_ALIASES.get(_key(destination))
-    recommendation = _recommendation_for(canonical, live=_is_live_mode()) if canonical else None
+    recommendation = _recommendation_for(canonical, live=live) if canonical else None
     if recommendation is None:
         raise HTTPException(
             status_code=404,
@@ -164,7 +184,7 @@ def route_recommend(
             origin_lat=originLat,
             origin_lng=originLng,
         )
-        planning_data_source, evidence = _planning_evidence(recommendation)
+        planning_data_source, evidence = _planning_evidence(recommendation, live=live)
         planning_result = generate_route_plan_summary(
             destination=recommendation.destination,
             stop_name=recommendation.stopName,
@@ -175,7 +195,7 @@ def route_recommend(
                     f"{item.destination}: {item.stopName}, {item.routeNo}번, "
                     f"routeId={item.routeId}, confidence={item.confidence}"
                 )
-                for item in _all_recommendations(live=_is_live_mode())
+                for item in _all_recommendations(live=live)
             ],
             arrival_context=_planning_arrival_context(evidence.arrivals),
             arrival_source=planning_data_source.value,
@@ -197,15 +217,20 @@ def route_recommend(
 
 
 @router.get("/arrivals", response_model=V3BusArrivalsResponse)
-def arrivals(stopId: str = Query(min_length=1), routeNo: str | None = None) -> V3BusArrivalsResponse:
+def arrivals(
+    stopId: str = Query(min_length=1),
+    routeNo: str | None = None,
+    mode: str | None = Query(default=None),
+) -> V3BusArrivalsResponse:
     normalized_stop_id = stopId.strip()
+    live = _resolve_live(mode)
 
     # Cache/live public data must win over the local V3 mock catalog when present,
     # because it represents fresher or externally supplied information.
     try:
-        gateway_result = _service.get_arrivals_with_source(normalized_stop_id)
+        gateway_result = _gateway_for(live).get_arrivals_with_source(normalized_stop_id)
     except HTTPException:
-        if not _is_live_mode():
+        if not live:
             mock = _mock_response(normalized_stop_id, route_no=routeNo)
             if mock is not None:
                 return mock
@@ -248,9 +273,11 @@ def _mock_response(stop_id: str, *, route_no: str | None) -> V3BusArrivalsRespon
 
 def _planning_evidence(
     recommendation: RouteRecommendation,
+    *,
+    live: bool,
 ) -> tuple[FallbackSource, RoutePlanningEvidence]:
     try:
-        gateway_result = _service.get_arrivals_with_source(recommendation.stopId)
+        gateway_result = _gateway_for(live).get_arrivals_with_source(recommendation.stopId)
     except HTTPException:
         gateway_result = None
 
@@ -278,7 +305,7 @@ def _planning_evidence(
             arrivals=arrivals,
         )
 
-    if not _is_live_mode():
+    if not live:
         mock_response = _mock_response(recommendation.stopId, route_no=recommendation.routeNo)
         if mock_response is not None:
             return FallbackSource.MOCK, RoutePlanningEvidence(
