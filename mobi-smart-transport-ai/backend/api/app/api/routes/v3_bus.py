@@ -175,16 +175,18 @@ def route_recommend(
                 }
             },
         )
+    # 정류소 위치 증빙과 도착 증빙은 GPS 좌표가 없어도 공공 API로 조회한다.
+    # 웹에서 위치 권한이 없을 때도 증빙 카드가 0,0/0건으로 비지 않게 하기 위함.
+    stop_evidence = _public_stop_evidence(
+        recommendation,
+        origin_lat=originLat,
+        origin_lng=originLng,
+    )
+    planning_data_source, evidence = _planning_evidence(recommendation, live=live)
+
+    # Google Maps 기반 위치 관계 요약은 현재 좌표가 있어야만 의미가 있다.
     planning_result = None
-    planning_data_source = None
-    stop_evidence = None
     if originLat is not None and originLng is not None:
-        stop_evidence = _public_stop_evidence(
-            recommendation,
-            origin_lat=originLat,
-            origin_lng=originLng,
-        )
-        planning_data_source, evidence = _planning_evidence(recommendation, live=live)
         planning_result = generate_route_plan_summary(
             destination=recommendation.destination,
             stop_name=recommendation.stopName,
@@ -212,7 +214,7 @@ def route_recommend(
         mapsGrounded=bool(planning_result[2]) if planning_result else False,
         mapsEvidence=planning_result[2] if planning_result else [],
         stopEvidence=stop_evidence,
-        evidence=evidence if originLat is not None and originLng is not None else None,
+        evidence=evidence,
     )
 
 
@@ -339,15 +341,19 @@ def _planning_arrival_context(arrivals: list[V3BusArrival]) -> list[str]:
 def _public_stop_evidence(
     recommendation: RouteRecommendation,
     *,
-    origin_lat: float,
-    origin_lng: float,
+    origin_lat: float | None,
+    origin_lng: float | None,
 ) -> PublicBusStopEvidence | None:
     try:
-        match = _stop_catalog.find_nearest(
-            stop_name=recommendation.stopName,
-            origin_lat=origin_lat,
-            origin_lng=origin_lng,
-        )
+        if origin_lat is not None and origin_lng is not None:
+            match = _stop_catalog.find_nearest(
+                stop_name=recommendation.stopName,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+            )
+        else:
+            # GPS가 없으면 거리 정렬 없이 이름으로 정류소 증빙을 조회한다.
+            match = _stop_catalog.find_by_name(stop_name=recommendation.stopName)
     except Exception:
         return None
     if match is None:

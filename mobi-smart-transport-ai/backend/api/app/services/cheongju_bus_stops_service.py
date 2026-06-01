@@ -92,6 +92,44 @@ class CheongjuBusStopsService:
             total_count=total_count,
         )
 
+    def find_by_name(self, *, stop_name: str) -> CheongjuBusStopMatch | None:
+        """좌표 없이 정류소명만으로 승인된 카탈로그에서 정류소를 조회한다.
+
+        웹에서 위치 권한이 없어 origin 좌표가 없을 때, 정류소 위치 증빙 카드가
+        0,0/0건으로 비지 않도록 거리 정렬 대신 이름 일치(정확→포함)로 매칭한다.
+        """
+        if not self._is_enabled():
+            return None
+
+        rows, total_count, fetched_at = self._catalog()
+        target = self._normalize_name(stop_name)
+        candidates = [
+            parsed
+            for row in rows
+            if (parsed := self._parse_row(row)) is not None
+            and self._normalize_name(parsed[1]) == target
+        ]
+        if not candidates:
+            candidates = [
+                parsed
+                for row in rows
+                if (parsed := self._parse_row(row)) is not None
+                and target in self._normalize_name(parsed[1])
+            ]
+        if not candidates:
+            return None
+
+        service_id, matched_name, longitude, latitude = candidates[0]
+        return CheongjuBusStopMatch(
+            service_id=service_id,
+            stop_name=matched_name,
+            longitude=longitude,
+            latitude=latitude,
+            endpoint=self.endpoint,
+            fetched_at=fetched_at,
+            total_count=total_count,
+        )
+
     def _catalog(self) -> tuple[list[dict], int, datetime]:
         now = time.monotonic()
         if (
