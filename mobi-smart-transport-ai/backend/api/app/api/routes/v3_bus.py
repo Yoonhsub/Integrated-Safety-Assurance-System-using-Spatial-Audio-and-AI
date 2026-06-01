@@ -12,6 +12,8 @@ from app.schemas.v3 import (
     V3BusArrival,
     V3BusArrivalsResponse,
 )
+import os
+
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
 from app.services.v3_gemini_service import generate_route_plan_summary
@@ -19,6 +21,9 @@ from app.services.v3_gemini_service import generate_route_plan_summary
 router = APIRouter()
 _service = BusInfoGatewayService()
 _stop_catalog = CheongjuBusStopsService()
+
+def _is_live_mode() -> bool:
+    return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
 
 
 def _key(value: str) -> str:
@@ -179,7 +184,7 @@ def route_recommend(
 
     return RouteRecommendResponse(
         recommendations=[recommendation],
-        fallbackSource=FallbackSource.MOCK,
+        fallbackSource=planning_data_source or FallbackSource.ERROR,
         usedGemini=planning_result is not None,
         planningModel=planning_result[0] if planning_result else None,
         planningSummary=planning_result[1] if planning_result else None,
@@ -200,9 +205,10 @@ def arrivals(stopId: str = Query(min_length=1), routeNo: str | None = None) -> V
     try:
         gateway_result = _service.get_arrivals_with_source(normalized_stop_id)
     except HTTPException:
-        mock = _mock_response(normalized_stop_id, route_no=routeNo)
-        if mock is not None:
-            return mock
+        if not _is_live_mode():
+            mock = _mock_response(normalized_stop_id, route_no=routeNo)
+            if mock is not None:
+                return mock
         return V3BusArrivalsResponse(
             stopId=normalized_stop_id,
             routeNo=routeNo,
@@ -272,21 +278,23 @@ def _planning_evidence(
             arrivals=arrivals,
         )
 
-    mock_response = _mock_response(recommendation.stopId, route_no=recommendation.routeNo)
-    if mock_response is None:
-        return FallbackSource.ERROR, RoutePlanningEvidence(
-            source=FallbackSource.ERROR,
-            stopId=recommendation.stopId,
-            stopName=recommendation.stopName,
-            routeNo=recommendation.routeNo,
-            arrivals=[],
-        )
-    return FallbackSource.MOCK, RoutePlanningEvidence(
-        source=FallbackSource.MOCK,
+    if not _is_live_mode():
+        mock_response = _mock_response(recommendation.stopId, route_no=recommendation.routeNo)
+        if mock_response is not None:
+            return FallbackSource.MOCK, RoutePlanningEvidence(
+                source=FallbackSource.MOCK,
+                stopId=recommendation.stopId,
+                stopName=recommendation.stopName,
+                routeNo=recommendation.routeNo,
+                arrivals=mock_response.arrivals,
+            )
+            
+    return FallbackSource.ERROR, RoutePlanningEvidence(
+        source=FallbackSource.ERROR,
         stopId=recommendation.stopId,
         stopName=recommendation.stopName,
         routeNo=recommendation.routeNo,
-        arrivals=mock_response.arrivals,
+        arrivals=[],
     )
 
 
