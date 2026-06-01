@@ -24,6 +24,7 @@ from app.schemas.v3 import (
 )
 from app.services import cheongju_route_catalog
 from app.services.v3_gemini_service import (
+    classify_intent,
     generate_optional_reply,
     synthesize_tts_wav,
     generate_dynamic_response,
@@ -78,7 +79,35 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     utterance = payload.utterance.strip()
     wake_word = session.wake_word.strip()
 
-    intent = _detect_intent(utterance, wake_word)
+    keyword_intent = _detect_intent(utterance, wake_word)
+    # 키워드로 의도를 못 잡으면 Flash가 1차로 의도/복잡도/목적지를 분류한다.
+    # "충북대병원은?" 같은 자연어 발화도 정적 앵무새로 떨어지지 않게 하기 위함.
+    classification = (
+        classify_intent(
+            utterance=utterance,
+            wake_word=wake_word,
+            known_destinations=cheongju_route_catalog.DESTINATIONS,
+        )
+        if keyword_intent == AgentIntent.UNKNOWN
+        else None
+    )
+    intent = keyword_intent
+    nlp_destination: str | None = None
+    if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
+        intent = AgentIntent(classification["intent"])
+        nlp_destination = classification["destination"]
+
+    # NLP가 목적지를 잡았는데 아직 세션에 없으면 먼저 해석해 둔다.
+    # 그래야 도착/탑승 질의가 엉뚱한 정류소(직전 목적지나 기본값)를 쓰지 않는다.
+    if nlp_destination is not None and nlp_destination != session.selected_destination:
+        synced = cheongju_route_catalog.resolve_or_mock(nlp_destination, live=_is_live_mode())
+        if synced is not None:
+            session.selected_destination = synced.destination
+            session.selected_route_no = synced.routeNo
+            session.selected_route_id = synced.routeId
+            session.selected_stop_id = synced.stopId
+            session.selected_stop_name = synced.stopName
+
     message = "요청을 이해하지 못했어. 버튼으로 다시 선택해줘."
     tts_mode = TtsMode.LOCAL_TTS
     cue = V3Cue(type=CueType.NONE, ttsMode=TtsMode.NONE)
@@ -88,7 +117,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     if intent == AgentIntent.WAKE_ONLY:
         message = "네, 말씀하세요."
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
-        destination = _extract_destination(utterance) or session.selected_destination or "사창사거리"
+        destination = _extract_destination(utterance) or nlp_destination or session.selected_destination or "사창사거리"
         resolved = cheongju_route_catalog.resolve_or_mock(destination, live=_is_live_mode())
         if resolved is None:
             resolved = cheongju_route_catalog.resolve_or_mock("사창사거리", live=_is_live_mode())
@@ -106,7 +135,12 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         if _is_live_mode():
             try:
                 stops = BusRouteService().get_route_stops("33010", session.selected_route_id)
-                context_data = {"route_nodes": [n.nodeNm for n in stops.nodes[:10]] + ["..."]}
+                context_data = {
+                    "destination": session.selected_destination,
+                    "board_stop": session.selected_stop_name,
+                    "route_no": session.selected_route_no,
+                    "route_path_sample": [n.nodeNm for n in stops.nodes[:10]] + ["..."],
+                }
                 dynamic_msg = generate_dynamic_response(
                     intent=intent, utterance=utterance, wake_word=wake_word, context_data=context_data
                 )
@@ -123,8 +157,8 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     elif intent == AgentIntent.QUERY_ARRIVAL:
         route_no = session.selected_route_no or "502"
         stop_name = session.selected_stop_name or "사창사거리 정류장"
-        stop_id = session.selected_stop_id or "CJU285000003"
-        route_id = session.selected_route_id or "CJU252000288"
+        stop_id = session.selected_stop_id or "CJB283000215"
+        route_id = session.selected_route_id or "CJB270007300"
         
         if _is_live_mode():
             try:
@@ -155,8 +189,8 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
 
     elif intent == AgentIntent.ASK_CAN_BOARD_CURRENT_BUS:
         if _is_live_mode():
-            route_id = session.selected_route_id or "CJU252000288"
-            stop_id = session.selected_stop_id or "CJU285000003"
+            route_id = session.selected_route_id or "CJB270007300"
+            stop_id = session.selected_stop_id or "CJB283000215"
             try:
                 locations_res = BusLocationService().get_locations("33010", route_id)
                 buses_at_stop = [l for l in locations_res.locations if l.nodeId == stop_id]
@@ -205,13 +239,18 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         session.nearest_beacon = None
         session.target_bus = None
         message = "괜찮아. 다음 버스를 다시 안내할게."
-    elif _contains_wake_word(utterance, wake_word):
+    else:
+        # 키워드/Flash 분류 모두 구체 의도를 못 잡은 일반 대화.
+        # 절대 정적 "요청을 이해하지 못했어" 앵무새를 내지 않고 Flash로 자연스럽게 답한다.
         gemini_reply = generate_optional_reply(utterance=utterance, wake_word=wake_word)
         if gemini_reply:
             message = gemini_reply
             tts_mode = TtsMode.GEMINI_OPTIONAL
             used_gemini = True
             fallback_source = FallbackSource.GEMINI
+        else:
+            # Gemini 미설정/일시 실패 시에도 앵무새 대신 부드러운 재요청으로 폴백한다.
+            message = "지금은 답하기 어려워. 잠시 후에 다시 말해줄래?"
     session.touch()
 
     return AgentConverseResponse(

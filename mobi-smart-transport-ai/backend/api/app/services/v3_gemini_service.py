@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import json
 import os
 import wave
 
@@ -14,6 +15,102 @@ _DEFAULT_PRO_MODEL = "gemini-2.5-pro"
 _DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 _DEFAULT_TTS_VOICE = "Sulafat"
 _MAX_REPLY_LENGTH = 500
+
+# Flash 1차 분류가 돌려줄 수 있는 의도 라벨(AgentIntent와 1:1).
+_INTENT_LABELS = (
+    "WAKE_ONLY",
+    "FIND_ROUTE",
+    "QUERY_ARRIVAL",
+    "SELECT_ARRIVAL",
+    "ASK_CAN_BOARD_CURRENT_BUS",
+    "REPORT_MISSED_BUS",
+    "CORRECT_DESTINATION",
+    "CHANGE_DESTINATION",
+    "UNKNOWN",
+)
+# 실시간 공공 버스데이터가 필요한(=복잡) 의도. 나머지는 일반 대화로 본다.
+_COMPLEX_INTENTS = frozenset(
+    {
+        "FIND_ROUTE",
+        "QUERY_ARRIVAL",
+        "SELECT_ARRIVAL",
+        "ASK_CAN_BOARD_CURRENT_BUS",
+        "REPORT_MISSED_BUS",
+        "CORRECT_DESTINATION",
+        "CHANGE_DESTINATION",
+    }
+)
+
+
+def classify_intent(
+    *,
+    utterance: str,
+    wake_word: str,
+    known_destinations: tuple[str, ...],
+) -> dict | None:
+    """Flash로 발화의 복잡도/의도/목적지를 1차 분류한다.
+
+    반환: ``{"intent": str, "complexity": "COMPLEX"|"GENERAL", "destination": str|None}``
+    또는 Gemini 미설정/실패 시 ``None``.
+
+    경로 탐색·도착·탑승 판단처럼 실시간 공공데이터가 필요한 발화는 ``COMPLEX``로 분류해
+    호출자가 Gemini Pro 경로로 보내고, 인사·잡담 등은 ``GENERAL``로 분류해 Flash가
+    바로 답하게 한다.
+    """
+    model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
+    system_instruction = (
+        f"너는 시각장애인 버스 탑승 보조 에이전트 '{wake_word}'의 의도 분류기야. "
+        "사용자 발화를 분석해 JSON 객체 하나만 출력해. 다른 설명은 절대 쓰지 마.\n"
+        "필드:\n"
+        f"- intent: 다음 중 하나 — {', '.join(_INTENT_LABELS)}\n"
+        "- complexity: 실시간 공공 버스데이터(노선 탐색/도착시간/지금 탈 수 있는지/버스 위치)가 "
+        ' 필요하면 "COMPLEX", 인사·감사·잡담·단순 확인이면 "GENERAL"\n'
+        f"- destination: 발화에 목적지가 있으면 다음 목록 중 정확히 하나, 없으면 null — {', '.join(known_destinations)}\n"
+        "의도 가이드: 길/노선/몇번/가는법=FIND_ROUTE, 언제·몇분 뒤=QUERY_ARRIVAL, "
+        "지금 이 버스 타도 되냐=ASK_CAN_BOARD_CURRENT_BUS, 놓쳤다·못 탔다=REPORT_MISSED_BUS, "
+        "목적지 바꿔=CHANGE_DESTINATION, 'A 아니라 B'=CORRECT_DESTINATION, "
+        "안내 시작·이걸로 해줘=SELECT_ARRIVAL, 호출어만 부름=WAKE_ONLY, 그 외 잡담=UNKNOWN."
+    )
+    raw = _generate(
+        model=model,
+        system_instruction=system_instruction,
+        prompt=utterance,
+        max_output_tokens=120,
+        thinking_budget=0,
+    )
+    if not raw:
+        return None
+    return _parse_classification(raw, known_destinations)
+
+
+def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict | None:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text[:4].lower() == "json":
+            text = text[4:]
+    try:
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        data = json.loads(text[start:end])
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    intent = data.get("intent")
+    if intent not in _INTENT_LABELS:
+        intent = "UNKNOWN"
+
+    complexity = data.get("complexity")
+    if complexity not in {"COMPLEX", "GENERAL"}:
+        complexity = "COMPLEX" if intent in _COMPLEX_INTENTS else "GENERAL"
+
+    destination = data.get("destination")
+    if destination not in known_destinations:
+        destination = None
+
+    return {"intent": intent, "complexity": complexity, "destination": destination}
 
 
 def generate_optional_reply(*, utterance: str, wake_word: str) -> str | None:
@@ -141,7 +238,10 @@ def generate_dynamic_response(
         system_instruction=system_instruction,
         prompt=prompt,
         max_output_tokens=150,
-        thinking_budget=0,
+        # gemini-2.5-pro는 thinking 비활성화(budget 0)를 거부한다("only works in thinking mode").
+        # 복잡 응답은 Pro로 처리하므로 최소 thinking budget을 부여해야 실제 응답이 생성된다.
+        thinking_budget=128,
+        timeout_seconds=30.0,
     )
 
 
