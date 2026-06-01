@@ -22,6 +22,8 @@ from .bus_arrivals_service import (
     LiveBusArrivalsProvider,
     MockBusArrivalsProvider,
 )
+from .bus_location_service import BusLocationService
+from .bus_route_service import BusRouteService
 from .data_go_kr_client import DataGoKrClient
 from .exceptions import (
     PublicDataEmptyResponseError,
@@ -54,6 +56,10 @@ __all__ = [
     "BusArrivalsService",
     "NormalizedBusArrival",
     "NormalizedBusArrivalsResponse",
+    "NormalizedBusLocation",
+    "NormalizedBusLocationResponse",
+    "NormalizedBusRouteNode",
+    "NormalizedBusRouteStopsResponse",
     "CongestionLevel",
     # Accessibility filter / sort (V2 신규)
     "AccessibilityMode",
@@ -75,6 +81,8 @@ __all__ = [
     "PublicDataEmptyResponseError",
     # Lower-level (transport / providers) — 내부용 노출이지만 디버깅을 위해 export
     "DataGoKrClient",
+    "BusLocationService",
+    "BusRouteService",
     "MockBusArrivalsProvider",
     "LiveBusArrivalsProvider",
 ]

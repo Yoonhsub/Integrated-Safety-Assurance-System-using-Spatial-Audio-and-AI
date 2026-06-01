@@ -27,3 +27,26 @@ class NormalizedBusArrival(StrictPublicDataModel):
 class NormalizedBusArrivalsResponse(StrictPublicDataModel):
     stopId: str
     arrivals: list[NormalizedBusArrival]
+
+class NormalizedBusLocation(StrictPublicDataModel):
+    routeId: str
+    nodeId: str
+    nodeNm: str
+    vehicleno: str
+    updatedAt: datetime
+
+
+class NormalizedBusLocationResponse(StrictPublicDataModel):
+    routeId: str
+    locations: list[NormalizedBusLocation]
+
+
+class NormalizedBusRouteNode(StrictPublicDataModel):
+    nodeId: str
+    nodeNm: str
+    nodeOrd: int
+
+
+class NormalizedBusRouteStopsResponse(StrictPublicDataModel):
+    routeId: str
+    nodes: list[NormalizedBusRouteNode]

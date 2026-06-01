@@ -112,6 +112,39 @@ def generate_route_plan_summary(
     return model, summary, maps_sources
 
 
+def generate_dynamic_response(
+    *,
+    intent: str,
+    utterance: str,
+    wake_word: str,
+    context_data: dict,
+) -> str | None:
+    """Use Pro to generate a natural conversational response based on live API data."""
+    model = _model_from_env("GEMINI_PRO_MODEL", _DEFAULT_PRO_MODEL)
+    
+    system_instruction = (
+        f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
+        "한국어 반말로 짧고 명확하게 답해. 절대 구구절절 설명하지 말고 2문장 이내로 말해. "
+        "제공된 실시간 공공 API 데이터(context_data)에 기반해서만 대답하고, 정보가 부족하면 "
+        "솔직하게 정보가 없다고 말해."
+    )
+
+    prompt = (
+        f"사용자 의도: {intent}\n"
+        f"사용자 발화: {utterance}\n"
+        f"실시간 API 컨텍스트 데이터:\n{context_data}\n\n"
+        "이 데이터를 바탕으로 사용자의 질문에 짧고 명확하게 반말로 대답해줘."
+    )
+
+    return _generate(
+        model=model,
+        system_instruction=system_instruction,
+        prompt=prompt,
+        max_output_tokens=150,
+        thinking_budget=0,
+    )
+
+
 def synthesize_tts_wav(*, text: str) -> bytes | None:
     """Generate warm single-speaker TTS audio and package the PCM as WAV."""
 
