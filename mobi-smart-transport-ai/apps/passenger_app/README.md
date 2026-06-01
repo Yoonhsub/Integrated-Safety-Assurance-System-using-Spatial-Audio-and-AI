@@ -2,6 +2,70 @@
 
 윤현섭 담당 Flutter 사용자 앱 영역입니다.
 
+## Web demo 실행 방법
+
+iPhone 빌드가 병목이므로 우선 Flutter Web 으로 데모를 확인한다. 데모 데이터 쓰기는
+Flutter 클라이언트가 아니라 FastAPI 백엔드의 Firebase Admin SDK 가 수행한다.
+
+### 1. 백엔드 실행
+
+```bash
+cd backend/api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 2. 상태 확인
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/firebase/status
+```
+
+### 3. Firebase 데모 초기화 (백엔드 Admin SDK)
+
+```bash
+curl -X POST http://127.0.0.1:8000/firebase/initialize \
+  -H "Content-Type: application/json" \
+  -d '{"reset": false}'
+```
+
+### 4. Flutter Web 실행
+
+```bash
+cd apps/passenger_app
+flutter pub get
+flutter run -d chrome \
+  --web-hostname localhost \
+  --web-port 5173 \
+  --dart-define MOBI_API_BASE_URL=http://127.0.0.1:8000
+```
+
+### 5. 앱에서 확인
+
+- 홈 화면의 **Firebase 데모 DB 초기화** 버튼을 누른다(백엔드 카드 바로 아래의 "Firebase 데모 DB" 카드).
+  - 실제 Firebase 연결이면 `Firebase 데모 DB 초기화 완료` SnackBar 와 seed 경로 Dialog 가 표시된다.
+  - 서비스 계정이 없으면 `서비스 계정이 없어 mock DB에 초기화됨` 으로 표시된다.
+  - `기존 데모 데이터 덮어쓰기(reset)` 스위치를 켜면 demo 경로만 삭제 후 재 seed 한다.
+- `V3 버스 탑승 보조 열기` 로 V3 화면을 연다.
+- mock geofence/beacon 버튼으로 시나리오를 확인한다.
+
+### 참고 / 주의
+
+- 서비스 계정 json 이 없으면 백엔드는 자동으로 mock DB 로 동작한다.
+- 실제 Firebase RTDB 에 쓰려면 `backend/api/secrets/firebase-service-account.json` 이 필요하다.
+- `FIREBASE_DATABASE_URL` 이 실제 콘솔 URL 과 다르면 루트 `.env` 를 수정한다.
+  연결 실패 시 `/firebase/status` 의 `probe.message` 에 "Realtime Database URL 확인 필요" 안내가 표시된다.
+- 데모 개발버전에서는 `.env` 를 로컬에 포함하지만 **공개 저장소에는 올리지 않는다**(.gitignore 처리됨).
+- 클라이언트 측 FlutterFire 구성은 `lib/firebase_options.dart`(web) 가 생성되어 있으며,
+  `lib/src/firebase/firebase_bootstrap.dart` 에서 `Firebase.initializeApp` 을 안전하게 호출한다.
+  이 파일이 없는 환경에서도 데모는 백엔드 endpoint 만으로 동작한다.
+  iOS 용 구성이 필요하면 `flutterfire configure --platforms=ios` 를 추가 실행한다
+  (현재 환경에서는 ruby `xcodeproj` gem 부재로 iOS 등록 단계가 실패하여 web 만 구성됨).
+
+
 ## 목적
 
 `passenger_app`은 시각장애인/노약자/일반 승객이 버스 정류장과 탑승 요청 기능을 이용하는 사용자 앱 스캐폴딩입니다.

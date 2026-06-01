@@ -8,6 +8,9 @@ environment:
 
 dependencies:
   audioplayers: ^6.5.1
+  # 클라이언트 측 Firebase 초기화용. 핵심 데모 데이터 쓰기는 백엔드 Admin SDK 가 담당하며,
+  # 클라이언트 초기화는 lib/firebase_options.dart 생성 후 활성화된다(firebase_bootstrap.dart 참고).
+  firebase_core: ^3.6.0
   flutter:
     sdk: flutter
   http: ^1.6.0

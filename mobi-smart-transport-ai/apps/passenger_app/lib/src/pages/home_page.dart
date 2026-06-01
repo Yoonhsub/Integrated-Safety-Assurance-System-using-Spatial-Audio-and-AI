@@ -49,12 +49,104 @@ class _HomePageState extends State<HomePage> {
   RideRequestStatusResult? _rideRequestStatusResult;
   bool _isLoadingRideRequestStatus = false;
 
+  FirebaseStatusResult? _firebaseStatus;
+  bool _isLoadingFirebaseStatus = false;
+  bool _isInitializingFirebase = false;
+  bool _firebaseReset = false;
+  FirebaseInitializeResult? _firebaseInitResult;
+
   @override
   void initState() {
     super.initState();
     _loadBackendHealthStatus();
     _loadPassengerHomeSnapshot();
     _loadBusArrivalSummary();
+    _loadFirebaseStatus();
+  }
+
+  Future<void> _loadFirebaseStatus() async {
+    setState(() {
+      _isLoadingFirebaseStatus = true;
+    });
+
+    final status = await _backendApiClient.fetchFirebaseStatus();
+
+    if (!mounted) return;
+
+    setState(() {
+      _firebaseStatus = status;
+      _isLoadingFirebaseStatus = false;
+    });
+  }
+
+  Future<void> _initializeFirebaseDemo() async {
+    setState(() {
+      _isInitializingFirebase = true;
+    });
+
+    final result =
+        await _backendApiClient.initializeFirebaseDemo(reset: _firebaseReset);
+
+    if (!mounted) return;
+
+    setState(() {
+      _firebaseInitResult = result;
+      _isInitializingFirebase = false;
+    });
+
+    final snackMessage = !result.ok
+        ? result.message
+        : result.isRealFirebase
+            ? 'Firebase 데모 DB 초기화 완료'
+            : '서비스 계정이 없어 mock DB에 초기화됨';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(snackMessage)),
+    );
+
+    if (result.ok && result.seededPaths.isNotEmpty) {
+      await _showSeededPathsDialog(result);
+    }
+
+    // 초기화 후 상태/건강/도착 정보를 다시 로드한다.
+    await _loadFirebaseStatus();
+    if (!mounted) return;
+    await _loadBackendHealthStatus();
+    if (!mounted) return;
+    await _loadBusArrivalSummary();
+  }
+
+  Future<void> _showSeededPathsDialog(FirebaseInitializeResult result) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            result.isRealFirebase ? 'Firebase 초기화 완료' : 'mock DB 초기화 완료',
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('mode: ${result.mode}${result.reset ? ' (reset)' : ''}'),
+                const SizedBox(height: 8),
+                const Text('seed된 경로:'),
+                const SizedBox(height: 4),
+                ...result.seededPaths.map((path) => Text('• $path')),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _loadBusArrivalSummary() async {
@@ -314,6 +406,22 @@ class _HomePageState extends State<HomePage> {
                     _backendHealthStatus?.message ?? '백엔드 연결 상태를 확인하는 중입니다.',
                 icon: Icons.cloud_done_outlined,
                 semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
+              ),
+              const SizedBox(height: 16),
+              _FirebaseDemoCard(
+                status: _firebaseStatus,
+                isLoadingStatus: _isLoadingFirebaseStatus,
+                isInitializing: _isInitializingFirebase,
+                reset: _firebaseReset,
+                lastInitResult: _firebaseInitResult,
+                onResetChanged: (value) {
+                  setState(() {
+                    _firebaseReset = value;
+                  });
+                },
+                onCheckStatus: _isLoadingFirebaseStatus ? null : _loadFirebaseStatus,
+                onInitialize:
+                    _isInitializingFirebase ? null : _initializeFirebaseDemo,
               ),
               const SizedBox(height: 16),
               Semantics(
@@ -597,6 +705,154 @@ class _StatusCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FirebaseDemoCard extends StatelessWidget {
+  const _FirebaseDemoCard({
+    required this.status,
+    required this.isLoadingStatus,
+    required this.isInitializing,
+    required this.reset,
+    required this.lastInitResult,
+    required this.onResetChanged,
+    required this.onCheckStatus,
+    required this.onInitialize,
+  });
+
+  final FirebaseStatusResult? status;
+  final bool isLoadingStatus;
+  final bool isInitializing;
+  final bool reset;
+  final FirebaseInitializeResult? lastInitResult;
+  final ValueChanged<bool> onResetChanged;
+  final Future<void> Function()? onCheckStatus;
+  final Future<void> Function()? onInitialize;
+
+  String get _modeLabel {
+    if (isLoadingStatus && status == null) return 'unknown';
+    return status?.mode ?? 'unknown';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = status;
+    final theme = Theme.of(context);
+
+    return Semantics(
+      container: true,
+      label: 'Firebase 데모 DB 관리, 현재 mode $_modeLabel',
+      hint: 'Firebase 상태를 확인하고 백엔드 Admin SDK를 통해 데모 데이터를 초기화할 수 있는 영역입니다.',
+      child: Card(
+        elevation: 1,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.local_fire_department_outlined, size: 32),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _StatusHeader(
+                      title: 'Firebase 데모 DB',
+                      statusLabel: isLoadingStatus && s == null
+                          ? '확인 중'
+                          : _modeLabel,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (s == null && isLoadingStatus)
+                const Text('Firebase 상태를 불러오는 중입니다.')
+              else if (s == null)
+                const Text('Firebase 상태를 아직 확인하지 못했습니다. "Firebase 상태 확인"을 눌러주세요.')
+              else ...[
+                _kv('mode', s.mode),
+                _kv('initialized', s.initialized ? 'true' : 'false'),
+                _kv('credentialsReady', s.credentialsReady ? 'true' : 'false'),
+                _kv('serviceAccountExists',
+                    s.serviceAccountExists ? 'true' : 'false'),
+                _kv('Realtime Database URL', s.databaseUrl ?? '(미설정)'),
+                if (s.lastError != null && s.lastError!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'lastError: ${s.lastError}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.error),
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                Text(s.message, style: theme.textTheme.bodyMedium),
+              ],
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('기존 데모 데이터 덮어쓰기(reset)'),
+                subtitle: const Text('demo 관련 경로만 삭제 후 다시 seed 합니다.'),
+                value: reset,
+                onChanged: isInitializing ? null : onResetChanged,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onCheckStatus == null
+                          ? null
+                          : () {
+                              onCheckStatus!();
+                            },
+                      icon: Icon(isLoadingStatus
+                          ? Icons.hourglass_empty
+                          : Icons.refresh_outlined),
+                      label: Text(isLoadingStatus ? '확인 중...' : 'Firebase 상태 확인'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: onInitialize == null
+                          ? null
+                          : () {
+                              onInitialize!();
+                            },
+                      icon: Icon(isInitializing
+                          ? Icons.hourglass_empty
+                          : Icons.cloud_sync_outlined),
+                      label: Text(
+                        isInitializing ? '초기화 중...' : 'Firebase 데모 DB 초기화',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (lastInitResult != null &&
+                  lastInitResult!.seededPaths.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '최근 seed (${lastInitResult!.mode}'
+                  '${lastInitResult!.reset ? ', reset' : ''}): '
+                  '${lastInitResult!.seededPaths.length}개 경로',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _kv(String key, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Text('$key: $value'),
     );
   }
 }

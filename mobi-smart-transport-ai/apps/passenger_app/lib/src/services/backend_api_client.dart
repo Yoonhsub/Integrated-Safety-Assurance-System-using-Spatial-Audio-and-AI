@@ -407,6 +407,61 @@ class BackendApiClient {
     }
   }
 
+  Future<FirebaseStatusResult> fetchFirebaseStatus() async {
+    try {
+      final response =
+          await http.get(_buildUri('/firebase/status')).timeout(timeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return FirebaseStatusResult.failure(
+          '/firebase/status API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+        );
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return FirebaseStatusResult.failure('Firebase 상태 응답 형식이 예상과 다릅니다.');
+      }
+
+      return FirebaseStatusResult.fromJson(decoded);
+    } on TimeoutException {
+      return FirebaseStatusResult.failure('Firebase 상태 API 연결 시간이 초과되었습니다.');
+    } catch (_) {
+      return FirebaseStatusResult.failure('Firebase 상태 API에 연결할 수 없습니다.');
+    }
+  }
+
+  Future<FirebaseInitializeResult> initializeFirebaseDemo({
+    bool reset = false,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            _buildUri('/firebase/initialize'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(<String, Object?>{'reset': reset}),
+          )
+          .timeout(timeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return FirebaseInitializeResult.failure(
+          '/firebase/initialize API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+        );
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return FirebaseInitializeResult.failure('Firebase 초기화 응답 형식이 예상과 다릅니다.');
+      }
+
+      return FirebaseInitializeResult.fromJson(decoded);
+    } on TimeoutException {
+      return FirebaseInitializeResult.failure('Firebase 초기화 API 연결 시간이 초과되었습니다.');
+    } catch (_) {
+      return FirebaseInitializeResult.failure('Firebase 초기화 API에 연결할 수 없습니다.');
+    }
+  }
+
   BusArrivalSummary _mockBusArrivalSummary({
     required String stopId,
   }) {
@@ -480,4 +535,116 @@ class PassengerStatusItem {
   final String statusLabel;
   final String description;
   final String semanticHint;
+}
+
+class FirebaseStatusResult {
+  const FirebaseStatusResult({
+    required this.ok,
+    required this.mode,
+    required this.initialized,
+    required this.usingMock,
+    required this.credentialsReady,
+    required this.serviceAccountExists,
+    required this.message,
+    this.projectId,
+    this.databaseUrl,
+    this.lastError,
+  });
+
+  final bool ok;
+  final String mode;
+  final bool initialized;
+  final bool usingMock;
+  final bool credentialsReady;
+  final bool serviceAccountExists;
+  final String message;
+  final String? projectId;
+  final String? databaseUrl;
+  final String? lastError;
+
+  bool get isRealFirebase => mode == 'firebase-admin' && !usingMock;
+
+  factory FirebaseStatusResult.fromJson(Map<String, dynamic> json) {
+    return FirebaseStatusResult(
+      ok: json['ok'] == true,
+      mode: json['mode']?.toString() ?? 'unknown',
+      initialized: json['initialized'] == true,
+      usingMock: json['usingMock'] == true,
+      credentialsReady: json['credentialsReady'] == true,
+      serviceAccountExists: json['serviceAccountExists'] == true,
+      message: json['message']?.toString() ?? '',
+      projectId: json['projectId']?.toString(),
+      databaseUrl: json['databaseUrl']?.toString(),
+      lastError: json['lastError']?.toString(),
+    );
+  }
+
+  factory FirebaseStatusResult.failure(String message) {
+    return FirebaseStatusResult(
+      ok: false,
+      mode: 'unknown',
+      initialized: false,
+      usingMock: true,
+      credentialsReady: false,
+      serviceAccountExists: false,
+      message: message,
+    );
+  }
+}
+
+class FirebaseInitializeResult {
+  const FirebaseInitializeResult({
+    required this.ok,
+    required this.mode,
+    required this.initialized,
+    required this.usingMock,
+    required this.seeded,
+    required this.reset,
+    required this.seededPaths,
+    required this.message,
+    this.lastError,
+  });
+
+  final bool ok;
+  final String mode;
+  final bool initialized;
+  final bool usingMock;
+  final bool seeded;
+  final bool reset;
+  final List<String> seededPaths;
+  final String message;
+  final String? lastError;
+
+  bool get isRealFirebase => mode == 'firebase-admin' && !usingMock;
+
+  factory FirebaseInitializeResult.fromJson(Map<String, dynamic> json) {
+    final rawPaths = json['seededPaths'];
+    final paths = rawPaths is List
+        ? rawPaths.map((e) => e.toString()).toList(growable: false)
+        : const <String>[];
+    return FirebaseInitializeResult(
+      ok: json['ok'] == true,
+      mode: json['mode']?.toString() ?? 'unknown',
+      initialized: json['initialized'] == true,
+      usingMock: json['usingMock'] == true,
+      seeded: json['seeded'] == true,
+      reset: json['reset'] == true,
+      seededPaths: paths,
+      message: json['message']?.toString() ?? '',
+      lastError: json['lastError']?.toString(),
+    );
+  }
+
+  factory FirebaseInitializeResult.failure(String message) {
+    return FirebaseInitializeResult(
+      ok: false,
+      mode: 'unknown',
+      initialized: false,
+      usingMock: true,
+      seeded: false,
+      reset: false,
+      seededPaths: const <String>[],
+      message: message,
+    );
+  }
 }
