@@ -1,65 +1,130 @@
-// V3 Audio/Haptic Cue Service
 import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
-import '../models/cue_policy.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+
+import '../models/v3_guidance_models.dart';
 
 class AudioHapticCueService {
-  Timer? _timer;
-  CueType _currentType = CueType.none;
-  int _repeatCount = 0;
+  AudioHapticCueService({
+    FlutterTts? flutterTts,
+    AudioPlayer? audioPlayer,
+  })  : _flutterTts = flutterTts ?? FlutterTts(),
+        _audioPlayer = audioPlayer ?? AudioPlayer();
 
-  void play(CuePolicy policy) {
-    if (policy.type == _currentType && _timer != null) return;
-    _cancel();
-    _currentType = policy.type;
-    _repeatCount = 0;
-    if (policy.type == CueType.none || policy.repeatCount == 0) return;
-    _fire(policy);
-    if (policy.interval > Duration.zero) {
-      _timer = Timer.periodic(policy.interval, (_) {
-        _repeatCount++;
-        if (policy.repeatCount > 0 && _repeatCount >= policy.repeatCount) {
-          _cancel();
-          return;
+  final FlutterTts _flutterTts;
+  final AudioPlayer _audioPlayer;
+  Timer? _cueTimer;
+  String? _activeCueType;
+  bool _isConfigured = false;
+
+  String? get activeCueType => _activeCueType;
+  bool get isLooping => _cueTimer?.isActive ?? false;
+
+  Future<void> playCue(V3Cue cue, {String? fallbackMessage}) async {
+    if (cue.isNone) {
+      await stopCue();
+      return;
+    }
+
+    final cueType = cue.type;
+    final message = cue.message ?? fallbackMessage ?? _defaultMessage(cueType);
+
+    if (_activeCueType == cueType && isLooping) {
+      return;
+    }
+
+    await stopCue();
+    _activeCueType = cueType;
+    await _configureTts();
+
+    if (cue.shouldVibrate) {
+      await HapticFeedback.heavyImpact();
+    }
+
+    if (cue.needsLocalPlayback && message.isNotEmpty) {
+      await _flutterTts.speak(message);
+    }
+
+    if (cue.shouldBeep || cue.shouldVibrate) {
+      final interval = _intervalForCue(cueType);
+      _cueTimer = Timer.periodic(interval, (_) async {
+        if (cue.shouldVibrate) {
+          await HapticFeedback.mediumImpact();
         }
-        _fire(policy);
+        if (cue.shouldBeep) {
+          await SystemSound.play(SystemSoundType.click);
+        }
       });
     }
   }
 
-  void stop() => _cancel();
-
-  void reset() => _cancel();
-
-  void dispose() => _cancel();
-
-  void _cancel() {
-    _timer?.cancel();
-    _timer = null;
-    _currentType = CueType.none;
+  Future<void> speakLocal(String message) async {
+    if (message.trim().isEmpty) return;
+    await _configureTts();
+    await _flutterTts.speak(message);
   }
 
-  void _fire(CuePolicy policy) {
-    switch (policy.type) {
-      case CueType.targetBusNear:
-        HapticFeedback.heavyImpact();
-        SystemSound.play(SystemSoundType.alert);
-      case CueType.targetBusMid:
-        HapticFeedback.mediumImpact();
-        SystemSound.play(SystemSoundType.alert);
-      case CueType.targetBusFar:
-        HapticFeedback.lightImpact();
-      case CueType.wrongBusNear:
-        HapticFeedback.heavyImpact();
-        SystemSound.play(SystemSoundType.alert);
-      case CueType.geofenceWarning:
-        HapticFeedback.mediumImpact();
-        SystemSound.play(SystemSoundType.alert);
-      case CueType.danger:
-        HapticFeedback.heavyImpact();
-        SystemSound.play(SystemSoundType.alert);
-      case CueType.none:
-        break;
+  Future<void> playGeneratedSpeech(Uint8List audioBytes) async {
+    await _flutterTts.stop();
+    await _audioPlayer.stop();
+    await _audioPlayer.play(BytesSource(audioBytes));
+  }
+
+  Future<void> stopCue() async {
+    _cueTimer?.cancel();
+    _cueTimer = null;
+    _activeCueType = null;
+    await _flutterTts.stop();
+    await _audioPlayer.stop();
+  }
+
+  Future<void> dispose() async {
+    await stopCue();
+    await _audioPlayer.dispose();
+  }
+
+  Future<void> _configureTts() async {
+    if (_isConfigured) return;
+    await _flutterTts.setLanguage('ko-KR');
+    await _flutterTts.setSpeechRate(0.5);
+    await _flutterTts.setPitch(1.0);
+    _isConfigured = true;
+  }
+
+  Duration _intervalForCue(String cueType) {
+    switch (cueType) {
+      case 'TARGET_BUS_NEAR':
+      case 'WRONG_BUS_NEAR':
+      case 'DANGER':
+        return const Duration(milliseconds: 900);
+      case 'TARGET_BUS_MID':
+      case 'GEOFENCE_WARNING':
+        return const Duration(milliseconds: 1600);
+      case 'TARGET_BUS_FAR':
+        return const Duration(milliseconds: 2600);
+      default:
+        return const Duration(seconds: 2);
+    }
+  }
+
+  String _defaultMessage(String cueType) {
+    switch (cueType) {
+      case 'TARGET_BUS_NEAR':
+        return '타야 할 버스가 가까이 왔어.';
+      case 'TARGET_BUS_MID':
+        return '타야 할 버스가 접근 중이야.';
+      case 'TARGET_BUS_FAR':
+        return '타야 할 버스가 아직 멀리 있어.';
+      case 'WRONG_BUS_NEAR':
+        return '잘못된 버스가 가까이 왔어. 기다려.';
+      case 'GEOFENCE_WARNING':
+        return '정류장 대기 범위를 벗어났어.';
+      case 'DANGER':
+        return '위험 구역이야. 즉시 이동해.';
+      default:
+        return '';
     }
   }
 }

@@ -1,187 +1,227 @@
-#!/usr/bin/env python3
-"""V3 버스 탑승 안내 에이전트 smoke test."""
 from __future__ import annotations
 
+import json
 import os
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from typing import Any
+from uuid import uuid4
 
-import httpx
-
-BASE_URL = os.getenv("V3_API_BASE_URL", "http://127.0.0.1:8000")
-SESSION_ID = "smoke-session-v3"
-
-PASS = "\033[92m[PASS]\033[0m"
-FAIL = "\033[91m[FAIL]\033[0m"
-
-failures: list[str] = []
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 
-def check(step: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        print(f"{PASS} {step}")
-    else:
-        print(f"{FAIL} {step} — {detail}")
-        failures.append(step)
+@dataclass(frozen=True)
+class StepResult:
+    label: str
+    status: int
+    body: dict[str, Any]
 
 
-def post(path: str, body: dict) -> dict:
-    r = httpx.post(f"{BASE_URL}{path}", json=body, timeout=10)
-    r.raise_for_status()
-    return r.json()
+class SmokeFailure(AssertionError):
+    pass
 
 
-def get(path: str, params: dict | None = None) -> dict:
-    r = httpx.get(f"{BASE_URL}{path}", params=params, timeout=10)
-    r.raise_for_status()
-    return r.json()
+class V3HttpClient:
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def get(self, path: str, *, params: dict[str, Any] | None = None, label: str) -> StepResult:
+        query = f"?{urllib.parse.urlencode(params)}" if params else ""
+        return self._request("GET", f"{path}{query}", None, label)
+
+    def post(self, path: str, *, payload: dict[str, Any], label: str) -> StepResult:
+        return self._request("POST", path, payload, label)
+
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None, label: str) -> StepResult:
+        url = f"{self.base_url}{path}"
+        data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                raw = response.read().decode("utf-8")
+                body = json.loads(raw) if raw else {}
+                return StepResult(label=label, status=response.status, body=body)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            try:
+                body = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                body = {"raw": raw}
+            raise SmokeFailure(f"{label}: HTTP {exc.code} from {url}: {body}") from exc
+        except urllib.error.URLError as exc:
+            raise SmokeFailure(
+                f"{label}: cannot connect to {url}. Start FastAPI first, for example: "
+                "cd backend/api && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+            ) from exc
+        except TimeoutError as exc:
+            raise SmokeFailure(f"{label}: timed out calling {url}") from exc
 
 
-def main() -> None:
-    print(f"\n=== V3 Guidance Smoke Test === BASE_URL={BASE_URL}\n")
+def require(condition: bool, label: str, detail: Any) -> None:
+    if not condition:
+        raise SmokeFailure(f"{label}: assertion failed: {detail}")
 
-    # 1. Health
-    try:
-        h = get("/health")
-        check("1. GET /health", h.get("status") == "ok", str(h))
-    except Exception as e:
-        check("1. GET /health", False, str(e))
 
-    # 2. Create session
-    try:
-        s = post("/guidance/session", {"sessionId": SESSION_ID})
-        check("2. POST /guidance/session", s.get("sessionId") == SESSION_ID, str(s))
-    except Exception as e:
-        check("2. POST /guidance/session", False, str(e))
+def print_step(result: StepResult) -> None:
+    print(f"[PASS] {result.label} -> HTTP {result.status}")
 
-    # 3. FIND_ROUTE converse
-    try:
-        r = post("/agent/converse", {
-            "sessionId": SESSION_ID,
+
+def main() -> int:
+    base_url = os.getenv("V3_API_BASE_URL", DEFAULT_BASE_URL)
+    session_id = os.getenv("V3_SMOKE_SESSION_ID", f"v3-smoke-{uuid4().hex[:12]}")
+    wake_word = os.getenv("V3_WAKE_WORD", "자비스")
+    client = V3HttpClient(base_url)
+
+    print(f"V3 guidance smoke base URL: {base_url}")
+    print(f"V3 guidance smoke sessionId: {session_id}")
+
+    health = client.get("/health", label="1. GET /health")
+    require(health.body.get("status") == "ok", health.label, health.body)
+    print_step(health)
+
+    session = client.post(
+        "/guidance/session",
+        payload={"sessionId": session_id, "wakeWord": wake_word},
+        label="2. POST /guidance/session",
+    )
+    require(session.body.get("state") == "IDLE", session.label, session.body)
+    print_step(session)
+
+    find_route = client.post(
+        "/agent/converse",
+        payload={
+            "sessionId": session_id,
+            "wakeWord": wake_word,
             "utterance": "자비스, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?",
-            "lat": 36.6282,
-            "lng": 127.4562,
-        })
-        check("3. POST /agent/converse FIND_ROUTE", r.get("intent") == "FIND_ROUTE", str(r.get("intent")))
-        check("3b. guidanceState=ROUTE_RECOMMENDED", r.get("guidanceState") == "ROUTE_RECOMMENDED", str(r.get("guidanceState")))
-        check("3c. 502 in message", "502" in r.get("message", ""), r.get("message"))
-    except Exception as e:
-        check("3. POST /agent/converse FIND_ROUTE", False, str(e))
+        },
+        label="3. POST /agent/converse FIND_ROUTE",
+    )
+    require(find_route.body.get("intent") == "FIND_ROUTE", find_route.label, find_route.body)
+    require(find_route.body.get("state") == "ROUTE_RECOMMENDED", find_route.label, find_route.body)
+    print_step(find_route)
 
-    # 4. Bus arrivals
-    try:
-        a = get("/bus/arrivals", {"stopId": "mock-stop-001", "routeNo": "502"})
-        arrivals = a.get("arrivals", [])
-        check("4. GET /bus/arrivals", len(arrivals) >= 2, str(len(arrivals)))
-        check("4b. first arrivalMinutes=6", arrivals[0]["arrivalMinutes"] == 6 if arrivals else False)
-    except Exception as e:
-        check("4. GET /bus/arrivals", False, str(e))
+    arrivals = client.get(
+        "/bus/arrivals",
+        params={"stopId": "mock-stop-001", "routeNo": "502"},
+        label="4. GET /bus/arrivals mock-stop-001 route 502",
+    )
+    body_arrivals = arrivals.body.get("arrivals") or []
+    require(arrivals.body.get("fallbackSource") in {"MOCK", "CACHE", "PUBLIC_API"}, arrivals.label, arrivals.body)
+    require(len(body_arrivals) >= 1, arrivals.label, arrivals.body)
+    require(body_arrivals[0].get("routeNo") == "502", arrivals.label, arrivals.body)
+    require(body_arrivals[0].get("busId") == "BUS_2", arrivals.label, arrivals.body)
+    require(body_arrivals[0].get("congestion") is None, arrivals.label, "mock congestion must not be invented")
+    print_step(arrivals)
 
-    # 5. GET_BUS_ARRIVAL converse
-    try:
-        r = post("/agent/converse", {
-            "sessionId": SESSION_ID,
-            "utterance": "자비스, 그 버스 언제 와?",
-        })
-        check("5. GET_BUS_ARRIVAL", r.get("intent") == "GET_BUS_ARRIVAL", str(r.get("intent")))
-    except Exception as e:
-        check("5. GET_BUS_ARRIVAL", False, str(e))
+    query_arrival = client.post(
+        "/agent/converse",
+        payload={"sessionId": session_id, "wakeWord": wake_word, "utterance": "자비스, 그 버스 언제 와?"},
+        label="5. POST /agent/converse QUERY_ARRIVAL",
+    )
+    require(query_arrival.body.get("intent") == "QUERY_ARRIVAL", query_arrival.label, query_arrival.body)
+    print_step(query_arrival)
 
-    # 6. SELECT_ARRIVAL converse
-    try:
-        r = post("/agent/converse", {
-            "sessionId": SESSION_ID,
-            "utterance": "응, 6분 뒤 오는 걸로 안내해줘.",
-        })
-        check("6. SELECT_ARRIVAL", r.get("intent") == "SELECT_ARRIVAL", str(r.get("intent")))
-    except Exception as e:
-        check("6. SELECT_ARRIVAL", False, str(e))
+    select_arrival = client.post(
+        "/agent/converse",
+        payload={"sessionId": session_id, "wakeWord": wake_word, "utterance": "응, 6분 뒤 오는 걸로 안내해줘."},
+        label="6. POST /agent/converse SELECT_ARRIVAL",
+    )
+    require(select_arrival.body.get("intent") == "SELECT_ARRIVAL", select_arrival.label, select_arrival.body)
+    require(select_arrival.body.get("state") == "WAITING_FOR_BUS", select_arrival.label, select_arrival.body)
+    print_step(select_arrival)
 
-    # 7. ARRIVED_AT_STOP
-    try:
-        r = post("/mock/geofence", {"sessionId": SESSION_ID, "mockStatus": "ARRIVED_AT_STOP"})
-        check("7. ARRIVED_AT_STOP", r.get("geofenceStatus") == "SAFE", str(r))
-        s = get("/guidance/state", {"sessionId": SESSION_ID})
-        check("7b. geofenceArmed=true", s.get("geofenceArmed") is True, str(s.get("geofenceArmed")))
-    except Exception as e:
-        check("7. ARRIVED_AT_STOP", False, str(e))
+    arrived = client.post(
+        "/mock/geofence",
+        payload={"sessionId": session_id, "event": "ARRIVED_AT_STOP"},
+        label="7. POST /mock/geofence ARRIVED_AT_STOP",
+    )
+    require(arrived.body.get("geofenceArmed") is True, arrived.label, arrived.body)
+    print_step(arrived)
 
-    # 8. LEFT_WAITING_AREA
-    try:
-        r = post("/mock/geofence", {"sessionId": SESSION_ID, "mockStatus": "LEFT_WAITING_AREA"})
-        check("8. LEFT_WAITING_AREA WARNING", r.get("geofenceStatus") == "WARNING", str(r.get("geofenceStatus")))
-    except Exception as e:
-        check("8. LEFT_WAITING_AREA", False, str(e))
+    left_area = client.post(
+        "/mock/geofence",
+        payload={"sessionId": session_id, "event": "LEFT_WAITING_AREA"},
+        label="8. POST /mock/geofence LEFT_WAITING_AREA",
+    )
+    require(left_area.body.get("cue", {}).get("type") == "GEOFENCE_WARNING", left_area.label, left_area.body)
+    require(left_area.body.get("cue", {}).get("ttsMode") == "SAFETY_LOCAL", left_area.label, left_area.body)
+    print_step(left_area)
 
-    # 9. WRONG_BUS_NEAR beacons
-    try:
-        r = post("/mock/beacons", {
-            "sessionId": SESSION_ID,
+    wrong_bus = client.post(
+        "/mock/beacons",
+        payload={
+            "sessionId": session_id,
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
             "beacons": [
-                {"busId": "BUS_1", "routeNo": "511", "distanceLevel": "near", "rssi": -45, "relativePosition": "front"},
-                {"busId": "BUS_2", "routeNo": "502", "distanceLevel": "mid", "rssi": -63, "relativePosition": "rear"},
+                {"busId": "BUS_1", "routeNo": "511", "rssi": -50, "distanceMeters": 1.5},
+                {"busId": "BUS_2", "routeNo": "502", "rssi": -70, "distanceMeters": 7.0},
             ],
-        })
-        check("9. WRONG_BUS_NEAR", r.get("decision") == "WRONG_BUS_NEAR", str(r.get("decision")))
-    except Exception as e:
-        check("9. WRONG_BUS_NEAR beacons", False, str(e))
+        },
+        label="9. POST /mock/beacons wrong bus near + target mid",
+    )
+    require(wrong_bus.body.get("decision") == "WRONG_BUS_NEAR", wrong_bus.label, wrong_bus.body)
+    print_step(wrong_bus)
 
-    # 10. ASK_CAN_BOARD_CURRENT_BUS
-    try:
-        r = post("/agent/converse", {
-            "sessionId": SESSION_ID,
-            "utterance": "자비스, 지금 앞에 온 버스 타도 돼?",
-        })
-        check("10. ASK_CAN_BOARD_CURRENT_BUS", r.get("intent") == "ASK_CAN_BOARD_CURRENT_BUS", str(r.get("intent")))
-        check("10b. negative answer", "아니요" in r.get("message", ""), r.get("message"))
-    except Exception as e:
-        check("10. ASK_CAN_BOARD_CURRENT_BUS", False, str(e))
+    can_board_no = client.post(
+        "/agent/converse",
+        payload={"sessionId": session_id, "wakeWord": wake_word, "utterance": "자비스, 지금 앞에 온 버스 타도 돼?"},
+        label="10. POST /agent/converse ASK_CAN_BOARD negative",
+    )
+    require(can_board_no.body.get("intent") == "ASK_CAN_BOARD_CURRENT_BUS", can_board_no.label, can_board_no.body)
+    require(can_board_no.body.get("cue", {}).get("type") == "WRONG_BUS_NEAR", can_board_no.label, can_board_no.body)
+    print_step(can_board_no)
 
-    # 11. TARGET_BUS_NEAR
-    try:
-        r = post("/mock/beacons", {
-            "sessionId": SESSION_ID,
-            "beacons": [
-                {"busId": "BUS_2", "routeNo": "502", "distanceLevel": "near", "rssi": -50, "relativePosition": "front"},
-            ],
-        })
-        check("11. TARGET_BUS_NEAR", r.get("decision") == "TARGET_BUS_NEAR", str(r.get("decision")))
-    except Exception as e:
-        check("11. TARGET_BUS_NEAR", False, str(e))
+    target_near = client.post(
+        "/mock/beacons",
+        payload={
+            "sessionId": session_id,
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_2", "routeNo": "502", "rssi": -50, "distanceMeters": 1.5}],
+        },
+        label="11. POST /mock/beacons target bus near",
+    )
+    require(target_near.body.get("decision") == "TARGET_BUS_NEAR", target_near.label, target_near.body)
+    print_step(target_near)
 
-    # 12. BUS_PASSED
-    try:
-        r = post("/mock/bus-event", {"sessionId": SESSION_ID, "event": "BUS_PASSED"})
-        check("12. BUS_PASSED→BOARDING_CONFIRMATION", r.get("guidanceState") == "BOARDING_CONFIRMATION", str(r))
-    except Exception as e:
-        check("12. BUS_PASSED", False, str(e))
+    bus_passed = client.post(
+        "/mock/bus-event",
+        payload={"sessionId": session_id, "event": "BUS_PASSED"},
+        label="12. POST /mock/bus-event BUS_PASSED",
+    )
+    require(bus_passed.body.get("state") == "MISSED_BUS", bus_passed.label, bus_passed.body)
+    print_step(bus_passed)
 
-    # 13. REPORT_MISSED_BUS
-    try:
-        r = post("/agent/converse", {
-            "sessionId": SESSION_ID,
-            "utterance": "자비스, 나 못 탔어.",
-        })
-        check("13. REPORT_MISSED_BUS", r.get("intent") == "REPORT_MISSED_BUS", str(r.get("intent")))
-        check("13b. WAITING_FOR_BUS", r.get("guidanceState") == "WAITING_FOR_BUS", str(r.get("guidanceState")))
-        check("13c. next bus in message", "분" in r.get("message", ""), r.get("message"))
-    except Exception as e:
-        check("13. REPORT_MISSED_BUS", False, str(e))
+    missed = client.post(
+        "/agent/converse",
+        payload={"sessionId": session_id, "wakeWord": wake_word, "utterance": "자비스, 나 못 탔어."},
+        label="13. POST /agent/converse REPORT_MISSED_BUS",
+    )
+    require(missed.body.get("intent") == "REPORT_MISSED_BUS", missed.label, missed.body)
+    require(missed.body.get("state") == "WAITING_FOR_BUS", missed.label, missed.body)
+    print_step(missed)
 
-    # 14. GET final state
-    try:
-        s = get("/guidance/state", {"sessionId": SESSION_ID})
-        check("14. GET /guidance/state", s.get("sessionId") == SESSION_ID, str(s))
-    except Exception as e:
-        check("14. GET /guidance/state", False, str(e))
+    state = client.get("/guidance/state", params={"sessionId": session_id}, label="14. GET /guidance/state")
+    require(state.body.get("state") == "WAITING_FOR_BUS", state.label, state.body)
+    require(state.body.get("targetBusId") == "BUS_502_NEXT", state.label, state.body)
+    print_step(state)
 
-    print(f"\n{'='*50}")
-    if failures:
-        print(f"FAILED: {len(failures)} steps — {failures}")
-        sys.exit(1)
-    else:
-        print(f"ALL PASSED ({14} steps)")
-    print('='*50)
+    print("V3 guidance smoke: PASS")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except SmokeFailure as exc:
+        print(f"V3 guidance smoke: FAIL\n{exc}", file=sys.stderr)
+        raise SystemExit(1)

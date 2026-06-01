@@ -1,44 +1,92 @@
-// V3 Mock Control Panel widget
 import 'package:flutter/material.dart';
 
-typedef MockAction = Future<void> Function(String action);
+import '../models/v3_guidance_models.dart';
 
-class MockControlPanel extends StatelessWidget {
-  final MockAction onAction;
+class V3MockControlPanel extends StatelessWidget {
+  const V3MockControlPanel({
+    super.key,
+    required this.isBusy,
+    required this.onArrivedAtStop,
+    required this.onLeftWaitingArea,
+    required this.onDangerZone,
+    required this.onReturnedToStop,
+    required this.onWrongBusNear,
+    required this.onTargetBusMid,
+    required this.onTargetBusNear,
+    required this.onNoBeacon,
+    required this.onBusPassed,
+    required this.onRefreshArrivals,
+    required this.latestBeaconDecision,
+    required this.latestGeofenceMessage,
+  });
 
-  const MockControlPanel({super.key, required this.onAction});
+  final bool isBusy;
+  final VoidCallback onArrivedAtStop;
+  final VoidCallback onLeftWaitingArea;
+  final VoidCallback onDangerZone;
+  final VoidCallback onReturnedToStop;
+  final VoidCallback onWrongBusNear;
+  final VoidCallback onTargetBusMid;
+  final VoidCallback onTargetBusNear;
+  final VoidCallback onNoBeacon;
+  final VoidCallback onBusPassed;
+  final VoidCallback onRefreshArrivals;
+  final V3BeaconDecisionResponse? latestBeaconDecision;
+  final String? latestGeofenceMessage;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        _btn('정류장 범위 진입', 'ARRIVED_AT_STOP'),
-        _btn('정류장 범위 이탈', 'LEFT_WAITING_AREA'),
-        _btn('위험구역 진입', 'DANGER_ZONE'),
-        _btn('정류장 복귀', 'RETURNED_TO_STOP'),
-        _btn('BUS_1 접근', 'BUS1_NEAR'),
-        _btn('BUS_2 접근', 'BUS2_NEAR'),
-        _btn('BUS_2 멀어짐', 'BUS2_FAR'),
-        _btn('버스 통과', 'BUS_PASSED'),
-        _btn('API 실패', 'API_FAIL'),
-        _btn('STT 실패', 'STT_FAIL'),
-        _btn('탑승 성공', 'BOARDED'),
-        _btn('탑승 실패', 'MISSED'),
-      ],
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Mock Control Panel',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              latestGeofenceMessage ?? latestBeaconDecision?.message ?? 'mock 이벤트를 실행할 수 있어.',
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _Button(label: '도착', onPressed: onArrivedAtStop, isBusy: isBusy),
+                _Button(label: '대기 범위 이탈', onPressed: onLeftWaitingArea, isBusy: isBusy),
+                _Button(label: '위험 구역', onPressed: onDangerZone, isBusy: isBusy),
+                _Button(label: '정류장 복귀', onPressed: onReturnedToStop, isBusy: isBusy),
+                _Button(label: '잘못된 버스 근접', onPressed: onWrongBusNear, isBusy: isBusy),
+                _Button(label: '타야 할 버스 중간', onPressed: onTargetBusMid, isBusy: isBusy),
+                _Button(label: '타야 할 버스 근접', onPressed: onTargetBusNear, isBusy: isBusy),
+                _Button(label: '비컨 없음', onPressed: onNoBeacon, isBusy: isBusy),
+                _Button(label: '버스 지나감', onPressed: onBusPassed, isBusy: isBusy),
+                _Button(label: '도착정보 갱신', onPressed: onRefreshArrivals, isBusy: isBusy),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
+}
 
-  Widget _btn(String label, String action) {
-    return ElevatedButton(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blueGrey[800],
-        foregroundColor: Colors.white,
-        textStyle: const TextStyle(fontSize: 11),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      ),
-      onPressed: () => onAction(action),
+class _Button extends StatelessWidget {
+  const _Button({required this.label, required this.onPressed, required this.isBusy});
+
+  final String label;
+  final VoidCallback onPressed;
+  final bool isBusy;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: isBusy ? null : onPressed,
       child: Text(label),
     );
   }

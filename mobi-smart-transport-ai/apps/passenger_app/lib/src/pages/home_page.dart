@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import '../services/backend_api_client.dart';
 import '../services/voice_guide_service.dart';
-import 'v3_guidance_page.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({
+    super.key,
+    required this.agentName,
+    required this.onEditAgentName,
+  });
+
+  final String agentName;
+  final Future<void> Function() onEditAgentName;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -25,7 +31,7 @@ class _HomePageState extends State<HomePage> {
   String _selectedStopId = _defaultBusStopId;
   String? _selectedRouteId;
   String? _selectedBusNo;
-  String? _targetDriverId = _defaultTargetDriverId;
+  final String _targetDriverId = _defaultTargetDriverId;
 
   final VoiceGuideService _voiceGuideService = VoiceGuideService();
 
@@ -275,12 +281,9 @@ class _HomePageState extends State<HomePage> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.directions_bus),
-            tooltip: 'V3 버스 탑승 안내',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const V3GuidancePage()),
-            ),
+            tooltip: '에이전트 이름 변경',
+            onPressed: widget.onEditAgentName,
+            icon: const Icon(Icons.edit_outlined),
           ),
         ],
       ),
@@ -293,6 +296,14 @@ class _HomePageState extends State<HomePage> {
               const _HeaderSection(),
               const SizedBox(height: 16),
               _StatusCard(
+                title: '에이전트 호출 이름',
+                statusLabel: widget.agentName,
+                description: '${widget.agentName}라고 부르면 버스 탑승 보조 에이전트가 응답합니다.',
+                icon: Icons.record_voice_over_outlined,
+                semanticHint: '오른쪽 위 편집 버튼에서 에이전트 이름을 다시 정할 수 있습니다.',
+              ),
+              const SizedBox(height: 16),
+              _StatusCard(
                 title: '백엔드 연결 상태',
                 statusLabel: _isLoadingBackendHealth
                     ? '확인 중'
@@ -303,6 +314,23 @@ class _HomePageState extends State<HomePage> {
                     _backendHealthStatus?.message ?? '백엔드 연결 상태를 확인하는 중입니다.',
                 icon: Icons.cloud_done_outlined,
                 semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
+              ),
+              const SizedBox(height: 16),
+              Semantics(
+                button: true,
+                label: 'V3 버스 탑승 보조 화면 열기',
+                hint: '두 번 탭하면 V3 음성 기반 버스 탑승 보조 화면으로 이동합니다.',
+                child: SizedBox(
+                  height: 64,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pushNamed('/v3-guidance'),
+                    icon: const Icon(Icons.assistant_navigation),
+                    label: Text(
+                      '${widget.agentName} 버스 탑승 보조 열기',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               _VoiceActionButton(

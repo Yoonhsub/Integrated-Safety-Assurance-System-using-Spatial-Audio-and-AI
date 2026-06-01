@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 
 from app.schemas.bus_info import BusArrivalsResponse
 from app.services.firebase_client import FirebaseClient, get_firebase_client
+
+
+BusInfoFallbackSource = Literal["CACHE", "PUBLIC_API", "MOCK"]
+
+
+@dataclass(frozen=True)
+class BusInfoGatewayResult:
+    response: BusArrivalsResponse
+    source: BusInfoFallbackSource
 
 
 def _ensure_project_root_on_path() -> None:
@@ -27,11 +37,12 @@ from services.public_data.public_data_client.bus_arrivals_service import BusArri
 
 
 class BusInfoGatewayService:
-    """김도성 public_data 표준 응답과 FastAPI 사이의 읽기 전용 gateway.
+    """Read-only gateway between FastAPI and normalized public bus-arrival data.
 
-    이 서비스는 provider-specific 원본 필드를 직접 해석하지 않는다. 우선 Firebase RTDB
-    `/busArrivals/{stopId}`에 저장된 표준 응답을 조회하고, 없으면 김도성 public_data
-    모듈의 확정 진입점 `BusArrivalsService.get_arrivals(stop_id)`에서 표준 응답을 받는다.
+    The gateway checks the Firebase RTDB cache first. On cache miss it delegates to
+    ``services/public_data`` and records whether the result came from a live public
+    API path or the public_data mock provider. Provider-specific raw fields are not
+    parsed in this backend layer.
     """
 
     FIREBASE_PATH_PREFIX = "/busArrivals"
@@ -46,23 +57,22 @@ class BusInfoGatewayService:
         self.public_data_service = public_data_service or BusArrivalsService()
 
     def get_arrivals(self, stop_id: str) -> BusArrivalsResponse:
-        """Return normalized bus arrival data without parsing provider raw fields."""
-        normalized_stop_id = stop_id.strip()
-        if not normalized_stop_id:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": {
-                        "code": "INVALID_STOP_ID",
-                        "message": "stopId must be a non-empty string.",
-                        "detail": {"stopId": stop_id},
-                    }
-                },
-            )
+        """Return normalized bus arrival data without exposing fallback metadata.
+
+        Kept for the existing V2 ``/bus-info`` contract.
+        """
+        return self.get_arrivals_with_source(stop_id).response
+
+    def get_arrivals_with_source(self, stop_id: str) -> BusInfoGatewayResult:
+        """Return normalized arrivals with the source used by V3 fallback logic."""
+        normalized_stop_id = self._normalize_stop_id(stop_id)
 
         cached = self.firebase.get(self._firebase_path(normalized_stop_id))
         if cached is not None:
-            return self._coerce_response(cached, fallback_stop_id=normalized_stop_id)
+            return BusInfoGatewayResult(
+                response=self._coerce_response(cached, fallback_stop_id=normalized_stop_id),
+                source="CACHE",
+            )
 
         try:
             public_data_response = self.public_data_service.get_arrivals(normalized_stop_id)
@@ -77,7 +87,11 @@ class BusInfoGatewayService:
                     }
                 },
             ) from exc
-        return self._coerce_response(public_data_response, fallback_stop_id=normalized_stop_id)
+
+        return BusInfoGatewayResult(
+            response=self._coerce_response(public_data_response, fallback_stop_id=normalized_stop_id),
+            source=self._infer_public_data_source(),
+        )
 
     def save_arrivals(self, response: BusArrivalsResponse) -> None:
         """Store already-normalized arrivals at `/busArrivals/{stopId}`.
@@ -87,6 +101,27 @@ class BusInfoGatewayService:
         """
         payload = response.model_dump(mode="json")
         self.firebase.set(self._firebase_path(response.stopId), payload)
+
+    def _normalize_stop_id(self, stop_id: str) -> str:
+        normalized_stop_id = stop_id.strip()
+        if not normalized_stop_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "code": "INVALID_STOP_ID",
+                        "message": "stopId must be a non-empty string.",
+                        "detail": {"stopId": stop_id},
+                    }
+                },
+            )
+        return normalized_stop_id
+
+    def _infer_public_data_source(self) -> BusInfoFallbackSource:
+        use_mock = getattr(self.public_data_service, "use_mock", None)
+        if isinstance(use_mock, bool):
+            return "MOCK" if use_mock else "PUBLIC_API"
+        return "PUBLIC_API"
 
     def _firebase_path(self, stop_id: str) -> str:
         return f"{self.FIREBASE_PATH_PREFIX}/{stop_id}"

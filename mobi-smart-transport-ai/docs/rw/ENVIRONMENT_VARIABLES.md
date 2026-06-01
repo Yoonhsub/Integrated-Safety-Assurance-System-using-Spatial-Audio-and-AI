@@ -26,6 +26,9 @@ V2에서는 각자 만든 mock-first 모듈을 앱-백엔드 중심으로 연결
 | `APP_ENV` | current | `development`, `test`, `production` 중 하나로 실행 환경 표시 | 공통 |
 | `PUBLIC_DATA_USE_MOCK` | current | 기본은 `true`; live API 검증 섹션에서만 `false` 사용 | 김도성/현석 |
 | `PUBLIC_DATA_BASE_URL` | current | live public data provider를 사용할 때 `https://apis.data.go.kr` 기준 | 김도성 |
+| `CHEONGJU_BUS_STOPS_ENABLED` | current | 청주시 승인 정류소 카탈로그 API 증빙을 표시할 때만 `true` | 현석 |
+| `CHEONGJU_BUS_STOPS_BASE_URL` | current | 청주시 정류소 카탈로그 odcloud base URL | 현석 |
+| `CHEONGJU_BUS_STOPS_PATH` | current | 승인된 정류소 카탈로그 dataset path | 현석 |
 | `FIREBASE_USE_MOCK` | current | Firebase Admin SDK 대신 mock Firebase client를 강제할 때 사용 | 현석 |
 | `FCM_USE_MOCK` | current | 실제 FCM 전송 대신 mock message id 반환을 강제할 때 사용 | 현석 |
 | `API_BASE_URL` | current dart-define | Flutter 앱이 호출할 FastAPI base URL | 윤현섭 |
@@ -512,6 +515,9 @@ PUBLIC_DATA_API_KEY=
 PUBLIC_DATA_BASE_URL=https://apis.data.go.kr
 PUBLIC_DATA_CITY_CODE=
 PUBLIC_DATA_USE_MOCK=true
+CHEONGJU_BUS_STOPS_ENABLED=false
+CHEONGJU_BUS_STOPS_BASE_URL=https://api.odcloud.kr/api
+CHEONGJU_BUS_STOPS_PATH=/15041896/v1/uddi:083f11f7-5067-429b-a75d-e32f94269aaf
 
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
@@ -525,7 +531,20 @@ RSSI_SMOOTHING_WINDOW=5
 
 AI_VISION_USE_MOCK=true
 AI_VISION_MODEL_PATH=./ai_vision/models/model.tflite
+
+GEMINI_API_KEY=
+GEMINI_FLASH_MODEL=gemini-2.5-flash
+GEMINI_PRO_MODEL=gemini-2.5-pro
+GEMINI_TTS_MODEL=gemini-3.1-flash-tts-preview
+GEMINI_TTS_VOICE=Sulafat
 ```
+
+`CHEONGJU_BUS_STOPS_*`는 승인된 청주시 정류소 카탈로그의 서비스ID, 정류소명, 좌표를
+V3 증빙 카드에 표시한다. 이 카탈로그에는 도착 예정 시간이 없으므로, 도착정보 출처와
+혼합하지 않는다.
+
+V3 일반 대화는 Flash, 위치 기반 경로 계산은 Maps grounding을 포함한 Pro, 음성 합성은
+`Sulafat` TTS를 사용한다. 안전 판단은 생성형 모델이 아니라 기존 rule engine을 따른다.
 
 ---
 

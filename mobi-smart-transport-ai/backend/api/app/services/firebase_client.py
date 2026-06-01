@@ -150,6 +150,10 @@ class FirebaseClient:
     store so local tests remain deterministic.
     """
 
+    # Safe, RTDB-key-compatible probe path. Keys cannot contain "." or "/" so
+    # we use a plain top-level node that is created and removed during probing.
+    PROBE_PATH = "mobiHealthCheck"
+
     def __init__(self, settings: FirebaseSettings | None = None) -> None:
         self.settings = settings or load_firebase_settings()
         self._initialized = False
@@ -166,17 +170,32 @@ class FirebaseClient:
     def using_mock(self) -> bool:
         return self._using_mock
 
-    def initialize(self) -> bool:
+    def initialize(self, force: bool = False) -> bool:
         """Initialize Firebase Admin SDK if credentials are ready.
 
         Returns True only when the real Admin SDK is ready. Returns False in
         mock mode or when credentials are incomplete, without raising during
         normal local development/test runs.
+
+        When ``force`` is True the current environment is re-read so that a
+        service-account file added after process startup can be picked up, and
+        a previous initialization attempt is retried.
         """
+        if force:
+            # Re-read environment so a newly added service account / changed
+            # database URL is reflected without restarting the server.
+            self.settings = load_firebase_settings()
+            self._initialized = False
+            self._using_mock = self.settings.runtime_mode == "mock"
+            self.last_error = None
+
         if self._initialized:
             return True
         if self._using_mock or not self.settings.credentials_ready:
             self._using_mock = True
+            if not self.settings.credentials_ready and not self.settings.use_mock_data:
+                # Configured for real Firebase but credentials are incomplete.
+                self.last_error = self._missing_credentials_reason()
             return False
 
         try:
@@ -192,12 +211,110 @@ class FirebaseClient:
             self._db_module = db
             self._initialized = True
             self._using_mock = False
+            self.last_error = None
             return True
         except Exception as exc:  # pragma: no cover - depends on local credentials
             self.last_error = str(exc)
             self._using_mock = True
             self._initialized = False
             return False
+
+    def _missing_credentials_reason(self) -> str:
+        reasons: list[str] = []
+        if not self.settings.project_id:
+            reasons.append("FIREBASE_PROJECT_ID 미설정")
+        if not self.settings.database_url:
+            reasons.append("FIREBASE_DATABASE_URL 미설정")
+        if not self.settings.service_account_path:
+            reasons.append("FIREBASE_SERVICE_ACCOUNT_PATH 미설정")
+        elif not self.settings.service_account_path.exists():
+            reasons.append(
+                f"서비스 계정 json 파일 없음 ({self.settings.service_account_path})"
+            )
+        if not reasons:
+            return "Firebase 자격 증명이 준비되지 않았습니다."
+        return "; ".join(reasons)
+
+    def status(self) -> dict[str, Any]:
+        """Return a serializable snapshot of the current Firebase runtime state."""
+        service_account_path = (
+            str(self.settings.service_account_path)
+            if self.settings.service_account_path
+            else None
+        )
+        service_account_exists = bool(
+            self.settings.service_account_path
+            and self.settings.service_account_path.exists()
+        )
+        runtime_mode = (
+            "firebase-admin" if self._initialized and not self._using_mock else "mock"
+        )
+        return {
+            "projectId": self.settings.project_id,
+            "databaseUrl": self.settings.database_url,
+            "serviceAccountPath": service_account_path,
+            "serviceAccountExists": service_account_exists,
+            "credentialsReady": self.settings.credentials_ready,
+            "runtimeMode": runtime_mode,
+            "initialized": self._initialized,
+            "usingMock": self._using_mock,
+            "lastError": self.last_error,
+        }
+
+    def probe(self) -> dict[str, Any]:
+        """Best-effort connectivity check.
+
+        For real Firebase this performs a set/get/delete round-trip against a
+        dedicated probe node. For mock mode it round-trips through the in-memory
+        store. Never raises; failures are reported in the returned dict.
+        """
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        payload = {"ts": timestamp, "ok": True}
+
+        if self._using_mock or not self.initialize():
+            try:
+                self._memory_db.set(self.PROBE_PATH, payload)
+                read_back = self._memory_db.get(self.PROBE_PATH)
+                self._memory_db.delete(self.PROBE_PATH)
+                ok = isinstance(read_back, dict) and read_back.get("ok") is True
+                return {
+                    "ok": ok,
+                    "mode": "mock",
+                    "message": "Mock RTDB read/write 정상 동작" if ok else "Mock RTDB 확인 실패",
+                }
+            except Exception as exc:  # pragma: no cover - defensive
+                return {"ok": False, "mode": "mock", "message": f"Mock probe 실패: {exc}"}
+
+        try:
+            ref = self._db_module.reference(self.PROBE_PATH)
+            ref.set(payload)
+            read_back = ref.get()
+            ref.delete()
+            ok = isinstance(read_back, dict) and read_back.get("ok") is True
+            return {
+                "ok": ok,
+                "mode": "firebase-admin",
+                "message": "Firebase Realtime Database 연결 정상"
+                if ok
+                else "Firebase 연결은 되었으나 응답 확인 필요",
+            }
+        except Exception as exc:  # pragma: no cover - depends on live Firebase
+            self.last_error = str(exc)
+            return {
+                "ok": False,
+                "mode": "firebase-admin",
+                "message": (
+                    "Firebase Realtime Database 연결 실패. "
+                    "Firebase Console의 Realtime Database URL 확인 필요. "
+                    f"({exc})"
+                ),
+            }
+
+    # Backwards/compat alias requested in the spec.
+    def test_connection(self) -> dict[str, Any]:
+        return self.probe()
 
     def _real_reference(self, path: str):
         if not self.initialize():

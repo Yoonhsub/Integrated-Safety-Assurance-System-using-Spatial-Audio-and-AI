@@ -1,0 +1,184 @@
+---
+
+# 추가 확장 섹션 13~16 안내
+
+본 문서는 기존 안준환 에이전트 필독사항에 추가 확장 섹션 13~16의 작업 범위를 반영하기 위해 보강한다.
+
+기존 섹션 1~12는 packages/mobile_sensors/**의 기본 구조, BeaconSignal / DirectionReading 모델, BLE 비콘 스캔 skeleton, RSSI smoothing / 거리 추정, 방향 센서 skeleton, public API export, 문서 검증을 중심으로 진행한다.
+
+섹션 13~16은 기존 1~12 완료 이후, 안준환 담당 범위 안에서 비콘/RSSI 기반 탑승 유도 기능을 조금 더 확장하기 위한 추가 작업이다. 단, 이 확장은 packages/mobile_sensors/** 내부의 모델, 서비스, helper, cue 생성 구조에 한정한다.
+
+## 추가 확장 범위
+
+안준환 에이전트는 추가 섹션 13~16에서 다음 범위까지만 수행한다.
+
+- BLE 비콘 스캔 연동 준비
+- RSSI 값 안정화 및 가까워짐/멀어짐 판단
+- 비콘 거리 상태 기반 안내 cue 모델 추가
+- 골전도 이어폰에서 활용 가능한 안내 데이터 생성 구조
+- 비콘 상태를 오디오 안내 cue로 변환하는 factory/helper 추가
+- mobile_sensors public API export 정리
+- README 및 안준환 담당 문서 최신화
+
+## 계속 금지되는 범위
+
+추가 섹션 13~16에서도 아래 작업은 직접 수행하지 않는다.
+
+- apps/passenger_app/** Flutter 사용자 앱 UI 직접 구현
+- apps/driver_app/** Flutter 기사 앱 UI 직접 구현
+- backend/api/** FastAPI 백엔드 직접 수정
+- infrastructure/firebase/** Firebase RTDB/rules/FCM 직접 수정
+- services/public_data/** 공공데이터 연동 코드 직접 수정
+- ai_vision/** AI 비전 데이터셋/모델 리서치/파이프라인 직접 수정
+- future_modules/head_tracking/** 헤드트래킹 구현
+- future_modules/spatial_audio/** 공간음향 구현
+- 실제 HRTF/3D 오디오 렌더링 구현
+- 외부 헤드트래킹 센서 통신 구현
+- packages/shared_contracts/** 독단 수정
+- module_ownership.json, CODEOWNERS 등 공통 소유권 파일 독단 수정
+
+특히 추가 섹션 13~16은 골전도 이어폰에서 사용할 수 있는 안내 cue 데이터를 준비하는 수준이다. 실제 TTS 재생, 블루투스 이어폰 연결 제어, 앱 화면 버튼 구현, HRTF 기반 3D 공간음향 렌더링은 직접 구현하지 않는다.
+
+---
+
+## 추가 섹션 13 — 실제 BLE 비콘 스캔 연동 준비
+
+목표:
+
+- flutter_blue_plus 기반 BLE 스캔 구현체 준비
+- 실제 BLE scan result에서 beaconId와 rssi를 추출하는 구조 보강
+- RSSI smoothing과 BeaconDistanceEstimator 거리 추정 흐름 연결
+- BeaconSignal stream 출력 구조 정리
+- targetBeaconId 필터링 유지
+- BLE scan 시작/중지 lifecycle 정리
+
+수정 가능 범위:
+
+- packages/mobile_sensors/**
+- docs/rw/공통 진행사항.md
+- docs/rw/안준환_디버그 리포트.md
+- docs/rw/안준환_최종 개발 보고서.md
+
+주의:
+
+- 앱 화면에 스캔 버튼을 만들지 않는다.
+- AndroidManifest.xml, Info.plist 권한 파일은 직접 수정하지 않는다.
+- 실제 비콘 현장 테스트 결과를 임의로 작성하지 않는다.
+- 비콘 제조사별 UUID / manufacturer data 규칙이 확정되지 않은 경우 기본 fallback을 사용하고 문서에 한계로 남긴다.
+
+---
+
+## 추가 섹션 14 — RSSI 안정화 및 가까워짐/멀어짐 판단 강화
+
+목표:
+
+- RSSI smoothing 구조를 기반으로 접근 추세 판단 helper 추가
+- BeaconSignal의 estimatedDistanceMeters 또는 rssi 변화량을 바탕으로 가까워짐/멀어짐/안정/알 수 없음 상태 계산
+- 오래된 신호 또는 LOST 신호는 UNKNOWN으로 처리
+- BeaconProximityTrend 또는 BeaconProximitySnapshot 모델 추가
+- public API export 누락 확인
+
+예상 상태:
+
+- APPROACHING
+- MOVING_AWAY
+- STABLE
+- UNKNOWN
+
+주의:
+
+- 실제 현장 보정값처럼 과장하지 않는다.
+- threshold 값은 초기 판단 기준이며, 실기기 테스트 후 조정 가능하다고 문서화한다.
+
+---
+
+## 추가 섹션 15 — 골전도 이어폰용 오디오 안내 cue 모델 추가
+
+목표:
+
+- 골전도 이어폰에서 사용할 수 있는 안내 cue 데이터 모델 추가
+- 실제 소리 재생이 아니라 앱/TTS/오디오 모듈이 사용할 안내 데이터 계약을 제공
+- BeaconSignal의 signalLevel, estimatedDistanceMeters, proximityTrend를 기반으로 안내 문장, 긴급도, 반복 주기 정보를 표현
+
+예상 모델:
+
+- BoneConductionAudioCue
+- cueId
+- beaconId
+- message
+- signalLevel
+- estimatedDistanceMeters
+- proximityTrend
+- urgency
+- repeatIntervalMs
+- createdAt
+
+예상 안내 문장:
+
+- VERY_CLOSE → 탑승 위치에 거의 도착했습니다.
+- CLOSE → 버스 문이 가까이에 있습니다.
+- MEDIUM → 조금 더 앞으로 이동하세요.
+- FAR → 목표 위치와 아직 떨어져 있습니다.
+- LOST → 비콘 신호가 약합니다. 주변을 다시 확인하세요.
+
+주의:
+
+- 실제 TTS 재생을 구현하지 않는다.
+- 블루투스 골전도 이어폰 연결 제어를 구현하지 않는다.
+- HRTF 기반 3D 공간음향 렌더링을 구현하지 않는다.
+
+---
+
+## 추가 섹션 16 — 비콘 상태 기반 오디오 cue 생성기 추가
+
+목표:
+
+- BeaconSignal을 BoneConductionAudioCue로 변환하는 factory/helper 추가
+- BeaconProximitySnapshot 또는 BeaconProximityTrend를 반영해 안내 cue 생성
+- 단일 BeaconSignal 변환, LOST cue 생성, Stream<BeaconSignal> → Stream<BoneConductionAudioCue> 변환 구조 제공
+
+예상 클래스:
+
+- BeaconAudioCueFactory
+- createCue()
+- createLostCue()
+- createCueStream()
+
+최종 흐름:
+
+BLE 비콘 스캔
+→ RSSI smoothing
+→ 거리 추정
+→ 가까워짐/멀어짐 판단
+→ 골전도 이어폰용 안내 cue 생성
+
+주의:
+
+- cue는 실제 오디오가 아니라 안내 지시 데이터이다.
+- 앱에서 이 cue를 받아 flutter_tts 또는 오디오 출력으로 연결하는 작업은 Flutter 앱 담당자와 협의해야 한다.
+- 안준환 에이전트는 packages/mobile_sensors 내부의 데이터 생성 구조까지만 담당한다.
+
+---
+
+## 추가 섹션 13~16 완료 기준
+
+추가 섹션 13~16이 완료되면 안준환 파트는 다음 수준까지 구현된 것으로 본다.
+
+- BLE 비콘 신호를 BeaconSignal로 변환할 수 있는 구조
+- RSSI smoothing 및 거리 추정 구조
+- RSSI 또는 거리 변화 기반 가까워짐/멀어짐 판단 구조
+- 비콘 거리 상태에 따른 골전도 이어폰 안내 cue 모델
+- BeaconSignal을 BoneConductionAudioCue로 변환하는 factory/helper
+- mobile_sensors public API export 정리
+- README와 안준환 담당 문서 최신화
+
+단, 아래 항목은 완료 기준에 포함하지 않는다.
+
+- 실제 앱 UI 연결
+- 실제 TTS 재생
+- 블루투스 이어폰 연결 제어
+- Android/iOS 권한 파일 수정
+- 실제 HRTF/3D 오디오 렌더링
+- 헤드트래킹 기반 실시간 공간음향 보정
+- 아두이노 또는 외부 센서 통신
+- backend/Firebase/shared_contracts 직접 수정

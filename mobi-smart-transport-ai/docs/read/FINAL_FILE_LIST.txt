@@ -21,14 +21,21 @@ apps/driver_app/lib/main.dart
 apps/driver_app/lib/src/app.dart
 apps/driver_app/lib/src/pages/home_page.dart
 apps/driver_app/lib/src/services/backend_api_client.dart
-apps/driver_app/pubspec.yaml
 apps/driver_app/pubspec.lock
+apps/driver_app/pubspec.yaml
 apps/passenger_app/README.md
 apps/passenger_app/lib/main.dart
 apps/passenger_app/lib/src/app.dart
+apps/passenger_app/lib/src/models/v3_guidance_models.dart
 apps/passenger_app/lib/src/pages/home_page.dart
+apps/passenger_app/lib/src/pages/v3_guidance_page.dart
+apps/passenger_app/lib/src/services/audio_haptic_cue_service.dart
 apps/passenger_app/lib/src/services/backend_api_client.dart
+apps/passenger_app/lib/src/services/v3_agent_api_client.dart
 apps/passenger_app/lib/src/services/voice_guide_service.dart
+apps/passenger_app/lib/src/widgets/debug_panel.dart
+apps/passenger_app/lib/src/widgets/mock_control_panel.dart
+apps/passenger_app/lib/src/widgets/quick_action_panel.dart
 apps/passenger_app/pubspec.lock
 apps/passenger_app/pubspec.yaml
 backend/api/README.md
@@ -41,6 +48,11 @@ backend/api/app/api/routes/geofence.py
 backend/api/app/api/routes/notifications.py
 backend/api/app/api/routes/ride_requests.py
 backend/api/app/api/routes/safety_events.py
+backend/api/app/api/routes/v3_agent.py
+backend/api/app/api/routes/v3_beacon.py
+backend/api/app/api/routes/v3_bus.py
+backend/api/app/api/routes/v3_guidance.py
+backend/api/app/api/routes/v3_mock.py
 backend/api/app/main.py
 backend/api/app/schemas/__init__.py
 backend/api/app/schemas/base.py
@@ -49,6 +61,7 @@ backend/api/app/schemas/geofence.py
 backend/api/app/schemas/notification.py
 backend/api/app/schemas/ride_request.py
 backend/api/app/schemas/safety_event.py
+backend/api/app/schemas/v3.py
 backend/api/app/services/__init__.py
 backend/api/app/services/bus_info_gateway_service.py
 backend/api/app/services/fcm_service.py
@@ -56,16 +69,28 @@ backend/api/app/services/firebase_client.py
 backend/api/app/services/geofence_service.py
 backend/api/app/services/ride_request_service.py
 backend/api/app/services/safety_event_service.py
+backend/api/app/services/v3_guidance_store.py
 backend/api/requirements.txt
 backend/api/tests/test_api_contract_validation.py
 backend/api/tests/test_health.py
+backend/api/tests/test_v3_section1_routes.py
+backend/api/tests/test_v3_section2_bus_api.py
+backend/api/tests/test_v3_section3_agent_guidance_safety.py
+docs/00_ßäïßà»ßå½ßäçßà⌐ßå½_ßäåßà⌐ßäçßà╡_ßäæßà│ßäàßà⌐ßäîßàªßå¿ßäÉßà│_ßäÇßà¿ßäÆßà¼ßå¿ßäëßàÑ.docx
 docs/00_원본_모비_프로젝트_계획서.docx
+docs/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.docx
+docs/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.md
 docs/01_요구사항명세서.docx
 docs/01_요구사항명세서.md
+docs/02_4ßäïßà»ßå»_ßäÇßàóßäïßà╡ßå½ßäçßàºßå»_ßäÇßà«ßäÆßàºßå½ßäçßàÑßå╖ßäïßà▒_ßäëßà«ßäîßàÑßå╝ßäïßàíßå½.md
 docs/02_4월_개인별_구현범위_수정안.md
+docs/agent_required_reading/00_ßäïßà»ßå½ßäçßà⌐ßå½_ßäåßà⌐ßäçßà╡_ßäæßà│ßäàßà⌐ßäîßàªßå¿ßäÉßà│_ßäÇßà¿ßäÆßà¼ßå¿ßäëßàÑ.docx
 docs/agent_required_reading/00_원본_모비_프로젝트_계획서.docx
+docs/agent_required_reading/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.docx
+docs/agent_required_reading/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.md
 docs/agent_required_reading/01_요구사항명세서.docx
 docs/agent_required_reading/01_요구사항명세서.md
+docs/agent_required_reading/02_4ßäïßà»ßå»_ßäÇßàóßäïßà╡ßå½ßäçßàºßå»_ßäÇßà«ßäÆßàºßå½ßäçßàÑßå╖ßäïßà▒_ßäëßà«ßäîßàÑßå╝ßäïßàíßå½.md
 docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md
 docs/read/AGENT_REQUIRED_READING.md
 docs/read/BRANCH_STRATEGY.md
@@ -75,7 +100,13 @@ docs/read/FINAL_FILE_LIST.txt
 docs/read/PACKAGE_MANIFEST.txt
 docs/read/PREDEPENDENCY_PATCH_AGENT_PROMPT.md
 docs/read/PULL_REQUEST_RULES.md
+docs/read/RENAMED_LONG_FILENAME_09d7f9e86d.md
 docs/read/architecture_validation_result.txt
+docs/read/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
+docs/read/ßäëßàªßå¿ßäëßàºßå½ ßäÄßà«ßäÇßàí
+docs/read/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
+docs/read/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
+docs/read/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
 docs/read/김도성의 에이전트 필독사항.md
 docs/read/섹션 추가
 docs/read/심현석의 에이전트 필독사항.md
@@ -93,6 +124,22 @@ docs/rw/PREDEPENDENCY_PATCH_REPORT_TEMPLATE.md
 docs/rw/README.md
 docs/rw/SETUP.md
 docs/rw/V2_SECTION_PLAN.md
+docs/rw/V3_API_CONTRACTS.md
+docs/rw/V3_DEMO_SCRIPT.md
+docs/rw/V3_SECTION_PLAN.md
+docs/rw/ßäÄßà«ßå╝ßäâßà⌐ßå» ßäïßà╡ßäëßà▓.md
+docs/rw/ßäÇßà⌐ßå╝ßäÉßà⌐ßå╝ ßäîßà╡ßå½ßäÆßàóßå╝ßäëßàíßäÆßàíßå╝.md
+docs/rw/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
+docs/rw/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
+docs/rw/ßäëßàÑßå½ßäÆßàóßå╝ßäîßàíßå¿ßäïßàÑßå╕ßäïßà┤ßäîßà⌐ßå½ßäëßàÑßå╝ ßäîßàÑßå╝ßäàßà╡.md
+docs/rw/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
+docs/rw/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
+docs/rw/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
+docs/rw/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
+docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
+docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ_V2.md
+docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
+docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│_V2.md
 docs/rw/공통 진행사항.md
 docs/rw/김도성_디버그 리포트.md
 docs/rw/김도성_최종 개발 보고서.md
@@ -102,8 +149,8 @@ docs/rw/심현석_최종 개발 보고서.md
 docs/rw/안준환_디버그 리포트.md
 docs/rw/안준환_최종 개발 보고서.md
 docs/rw/윤현섭_디버그 리포트.md
-docs/rw/윤현섭_최종 개발 보고서.md
 docs/rw/윤현섭_디버그 리포트_V2.md
+docs/rw/윤현섭_최종 개발 보고서.md
 docs/rw/윤현섭_최종 개발 보고서_V2.md
 docs/rw/충돌 이슈.md
 future_modules/README.md
@@ -151,8 +198,10 @@ packages/shared_contracts/api/ride_request.create.request.schema.json
 packages/shared_contracts/api/ride_request.schema.json
 packages/shared_contracts/api/ride_request.status_update.request.schema.json
 packages/shared_contracts/events/event_types.json
+pytest.ini
 scripts/print_tree.py
 scripts/smoke_backend_integration.py
+scripts/smoke_v3_guidance.py
 scripts/validate_architecture.py
 services/public_data/README.md
 services/public_data/examples/mock_bus_arrivals.json

@@ -330,3 +330,50 @@ GET /bus-info/stops/{stopId}/arrivals
 - 선행작업의존 패치 완료 범위: `bus_info_gateway` public_data 진입점 연결
 
 `bus_info_gateway`는 RTDB `/busArrivals/{stopId}` cache를 우선 조회하고, cache가 없으면 김도성 public_data 모듈의 `BusArrivalsService.get_arrivals(stop_id)` 표준 응답을 반환한다. backend는 provider-specific raw field를 직접 해석하거나 `services/public_data/**`를 수정하지 않는다.
+
+## V3 음성 기반 버스 탑승 보조 API
+
+V3는 FastAPI app에 다음 router를 등록한다.
+
+```txt
+GET  /health
+POST /guidance/session
+GET  /guidance/state
+POST /guidance/reset
+POST /guidance/event
+POST /agent/converse
+POST /agent/tts
+GET  /bus/route-recommend
+GET  /bus/arrivals
+POST /mock/geofence
+POST /mock/beacons
+GET  /beacon/decision
+POST /mock/bus-event
+```
+
+백엔드 테스트:
+
+```bash
+python -m pytest backend/api/tests services/public_data/tests -q
+```
+
+서버 실행:
+
+```bash
+cd backend/api
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+V3 smoke:
+
+```bash
+python scripts/smoke_v3_guidance.py
+```
+
+Gemini는 optional이다. `GEMINI_API_KEY`가 없어도 `/agent/converse`는 rule fallback으로 동작한다. 안전 판단은 Gemini가 아니라 backend rule engine의 guidance/geofence/beacon state로 결정한다.
+
+공공버스 API key는 zip에 포함하지 않는다. `PUBLIC_DATA_API_KEY`가 없거나 live provider가 준비되지 않았을 때도 V3 demo stop은 mock/cache fallback으로 시연 가능해야 한다. 실제 live API 호출 성공은 별도 키와 외부망 환경에서만 검증한다.
+
+청주시 승인 정류소 카탈로그는 `CHEONGJU_BUS_STOPS_ENABLED=true`일 때 별도로 조회한다.
+V3 경로 응답의 `stopEvidence`는 실제 odcloud 정류소명, 서비스ID, 좌표를 담는다.
+카탈로그에는 도착 예정 시간이 없으므로 `evidence.source`와 분리해서 표시한다.

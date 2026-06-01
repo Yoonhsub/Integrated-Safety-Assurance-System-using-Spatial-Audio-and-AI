@@ -6,7 +6,20 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import agent, bus_info_gateway, bus_v3, driver_ride_requests, geofence, guidance, mock_beacons, mock_bus_event, mock_geofence, notifications, ride_requests, safety_events
+from app.api.routes import (
+    bus_info_gateway,
+    driver_ride_requests,
+    firebase_admin,
+    geofence,
+    notifications,
+    ride_requests,
+    safety_events,
+    v3_agent,
+    v3_beacon,
+    v3_bus,
+    v3_guidance,
+    v3_mock,
+)
 from app.services.firebase_client import get_firebase_client
 
 
@@ -81,8 +94,8 @@ CORS_ORIGINS = _csv_env("BACKEND_CORS_ORIGINS", ("http://localhost:3000", "http:
 
 app = FastAPI(
     title="MOBI Backend API",
-    version="0.1.0-section10",
-    description="FastAPI backend for geofencing, Firebase/FCM, ride matching, and bus info gateway.",
+    version="0.1.0-v3-section1",
+    description="FastAPI backend for geofencing, Firebase/FCM, ride matching, bus info gateway, and V3 bus guidance demo routes.",
 )
 
 app.add_middleware(
@@ -102,20 +115,26 @@ app.include_router(bus_info_gateway.router, prefix="/bus-info", tags=["bus-info-
 app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver-ride-requests"])
 app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
 app.include_router(safety_events.router, prefix="/safety-events", tags=["safety-events"])
-app.include_router(guidance.router, prefix="/guidance", tags=["guidance"])
-app.include_router(bus_v3.router, prefix="/bus", tags=["bus-v3"])
-app.include_router(agent.router, prefix="/agent", tags=["agent"])
-app.include_router(mock_geofence.router, prefix="/mock", tags=["mock"])
-app.include_router(mock_beacons.router, prefix="/mock", tags=["mock"])
-app.include_router(mock_bus_event.router, prefix="/mock", tags=["mock"])
+app.include_router(firebase_admin.router, prefix="/firebase", tags=["firebase-admin"])
+
+# V3 voice-first bus boarding assistant routes.
+# Safety-critical guidance remains backend-rule based; Gemini is optional fallback only.
+app.include_router(v3_guidance.router, prefix="/guidance", tags=["v3-guidance"])
+app.include_router(v3_agent.router, prefix="/agent", tags=["v3-agent"])
+app.include_router(v3_bus.router, prefix="/bus", tags=["v3-bus"])
+app.include_router(v3_beacon.router, prefix="/beacon", tags=["v3-beacon"])
+app.include_router(v3_mock.router, prefix="/mock", tags=["v3-mock"])
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, object]:
     firebase = get_firebase_client()
     return {
         "status": "ok",
         "service": "mobi-backend-api",
         "environment": APP_ENV,
         "firebaseMode": "mock" if firebase.using_mock else "firebase-admin",
+        "firebaseInitialized": firebase.is_initialized,
+        "firebaseCredentialsReady": firebase.settings.credentials_ready,
+        "firebaseLastError": firebase.last_error,
     }
