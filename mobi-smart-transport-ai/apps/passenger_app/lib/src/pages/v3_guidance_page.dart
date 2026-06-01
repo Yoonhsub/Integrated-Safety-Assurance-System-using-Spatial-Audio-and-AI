@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -35,6 +36,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   );
 
   static const String _sessionId = 'demo-session';
+  static const bool _webDemoOriginEnabled = bool.fromEnvironment(
+    'MOBI_WEB_DEMO_ORIGIN_ENABLED',
+    defaultValue: false,
+  );
+  static const double _webDemoOriginLat = 36.6359;
+  static const double _webDemoOriginLng = 127.4596;
 
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
@@ -44,6 +51,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   V3GuidanceState? _sessionState;
   V3AgentResponse? _lastAgentResponse;
   V3RouteRecommendResponse? _lastRouteRecommendation;
+  V3RoutePlanResponse? _lastRoutePlan;
   V3BusArrivalsResponse? _lastArrivals;
   V3BeaconDecisionResponse? _lastBeaconDecision;
   String? _latestGeofenceMessage;
@@ -51,6 +59,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   String? _errorMessage;
   bool _isBusy = false;
   bool _isRoutePlanning = false;
+  bool _usingWebDemoOrigin = false;
   bool _useMockHeadTracking = false;
   HeadTrackingDebugSnapshot _headTracking = HeadTrackingDebugSnapshot.disabled();
 
@@ -85,7 +94,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         sessionId: _sessionId,
         wakeWord: _wakeWord,
       );
-      final arrivals = await _client.arrivals(stopId: 'mock-stop-001', routeNo: '502');
+      final arrivals = await _client.arrivals(
+        stopId: 'mock-stop-001',
+        routeNo: '502',
+        mode: widget.dataMode,
+      );
       setState(() {
         _healthStatus = health;
         _sessionState = session;
@@ -164,11 +177,19 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           wakeWord: _wakeWord,
           utterance: text,
           mode: widget.dataMode,
+          originLat: planningPreparation?.position?.latitude,
+          originLng: planningPreparation?.position?.longitude,
         );
         final state = await _client.fetchState(sessionId: _sessionId);
         V3RouteRecommendResponse? recommendation;
+        V3RoutePlanResponse? routePlan = response.routePlan;
         String? planningStatus;
-        if (shouldPlanRoute && state.selectedDestination != null) {
+        if (shouldPlanRoute && routePlan != null) {
+          planningStatus = _completedRoutePlanStatus(
+            preparation: planningPreparation!,
+            routePlan: routePlan,
+          );
+        } else if (shouldPlanRoute && state.selectedDestination != null) {
           recommendation = await _client.routeRecommend(
             destination: state.selectedDestination!,
             originLat: planningPreparation?.position?.latitude,
@@ -183,6 +204,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         setState(() {
           _lastAgentResponse = response;
           _sessionState = state;
+          if (routePlan != null) {
+            _lastRoutePlan = routePlan;
+            _lastRouteRecommendation = null;
+            _routePlanningStatus = planningStatus;
+          }
           if (recommendation != null) {
             _lastRouteRecommendation = recommendation;
             _routePlanningStatus = planningStatus;
@@ -231,19 +257,39 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final preparation = await _beginRoutePlanning();
     try {
       await _runGuarded(() async {
-        final recommendation = await _client.routeRecommend(
-          destination: destination,
+        final routePlan = await _client.routePlan(
+          q: destination,
           originLat: preparation.position?.latitude,
           originLng: preparation.position?.longitude,
           mode: widget.dataMode,
         );
+
+        V3RouteRecommendResponse? recommendation;
+        try {
+          recommendation = await _client.routeRecommend(
+            destination: destination,
+            originLat: preparation.position?.latitude,
+            originLng: preparation.position?.longitude,
+            mode: widget.dataMode,
+          );
+        } on V3ApiException {
+          // 임의 장소명은 새 RoutePlan만으로도 표시 가능하다.
+        }
+
         setState(() {
+          _lastRoutePlan = routePlan;
           _lastRouteRecommendation = recommendation;
-          _routePlanningStatus = _completedPlanningStatus(
+          _routePlanningStatus = _completedRoutePlanStatus(
             preparation: preparation,
-            recommendation: recommendation,
+            routePlan: routePlan,
           );
         });
+        final spokenGuidance = routePlan.agentMessage ??
+            routePlan.recommendedPlan?.boardingInstruction ??
+            routePlan.question;
+        if (spokenGuidance != null && spokenGuidance.isNotEmpty) {
+          await _cueService.speakLocal(spokenGuidance);
+        }
       });
     } finally {
       if (mounted) {
@@ -262,10 +308,44 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _cueService.speakLocal(_routePlanningMessage);
 
     try {
-      return _RoutePlanningPreparation(position: await _currentPosition());
+      final position = await _currentPosition();
+      if (mounted) {
+        setState(() {
+          _usingWebDemoOrigin = false;
+        });
+      }
+      return _RoutePlanningPreparation(position: position);
     } catch (_) {
+      if (kIsWeb && _webDemoOriginEnabled) {
+        if (mounted) {
+          setState(() {
+            _usingWebDemoOrigin = true;
+          });
+        }
+        return _RoutePlanningPreparation(
+          position: _webDemoPosition(),
+          usesDemoOrigin: true,
+        );
+      }
       return const _RoutePlanningPreparation();
     }
+  }
+
+  String _completedRoutePlanStatus({
+    required _RoutePlanningPreparation preparation,
+    required V3RoutePlanResponse routePlan,
+  }) {
+    if (routePlan.recommendedPlan == null) {
+      return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
+    }
+    final plan = routePlan.recommendedPlan!;
+    final locationLabel = preparation.usesDemoOrigin
+        ? '웹 시연 기준 위치(사창사거리)로'
+        : preparation.position == null
+            ? '현재 위치 없이'
+            : '현재 위치 기준으로';
+    final typeLabel = plan.type == 'DIRECT' ? '직통' : '1회 환승';
+    return '$locationLabel $typeLabel 경로 ${routePlan.plans.length}개를 계산했습니다. 추천 점수 ${plan.score.toStringAsFixed(1)}점.';
   }
 
   String _completedPlanningStatus({
@@ -287,11 +367,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   bool _looksLikeRouteRequest(String utterance) {
     final compact = utterance.replaceAll(' ', '');
     return utterance.contains('가야') ||
+        utterance.contains('가고 싶') ||
+        compact.contains('가고싶') ||
+        utterance.contains('가자') ||
+        utterance.contains('어떻게 가') ||
         utterance.contains('몇 번') ||
         compact.contains('몇번') ||
         utterance.contains('바꿔') ||
         utterance.contains('변경') ||
-        utterance.contains('아니라');
+        utterance.contains('아니라') ||
+        utterance.contains('맞아') ||
+        utterance.contains('첫 번째') ||
+        utterance.contains('두 번째') ||
+        compact.contains('첫번째') ||
+        compact.contains('두번째');
   }
 
   Future<Position> _currentPosition() async {
@@ -316,16 +405,41 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     );
   }
 
+  Position _webDemoPosition() {
+    return Position(
+      latitude: _webDemoOriginLat,
+      longitude: _webDemoOriginLng,
+      timestamp: DateTime.now(),
+      accuracy: 0,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: true,
+    );
+  }
+
   Future<void> _refreshArrivals() async {
     await _runGuarded(() async {
       final state = _sessionState;
-      final stopId = state?.selectedStopId ?? 'mock-stop-001';
-      final routeNo = state?.selectedRouteNo ?? '502';
+      final segments = _lastRoutePlan?.recommendedPlan?.segments;
+      final firstSegment = segments == null || segments.isEmpty ? null : segments.first;
+      final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
+      final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
+      if (stopId == null || routeNo == null) {
+        throw const V3ApiException('먼저 목적지 경로를 선택해줘.');
+      }
       final arrivals = await _client.arrivals(stopId: stopId, routeNo: routeNo, mode: widget.dataMode);
       setState(() {
         _lastArrivals = arrivals;
       });
     });
+  }
+
+  Future<void> _startGuidance() async {
+    await _sendUtterance('응, 선택한 경로로 안내해줘.');
   }
 
   Future<void> _mockGeofence(String event) async {
@@ -378,9 +492,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _sessionState = state;
         _lastAgentResponse = null;
         _lastRouteRecommendation = null;
+        _lastRoutePlan = null;
         _lastBeaconDecision = null;
         _latestGeofenceMessage = null;
         _routePlanningStatus = null;
+        _usingWebDemoOrigin = false;
       });
     });
   }
@@ -453,6 +569,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                 message: lastMessage,
                 errorMessage: _errorMessage,
               ),
+              if (_usingWebDemoOrigin) ...[
+                const SizedBox(height: 12),
+                const _WebDemoOriginBanner(),
+              ],
               const SizedBox(height: 12),
               _UtteranceCard(
                 controller: _utteranceController,
@@ -474,11 +594,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               const SizedBox(height: 12),
               _ArrivalCard(
                 routeRecommendation: _lastRouteRecommendation,
+                routePlan: _lastRoutePlan,
                 routePlanningStatus: _routePlanningStatus,
                 arrivals: _lastArrivals,
                 onRecommendSachang: () => _routeRecommend('사창사거리'),
                 onRecommendHospital: () => _routeRecommend('충북대병원'),
+                onRecommendSangdang: () => _routeRecommend('상당산성'),
                 onRefreshArrivals: _refreshArrivals,
+                onChooseDestination: (candidate) => _sendUtterance(candidate),
+                onStartGuidance: _startGuidance,
                 isBusy: _isBusy,
               ),
               const SizedBox(height: 12),
@@ -625,6 +749,24 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
+class _WebDemoOriginBanner extends StatelessWidget {
+  const _WebDemoOriginBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context).colorScheme.tertiaryContainer,
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text(
+          '웹 시연 기준 위치 사용 중: 현재 HTTP 테스트 페이지에서는 브라우저 위치 권한을 사용할 수 없어 '
+          '사창사거리 좌표를 기준으로 경로를 계산합니다. 실제 사용자 위치는 HTTPS 적용 후 사용됩니다.',
+        ),
+      ),
+    );
+  }
+}
+
 class _UtteranceCard extends StatelessWidget {
   const _UtteranceCard({
     required this.controller,
@@ -678,19 +820,27 @@ class _ArrivalCard extends StatelessWidget {
   const _ArrivalCard({
     required this.routeRecommendation,
     required this.routePlanningStatus,
+    required this.routePlan,
     required this.arrivals,
     required this.onRecommendSachang,
     required this.onRecommendHospital,
+    required this.onRecommendSangdang,
     required this.onRefreshArrivals,
+    required this.onChooseDestination,
+    required this.onStartGuidance,
     required this.isBusy,
   });
 
   final V3RouteRecommendResponse? routeRecommendation;
+  final V3RoutePlanResponse? routePlan;
   final String? routePlanningStatus;
   final V3BusArrivalsResponse? arrivals;
   final VoidCallback onRecommendSachang;
   final VoidCallback onRecommendHospital;
+  final VoidCallback onRecommendSangdang;
   final VoidCallback onRefreshArrivals;
+  final ValueChanged<String> onChooseDestination;
+  final VoidCallback onStartGuidance;
   final bool isBusy;
 
   @override
@@ -711,15 +861,57 @@ class _ArrivalCard extends StatelessWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            if (firstRecommendation == null)
+            if (firstRecommendation == null && routePlan?.recommendedPlan == null)
               const Text('추천 결과 없음')
-            else
+            else if (firstRecommendation != null)
               Text(
                 '${firstRecommendation.destination}: ${firstRecommendation.stopName}에서 ${firstRecommendation.routeNo}번 · ${firstRecommendation.fallbackSource}',
               ),
             if (routePlanningStatus != null) ...[
               const SizedBox(height: 6),
               Text(routePlanningStatus!),
+            ],
+            if (routePlan?.question != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                routePlan!.question!,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ],
+            if (routePlan?.destination?.candidates.isNotEmpty == true &&
+                (routePlan!.status == 'NEEDS_CHOICE' || routePlan!.status == 'NEEDS_CONFIRMATION')) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final candidate in routePlan!.destination!.candidates)
+                    OutlinedButton(
+                      onPressed: isBusy ? null : () => onChooseDestination(candidate.name),
+                      child: Text('${candidate.name} 선택'),
+                    ),
+                ],
+              ),
+            ],
+            if (routePlan?.recommendedPlan != null) ...[
+              const SizedBox(height: 12),
+              _RoutePlanCard(plan: routePlan!.recommendedPlan!),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: isBusy ? null : onStartGuidance,
+                icon: const Icon(Icons.navigation),
+                label: const Text('이 경로로 안내 시작'),
+              ),
+            ],
+            if (routePlan?.alternatives.isNotEmpty == true) ...[
+              const SizedBox(height: 12),
+              Text(
+                '대안 경로',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              for (final alternative in routePlan!.alternatives)
+                _AlternativeRouteCard(plan: alternative),
             ],
             if (routeRecommendation?.planningSummary != null) ...[
               const SizedBox(height: 6),
@@ -772,12 +964,142 @@ class _ArrivalCard extends StatelessWidget {
                   child: const Text('충북대병원 추천'),
                 ),
                 OutlinedButton(
+                  onPressed: isBusy ? null : onRecommendSangdang,
+                  child: const Text('상당산성 경로계산'),
+                ),
+                OutlinedButton(
                   onPressed: isBusy ? null : onRefreshArrivals,
                   child: const Text('도착정보 갱신'),
                 ),
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _RoutePlanCard extends StatelessWidget {
+  const _RoutePlanCard({required this.plan});
+
+  final V3RoutePlanCandidate plan;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final typeLabel = plan.type == 'DIRECT' ? '직통 추천' : '1회 환승 추천';
+    final firstSegment = plan.segments.isEmpty ? null : plan.segments.first;
+    final arrivals = firstSegment?.arrivals;
+    final firstArrival = arrivals == null || arrivals.isEmpty ? null : arrivals.first;
+    return Semantics(
+      container: true,
+      label: '구조화된 버스 경로 계획, $typeLabel',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+          border: Border.all(color: colorScheme.primary, width: 1.5),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '$typeLabel · ${plan.destinationName}',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(plan.summary),
+              const SizedBox(height: 6),
+              Text('출처: ${_routePlanSourceLabel(plan)}'),
+              const SizedBox(height: 4),
+              Text('검증 상태: ${_verificationStatusLabel(plan.verificationStatus)}'),
+              if (plan.warnings.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                for (final warning in plan.warnings)
+                  Text(
+                    '주의: $warning',
+                    style: TextStyle(color: colorScheme.error),
+                  ),
+              ],
+              const SizedBox(height: 6),
+              Text(plan.boardingInstruction),
+              if (plan.recommendedReason != null) ...[
+                const SizedBox(height: 6),
+                Text(plan.recommendedReason!),
+              ],
+              if (firstSegment != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '승차 방향: ${firstSegment.directionHint ?? '방향 미확인'}',
+                  style: TextStyle(color: colorScheme.primary, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  firstArrival == null ? '첫 도착정보: 미확인' : '첫 도착정보: ${firstArrival.displayLabel}',
+                ),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                '보행 약 ${plan.estimatedWalkMeters.toStringAsFixed(0)}m · ${plan.totalBusStopCount}정류장 · source ${plan.fallbackSource}',
+              ),
+              const SizedBox(height: 8),
+              for (final segment in plan.segments)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '• ${segment.routeNo}번: ${segment.boardStop.stopName} → ${segment.alightStop.stopName} (${segment.directionHint ?? '방향 미확인'})',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _routePlanSourceLabel(V3RoutePlanCandidate plan) {
+  return switch (plan.planSource) {
+    'ODSAY_ENRICHED' => 'ODsay 경로 + 청주 실시간 도착정보 검증',
+    'ODSAY' => 'ODsay 경로',
+    _ => '청주 버스 공공데이터 자체 경로',
+  };
+}
+
+String _verificationStatusLabel(String status) {
+  return switch (status) {
+    'VERIFIED_WITH_TAGO' => '청주 버스 데이터 검증 완료',
+    'PARTIAL' => '일부 구간만 검증됨',
+    'ODSAY_ONLY' => '실시간 도착정보 미확인',
+    _ => '자체 경로 계산',
+  };
+}
+
+class _AlternativeRouteCard extends StatelessWidget {
+  const _AlternativeRouteCard({required this.plan});
+
+  final V3RoutePlanCandidate plan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Text(
+            '${plan.type == 'DIRECT' ? '직통' : '1회 환승'} · ${plan.summary} · 점수 ${plan.score.toStringAsFixed(1)}',
+          ),
         ),
       ),
     );
@@ -1063,9 +1385,13 @@ class _RoutePlanningOverlay extends StatelessWidget {
 }
 
 class _RoutePlanningPreparation {
-  const _RoutePlanningPreparation({this.position});
+  const _RoutePlanningPreparation({
+    this.position,
+    this.usesDemoOrigin = false,
+  });
 
   final Position? position;
+  final bool usesDemoOrigin;
 }
 
 class _HeadTrackingCard extends StatelessWidget {

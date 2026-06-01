@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.bus_info import BusArrivalsResponse
 from app.schemas.v3 import (
+    DestinationResolveResponse,
     FallbackSource,
     PublicBusStopEvidence,
     RouteRecommendation,
+    RoutePlanRequest,
     RouteRecommendResponse,
     RoutePlanningEvidence,
+    RoutePlanResponse,
     V3BusArrival,
     V3BusArrivalsResponse,
 )
@@ -19,30 +24,41 @@ from services.public_data.public_data_client import BusArrivalsService
 from app.services import cheongju_route_catalog
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
+from app.services.destination_candidate_resolver import DestinationCandidateResolver
+from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
 from app.services.v3_gemini_service import generate_route_plan_summary
 
 router = APIRouter()
 _service = BusInfoGatewayService()
 _stop_catalog = CheongjuBusStopsService()
+_destination_resolver = DestinationCandidateResolver(stop_catalog=_stop_catalog)
+DataMode = Literal["mock", "live"]
 
 def _is_live_mode() -> bool:
     return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
 
 
-def _resolve_live(mode: str | None) -> bool:
+def _resolve_live(mode: DataMode | None) -> bool:
     """요청별 mode가 오면 우선 적용하고, 없으면 전역 env로 폴백한다.
 
     'API 데이터 테스트' 화면은 항상 mode='live'를 보내므로, 전역 토글 상태나
     서버 재시작과 무관하게 해당 요청은 반드시 실데이터 경로를 탄다.
     """
     if mode:
-        return mode.strip().lower() == "live"
+        return mode == "live"
     return _is_live_mode()
 
 
 def _gateway_for(live: bool) -> BusInfoGatewayService:
     """요청별 모드를 강제한 게이트웨이. 전역 env와 무관하게 mock/live를 고정한다."""
     return BusInfoGatewayService(public_data_service=BusArrivalsService(use_mock=not live))
+
+
+def _gateway_for_request(*, live: bool, mode: DataMode | None) -> BusInfoGatewayService:
+    """mode 파라미터가 있을 때만 강제 gateway를 만들고, 없으면 주입 가능한 기본 gateway를 쓴다."""
+    if mode is None:
+        return _service
+    return _gateway_for(live)
 
 
 def _key(value: str) -> str:
@@ -126,6 +142,16 @@ _MOCK_ARRIVALS_BY_STOP: dict[str, list[V3BusArrival]] = {
             lowFloor=None,
             congestion=None,
         ),
+        V3BusArrival(
+            busId="BUS_862",
+            routeNo="862",
+            routeId="mock-route-862-to-fortress",
+            stopId="mock-stop-001",
+            arrivalMinutes=11,
+            remainingStops=5,
+            lowFloor=True,
+            congestion=None,
+        ),
     ],
     "mock-stop-002": [
         V3BusArrival(
@@ -154,13 +180,80 @@ _MOCK_ARRIVALS_BY_STOP: dict[str, list[V3BusArrival]] = {
 }
 
 
+@router.get("/destination-candidates", response_model=DestinationResolveResponse)
+def destination_candidates(
+    q: str = Query(min_length=1),
+    originLat: float | None = Query(default=None, ge=-90, le=90),
+    originLng: float | None = Query(default=None, ge=-180, le=180),
+    mode: DataMode | None = Query(default=None),
+) -> DestinationResolveResponse:
+    """장소명/주소/정류장명 발화를 목적지 후보와 주변 정류장 후보로 해석한다."""
+    _validate_origin_pair(originLat, originLng)
+    return _destination_resolver.resolve(
+        heard_text=q,
+        origin_lat=originLat,
+        origin_lng=originLng,
+        live=_resolve_live(mode),
+    )
+
+
+@router.get("/route-plan", response_model=RoutePlanResponse)
+def route_plan(
+    q: str = Query(min_length=1),
+    originLat: float | None = Query(default=None, ge=-90, le=90),
+    originLng: float | None = Query(default=None, ge=-180, le=180),
+    mode: DataMode | None = Query(default=None),
+) -> RoutePlanResponse:
+    """목적지 발화와 현재 위치를 기반으로 직통/1회 환승 RoutePlan 후보를 계산한다."""
+    return _build_route_plan(q=q, origin_lat=originLat, origin_lng=originLng, mode=mode)
+
+
+@router.post("/route-plan", response_model=RoutePlanResponse)
+def route_plan_post(payload: RoutePlanRequest) -> RoutePlanResponse:
+    """Flutter/agent clients can send the same RoutePlan request as JSON."""
+    return _build_route_plan(
+        q=payload.destinationText,
+        origin_lat=payload.originLat,
+        origin_lng=payload.originLng,
+        mode=payload.mode,
+    )
+
+
+def _build_route_plan(
+    *,
+    q: str,
+    origin_lat: float | None,
+    origin_lng: float | None,
+    mode: DataMode | None,
+) -> RoutePlanResponse:
+    _validate_origin_pair(origin_lat, origin_lng)
+    live = _resolve_live(mode)
+    planner = TransitPlannerOrchestrator(
+        resolver=_destination_resolver,
+        arrival_fetcher=lambda stop_id, route_no, route_id: _route_plan_arrivals(
+            stop_id,
+            route_no=route_no,
+            route_id=route_id,
+            live=live,
+            mode=mode,
+        ),
+    )
+    return planner.plan(
+        heard_text=q,
+        origin_lat=origin_lat,
+        origin_lng=origin_lng,
+        live=live,
+    )
+
+
 @router.get("/route-recommend", response_model=RouteRecommendResponse)
 def route_recommend(
     destination: str = Query(min_length=1),
     originLat: float | None = Query(default=None, ge=-90, le=90),
     originLng: float | None = Query(default=None, ge=-180, le=180),
-    mode: str | None = Query(default=None),
+    mode: DataMode | None = Query(default=None),
 ) -> RouteRecommendResponse:
+    _validate_origin_pair(originLat, originLng)
     live = _resolve_live(mode)
     canonical = _DESTINATION_ALIASES.get(_key(destination))
     recommendation = _recommendation_for(canonical, live=live) if canonical else None
@@ -220,9 +313,9 @@ def route_recommend(
 
 @router.get("/arrivals", response_model=V3BusArrivalsResponse)
 def arrivals(
-    stopId: str = Query(min_length=1),
+    stopId: str = Query(min_length=1, pattern=r"\S"),
     routeNo: str | None = None,
-    mode: str | None = Query(default=None),
+    mode: DataMode | None = Query(default=None),
 ) -> V3BusArrivalsResponse:
     normalized_stop_id = stopId.strip()
     live = _resolve_live(mode)
@@ -230,12 +323,12 @@ def arrivals(
     # Cache/live public data must win over the local V3 mock catalog when present,
     # because it represents fresher or externally supplied information.
     try:
-        gateway_result = _gateway_for(live).get_arrivals_with_source(normalized_stop_id)
+        gateway_result = _gateway_for_request(live=live, mode=mode).get_arrivals_with_source(normalized_stop_id)
     except HTTPException:
-        if not live:
-            mock = _mock_response(normalized_stop_id, route_no=routeNo)
-            if mock is not None:
-                return mock
+        # live 호출 실패/키 누락도 데모 정류장은 로컬 V3 mock으로 graceful fallback한다.
+        mock = _mock_response(normalized_stop_id, route_no=routeNo)
+        if mock is not None:
+            return mock
         return V3BusArrivalsResponse(
             stopId=normalized_stop_id,
             routeNo=routeNo,
@@ -260,11 +353,49 @@ def arrivals(
     return _from_gateway_response(gateway_result.response, route_no=routeNo, fallback_source=FallbackSource.MOCK)
 
 
-def _mock_response(stop_id: str, *, route_no: str | None) -> V3BusArrivalsResponse | None:
+def _route_plan_arrivals(
+    stop_id: str,
+    *,
+    route_no: str | None,
+    route_id: str | None = None,
+    live: bool,
+    mode: DataMode | None,
+) -> V3BusArrivalsResponse:
+    normalized_stop_id = stop_id.strip()
+    try:
+        gateway_result = _gateway_for_request(live=live, mode=mode).get_arrivals_with_source(normalized_stop_id)
+    except HTTPException:
+        mock = _mock_response(normalized_stop_id, route_no=route_no, route_id=route_id)
+        if mock is not None:
+            return mock
+        return V3BusArrivalsResponse(
+            stopId=normalized_stop_id,
+            routeNo=route_no,
+            arrivals=[],
+            fallbackSource=FallbackSource.ERROR,
+        )
+
+    if gateway_result.source == "CACHE":
+        return _from_gateway_response(gateway_result.response, route_no=route_no, route_id=route_id, fallback_source=FallbackSource.CACHE)
+    if gateway_result.source == "PUBLIC_API":
+        return _from_gateway_response(gateway_result.response, route_no=route_no, route_id=route_id, fallback_source=FallbackSource.PUBLIC_API)
+
+    mock = _mock_response(normalized_stop_id, route_no=route_no, route_id=route_id)
+    if mock is not None:
+        return mock
+    return _from_gateway_response(gateway_result.response, route_no=route_no, route_id=route_id, fallback_source=FallbackSource.MOCK)
+
+
+def _mock_response(
+    stop_id: str,
+    *,
+    route_no: str | None,
+    route_id: str | None = None,
+) -> V3BusArrivalsResponse | None:
     catalog = _MOCK_ARRIVALS_BY_STOP.get(stop_id)
     if catalog is None:
         return None
-    arrivals = _filter_by_route(catalog, route_no)
+    arrivals = _filter_by_route(catalog, route_no, route_id=route_id)
     return V3BusArrivalsResponse(
         stopId=stop_id,
         routeNo=route_no,
@@ -379,23 +510,43 @@ def _public_stop_context(evidence: PublicBusStopEvidence | None) -> str | None:
     )
 
 
-def _filter_by_route(arrivals: list[V3BusArrival], route_no: str | None) -> list[V3BusArrival]:
-    if not route_no:
+def _filter_by_route(
+    arrivals: list[V3BusArrival],
+    route_no: str | None,
+    *,
+    route_id: str | None = None,
+) -> list[V3BusArrival]:
+    if not route_no and not route_id:
         return list(arrivals)
-    route_key = route_no.strip()
-    return [item for item in arrivals if item.routeNo == route_key or item.routeId == route_key]
+    keys = {key.strip() for key in (route_no, route_id) if key and key.strip()}
+    return [item for item in arrivals if item.routeNo in keys or item.routeId in keys]
+
+
+def _validate_origin_pair(origin_lat: float | None, origin_lng: float | None) -> None:
+    if (origin_lat is None) != (origin_lng is None):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "code": "INVALID_ORIGIN",
+                    "message": "originLat and originLng must be provided together.",
+                    "detail": {"originLat": origin_lat, "originLng": origin_lng},
+                }
+            },
+        )
 
 
 def _from_gateway_response(
     response: BusArrivalsResponse,
     *,
     route_no: str | None,
+    route_id: str | None = None,
     fallback_source: FallbackSource,
 ) -> V3BusArrivalsResponse:
     arrivals: list[V3BusArrival] = []
-    route_key = route_no.strip() if route_no else None
+    route_keys = {key.strip() for key in (route_no, route_id) if key and key.strip()}
     for item in response.arrivals:
-        if route_key and item.busNo != route_key and item.routeId != route_key:
+        if route_keys and item.busNo not in route_keys and item.routeId not in route_keys:
             continue
         arrivals.append(
             V3BusArrival(

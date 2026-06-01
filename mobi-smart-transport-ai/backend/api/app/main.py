@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import (
     bus_info_gateway,
@@ -24,7 +26,7 @@ from app.services.firebase_client import get_firebase_client
 from pydantic import BaseModel
 
 class DataModeRequest(BaseModel):
-    mode: str
+    mode: Literal["mock", "live"]
 
 
 
@@ -96,6 +98,7 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 _load_env()
 APP_ENV = os.getenv("APP_ENV", "development")
 CORS_ORIGINS = _csv_env("BACKEND_CORS_ORIGINS", ("http://localhost:3000", "http://localhost:5173"))
+PASSENGER_WEB_BUILD_DIR = _project_root() / "apps" / "passenger_app" / "build" / "web"
 
 app = FastAPI(
     title="MOBI Backend API",
@@ -146,6 +149,13 @@ def health() -> dict[str, object]:
     }
 
 
+@app.get("/", include_in_schema=False)
+def passenger_app_root() -> RedirectResponse:
+    if not (PASSENGER_WEB_BUILD_DIR / "index.html").is_file():
+        raise HTTPException(status_code=404, detail="Passenger web app has not been deployed.")
+    return RedirectResponse(url="/app/")
+
+
 @app.post("/config/data-mode", tags=["config"])
 def set_data_mode(request: DataModeRequest) -> dict[str, str]:
     if request.mode == "live":
@@ -153,3 +163,7 @@ def set_data_mode(request: DataModeRequest) -> dict[str, str]:
     else:
         os.environ["PUBLIC_DATA_USE_MOCK"] = "true"
     return {"status": "success", "mode": request.mode}
+
+
+if PASSENGER_WEB_BUILD_DIR.is_dir():
+    app.mount("/app", StaticFiles(directory=PASSENGER_WEB_BUILD_DIR, html=True), name="passenger-app")

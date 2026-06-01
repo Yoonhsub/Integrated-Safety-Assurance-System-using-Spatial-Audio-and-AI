@@ -25,6 +25,7 @@ def test_v3_routes_are_registered() -> None:
         ("/agent/converse", "POST"),
         ("/agent/tts", "POST"),
         ("/bus/route-recommend", "GET"),
+        ("/bus/destination-candidates", "GET"),
         ("/bus/arrivals", "GET"),
         ("/beacon/decision", "GET"),
         ("/mock/geofence", "POST"),

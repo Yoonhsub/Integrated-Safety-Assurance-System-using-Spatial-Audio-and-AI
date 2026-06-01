@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.schemas.base import StrictApiModel
 
@@ -94,6 +94,17 @@ class GuidanceSessionState(StrictApiModel):
     selectedStopId: str | None = None
     selectedStopName: str | None = None
     targetBusId: str | None = None
+    selectedPlanId: str | None = None
+    pendingDestinationCandidates: list[str] = Field(default_factory=list)
+    originLocation: dict[str, float] | None = None
+    nearbyBoardingStops: list[dict[str, Any]] = Field(default_factory=list)
+    nearbyAlightingStops: list[dict[str, Any]] = Field(default_factory=list)
+    recommendedPlan: dict[str, Any] | None = None
+    alternativePlans: list[dict[str, Any]] = Field(default_factory=list)
+    selectedPlan: dict[str, Any] | None = None
+    currentLegIndex: int = Field(default=0, ge=0)
+    pendingQuestion: str | None = None
+    pendingResolutionStatus: str | None = None
     geofenceArmed: bool = False
     lastDecision: BeaconDecision | None = None
     nearestBeacon: dict[str, Any] | None = None
@@ -112,7 +123,16 @@ class AgentConverseRequest(StrictApiModel):
     sessionId: str = Field(default="demo-session", min_length=1, pattern=NON_BLANK_PATTERN)
     wakeWord: str = Field(default="자비스", min_length=1, pattern=NON_BLANK_PATTERN)
     # 요청별 데이터 모드("live"|"mock"). 지정 시 전역 PUBLIC_DATA_USE_MOCK보다 우선한다.
-    mode: str | None = None
+    mode: Literal["mock", "live"] | None = None
+    # 현재 위치가 들어오면 에이전트 대화 안에서 바로 RoutePlan까지 계산한다.
+    originLat: float | None = Field(default=None, ge=-90, le=90)
+    originLng: float | None = Field(default=None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def validate_origin_pair(self) -> "AgentConverseRequest":
+        if (self.originLat is None) != (self.originLng is None):
+            raise ValueError("originLat and originLng must be provided together.")
+        return self
 
 
 class AgentConverseResponse(StrictApiModel):
@@ -124,6 +144,7 @@ class AgentConverseResponse(StrictApiModel):
     cue: V3Cue = Field(default_factory=V3Cue)
     usedGemini: bool = False
     fallbackSource: FallbackSource = FallbackSource.MOCK
+    routePlan: "RoutePlanResponse | None" = None
 
 
 class AgentTtsRequest(StrictApiModel):
@@ -138,6 +159,205 @@ class RouteRecommendation(StrictApiModel):
     routeId: str
     confidence: float = Field(ge=0, le=1)
     fallbackSource: FallbackSource = FallbackSource.MOCK
+
+
+class DestinationResolveStatus(str, Enum):
+    RESOLVED = "RESOLVED"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    NEEDS_CHOICE = "NEEDS_CHOICE"
+    NOT_FOUND = "NOT_FOUND"
+
+
+class DestinationCandidateType(str, Enum):
+    STOP = "STOP"
+    PLACE = "PLACE"
+    ADDRESS = "ADDRESS"
+
+
+class NearbyStopCandidate(StrictApiModel):
+    stopId: str
+    stopName: str
+    latitude: float
+    longitude: float
+    distanceMeters: float | None = Field(default=None, ge=0)
+    source: FallbackSource = FallbackSource.MOCK
+    directionHint: str | None = None
+    sideHint: str | None = None
+    visionRequiredForSideHint: bool = False
+    crossStreetHint: str | None = None
+
+
+class DestinationCandidate(StrictApiModel):
+    name: str
+    type: DestinationCandidateType
+    confidence: float = Field(ge=0, le=1)
+    latitude: float | None = None
+    longitude: float | None = None
+    address: str | None = None
+    stopId: str | None = None
+    source: FallbackSource = FallbackSource.MOCK
+
+
+class DestinationResolveResponse(StrictApiModel):
+    status: DestinationResolveStatus
+    heardText: str
+    normalizedText: str
+    topCandidate: DestinationCandidate | None = None
+    candidates: list[DestinationCandidate] = Field(default_factory=list)
+    question: str | None = None
+    originStops: list[NearbyStopCandidate] = Field(default_factory=list)
+    destinationStops: list[NearbyStopCandidate] = Field(default_factory=list)
+    fallbackSource: FallbackSource = FallbackSource.MOCK
+
+
+class RoutePlanStatus(str, Enum):
+    RESOLVED = "RESOLVED"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    NEEDS_CHOICE = "NEEDS_CHOICE"
+    NOT_FOUND = "NOT_FOUND"
+    NO_ROUTE = "NO_ROUTE"
+    ERROR = "ERROR"
+
+
+class RoutePlanReadiness(str, Enum):
+    READY = "READY"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    NEEDS_CHOICE = "NEEDS_CHOICE"
+    NOT_FOUND = "NOT_FOUND"
+    NO_ROUTE = "NO_ROUTE"
+    ERROR = "ERROR"
+
+
+class RoutePlanType(str, Enum):
+    DIRECT = "DIRECT"
+    ONE_TRANSFER = "ONE_TRANSFER"
+
+
+class RoutePlanSource(str, Enum):
+    LOCAL_FALLBACK = "LOCAL_FALLBACK"
+    ODSAY = "ODSAY"
+    ODSAY_ENRICHED = "ODSAY_ENRICHED"
+
+
+class RoutePlanVerificationStatus(str, Enum):
+    LOCAL_ONLY = "LOCAL_ONLY"
+    VERIFIED_WITH_TAGO = "VERIFIED_WITH_TAGO"
+    PARTIAL = "PARTIAL"
+    ODSAY_ONLY = "ODSAY_ONLY"
+
+
+class RoutePlanLegMode(str, Enum):
+    WALK = "WALK"
+    BUS = "BUS"
+    SUBWAY = "SUBWAY"
+
+
+class RoutePlanStop(StrictApiModel):
+    stopId: str
+    stopName: str
+    nodeId: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    distanceMeters: float | None = Field(default=None, ge=0)
+    order: int | None = Field(default=None, ge=0)
+    directionHint: str | None = None
+    sideHint: str | None = None
+    visionRequiredForSideHint: bool = False
+    crossStreetHint: str | None = None
+
+
+class RoutePlanSegment(StrictApiModel):
+    routeNo: str
+    routeId: str
+    source: str = "LOCAL"
+    providerRouteId: str | None = None
+    boardingStopNodeId: str | None = None
+    alightingStopNodeId: str | None = None
+    boardStop: RoutePlanStop
+    alightStop: RoutePlanStop
+    stopCount: int = Field(ge=0)
+    directionHint: str | None = None
+    arrivals: list[V3BusArrival] = Field(default_factory=list)
+    arrivalSource: FallbackSource = FallbackSource.MOCK
+    arrivalUnknown: bool = False
+    estimatedMinutes: int | None = Field(default=None, ge=0)
+
+
+class RoutePlanLeg(StrictApiModel):
+    mode: RoutePlanLegMode
+    routeNo: str | None = None
+    providerRouteId: str | None = None
+    routeId: str | None = None
+    boardingStopName: str | None = None
+    boardingStopId: str | None = None
+    boardingStopNodeId: str | None = None
+    alightingStopName: str | None = None
+    alightingStopId: str | None = None
+    alightingStopNodeId: str | None = None
+    directionHint: str | None = None
+    estimatedMinutes: int | None = Field(default=None, ge=0)
+    source: str
+
+
+class RoutePlanArrivalSummary(StrictApiModel):
+    arrivalMinutes: int = Field(ge=0)
+    remainingStops: int | None = Field(default=None, ge=0)
+    source: FallbackSource
+
+
+class RoutePlanCandidate(StrictApiModel):
+    planId: str
+    type: RoutePlanType
+    destinationName: str
+    summary: str
+    boardingInstruction: str
+    transferCount: int = Field(ge=0)
+    totalBusStopCount: int = Field(ge=0)
+    estimatedWalkMeters: float = Field(ge=0)
+    accessibilityScore: float = Field(ge=0, le=1)
+    simplicityScore: float = Field(ge=0, le=1)
+    score: float = Field(ge=0, le=100)
+    totalEstimatedMinutes: int | None = Field(default=None, ge=0)
+    recommendedReason: str | None = None
+    rankingEvidence: list[str] = Field(default_factory=list)
+    segments: list[RoutePlanSegment]
+    fallbackSource: FallbackSource = FallbackSource.MOCK
+    planSource: RoutePlanSource = RoutePlanSource.LOCAL_FALLBACK
+    provider: str = "LOCAL"
+    verificationStatus: RoutePlanVerificationStatus = RoutePlanVerificationStatus.LOCAL_ONLY
+    warnings: list[str] = Field(default_factory=list)
+    rawProviderEvidence: dict[str, Any] = Field(default_factory=dict)
+    legs: list[RoutePlanLeg] = Field(default_factory=list)
+    arrival: RoutePlanArrivalSummary | None = None
+    notRecommendedReason: str | None = None
+
+
+class RoutePlanResponse(StrictApiModel):
+    status: RoutePlanStatus
+    readiness: RoutePlanReadiness = RoutePlanReadiness.ERROR
+    heardText: str
+    destination: DestinationResolveResponse
+    plans: list[RoutePlanCandidate] = Field(default_factory=list)
+    recommendedPlan: RoutePlanCandidate | None = None
+    alternatives: list[RoutePlanCandidate] = Field(default_factory=list)
+    agentMessage: str | None = None
+    question: str | None = None
+    fallbackSource: FallbackSource = FallbackSource.MOCK
+    warnings: list[str] = Field(default_factory=list)
+    rawProviderEvidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoutePlanRequest(StrictApiModel):
+    destinationText: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    originLat: float | None = Field(default=None, ge=-90, le=90)
+    originLng: float | None = Field(default=None, ge=-180, le=180)
+    mode: Literal["mock", "live"] | None = None
+
+    @model_validator(mode="after")
+    def validate_origin_pair(self) -> "RoutePlanRequest":
+        if (self.originLat is None) != (self.originLng is None):
+            raise ValueError("originLat and originLng must be provided together.")
+        return self
 
 
 class RouteRecommendResponse(StrictApiModel):

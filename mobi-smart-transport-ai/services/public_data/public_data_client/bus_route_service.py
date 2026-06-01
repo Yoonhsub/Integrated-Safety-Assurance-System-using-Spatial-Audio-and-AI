@@ -27,6 +27,16 @@ class BusRouteService(DataGoKrClient):
         ``routeno``가 정확히 일치하는 첫 항목을 우선 사용하고, 없으면 첫 항목으로 폴백한다.
         조회 실패/빈 응답 시 ``None``을 반환해 호출자가 mock 폴백을 결정하게 한다.
         """
+        route_ids = self.resolve_route_ids(cityCode, routeNo)
+        return route_ids[0] if route_ids else None
+
+    def resolve_route_ids(self, cityCode: str, routeNo: str) -> list[str]:
+        """Return every TAGO routeId variant for a route number.
+
+        Directional variants can share the same displayed route number. Keeping
+        all exact matches lets the route-sequence cache validate direction by
+        node order instead of accidentally selecting only the first variant.
+        """
         response = self.get(
             path="/getRouteNoList",
             params={
@@ -42,22 +52,25 @@ class BusRouteService(DataGoKrClient):
         body = data.get("response", {}).get("body", {})
         items = body.get("items")
         if not items or isinstance(items, str):
-            return None
+            return []
 
         item_list = items.get("item", [])
         if isinstance(item_list, dict):
             item_list = [item_list]
         if not item_list:
-            return None
+            return []
 
+        exact_route_ids: list[str] = []
         for item in item_list:
             if str(item.get("routeno", "")) == str(routeNo):
                 route_id = str(item.get("routeid", ""))
-                if route_id:
-                    return route_id
+                if route_id and route_id not in exact_route_ids:
+                    exact_route_ids.append(route_id)
+        if exact_route_ids:
+            return exact_route_ids
 
         first_route_id = str(item_list[0].get("routeid", ""))
-        return first_route_id or None
+        return [first_route_id] if first_route_id else []
 
     def get_route_stops(self, cityCode: str, routeId: str) -> NormalizedBusRouteStopsResponse:
         """지정된 노선이 경유하는 정류소 목록을 반환합니다."""

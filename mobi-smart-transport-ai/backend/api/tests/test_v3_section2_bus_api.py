@@ -345,3 +345,127 @@ def test_public_api_success_source_is_preserved_without_inventing_bus_id(monkeyp
     assert body["fallbackSource"] == "PUBLIC_API"
     assert body["arrivals"][0]["routeId"] == "PUBLIC-502"
     assert body["arrivals"][0]["busId"] is None
+
+
+def test_explicit_live_mode_overrides_global_mock_setting(monkeypatch) -> None:
+    from app.api.routes import v3_bus
+
+    calls = []
+
+    class PublicApiGateway:
+        def get_arrivals_with_source(self, stop_id: str):
+            return BusInfoGatewayResult(
+                response=BusArrivalsResponse(
+                    stopId=stop_id,
+                    arrivals=[
+                        BusArrival(
+                            routeId="PUBLIC-862",
+                            busNo="862",
+                            arrivalMinutes=4,
+                            remainingStops=2,
+                            lowFloor=True,
+                            congestion=CongestionLevel.UNKNOWN,
+                            updatedAt=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                        )
+                    ],
+                ),
+                source="PUBLIC_API",
+            )
+
+    def fake_gateway_for(live: bool):
+        calls.append(live)
+        return PublicApiGateway()
+
+    monkeypatch.setenv("PUBLIC_DATA_USE_MOCK", "true")
+    monkeypatch.setattr(v3_bus, "_gateway_for", fake_gateway_for)
+
+    response = client.get(
+        "/bus/arrivals",
+        params={"stopId": "real-stop-001", "routeNo": "862", "mode": "live"},
+    )
+
+    assert response.status_code == 200
+    assert calls == [True]
+    assert response.json()["fallbackSource"] == "PUBLIC_API"
+    assert response.json()["arrivals"][0]["routeNo"] == "862"
+
+
+def test_arrivals_rejects_blank_stop_id_and_unknown_mode() -> None:
+    blank = client.get("/bus/arrivals", params={"stopId": "   ", "mode": "mock"})
+    unknown_mode = client.get("/bus/arrivals", params={"stopId": "mock-stop-001", "mode": "preview"})
+
+    assert blank.status_code == 422
+    assert unknown_mode.status_code == 422
+
+
+def test_tago_lowercase_arrival_fields_are_normalized() -> None:
+    from services.public_data.public_data_client.bus_arrivals_service import LiveBusArrivalsProvider
+
+    arrivals = LiveBusArrivalsProvider()._normalize_arrivals(
+        [
+            {
+                "routeid": "CJB270086200",
+                "routeno": "862",
+                "arrtime": "240",
+                "arrprevstationcnt": "3",
+                "vehicletp": "1",
+            }
+        ]
+    )
+
+    assert len(arrivals) == 1
+    assert arrivals[0].routeId == "CJB270086200"
+    assert arrivals[0].busNo == "862"
+    assert arrivals[0].arrivalMinutes == 4
+    assert arrivals[0].remainingStops == 3
+    assert arrivals[0].lowFloor is True
+
+
+def test_tago_lowercase_route_and_stop_fields_are_parsed() -> None:
+    import httpx
+
+    from services.public_data.public_data_client.bus_route_service import BusRouteService
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/getRouteNoList"):
+            return httpx.Response(
+                200,
+                json={
+                    "response": {
+                        "body": {
+                            "items": {
+                                "item": [{"routeid": "CJB270086200", "routeno": "862"}],
+                            }
+                        }
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "response": {
+                    "body": {
+                        "items": {
+                            "item": [
+                                {"nodeid": "CJB283000215", "nodenm": "사창사거리", "nodeord": "1"},
+                                {"nodeid": "CJB283000999", "nodenm": "상당산성", "nodeord": "2"},
+                            ],
+                        }
+                    }
+                }
+            },
+        )
+
+    service = BusRouteService(
+        api_key="test-key",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    route_id = service.resolve_route_id("33010", "862")
+    route_ids = service.resolve_route_ids("33010", "862")
+    stops = service.get_route_stops("33010", route_id)
+
+    assert route_id == "CJB270086200"
+    assert route_ids == ["CJB270086200"]
+    assert [node.nodeId for node in stops.nodes] == ["CJB283000215", "CJB283000999"]
+    assert [node.nodeNm for node in stops.nodes] == ["사창사거리", "상당산성"]

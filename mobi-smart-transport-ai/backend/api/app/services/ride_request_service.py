@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -33,9 +34,11 @@ class RideRequestService:
     def __init__(self, firebase_client: FirebaseClient | None = None, fcm_service: FcmService | None = None) -> None:
         self.firebase = firebase_client or get_firebase_client()
         self.fcm = fcm_service or FcmService(self.firebase)
+        self._created_at_lock = Lock()
+        self._last_created_at: datetime | None = None
 
     def create(self, payload: RideRequestCreate) -> RideRequestRecord:
-        now = self._utc_now()
+        now = self._next_created_at()
         request_id = self._new_request_id()
         status = RideRequestStatus.WAITING
 
@@ -129,6 +132,14 @@ class RideRequestService:
     @staticmethod
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
+
+    def _next_created_at(self) -> datetime:
+        with self._created_at_lock:
+            now = self._utc_now()
+            if self._last_created_at is not None and now <= self._last_created_at:
+                now = self._last_created_at + timedelta(microseconds=1)
+            self._last_created_at = now
+            return now
 
     @staticmethod
     def _serialize_datetime(value: datetime) -> str:

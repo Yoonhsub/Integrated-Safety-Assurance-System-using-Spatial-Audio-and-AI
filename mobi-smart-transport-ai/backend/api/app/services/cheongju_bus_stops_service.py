@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ class CheongjuBusStopMatch:
     endpoint: str
     fetched_at: datetime
     total_count: int
+    distance_meters: float | None = None
 
 
 class CheongjuBusStopsService:
@@ -80,7 +82,7 @@ class CheongjuBusStopsService:
 
         service_id, matched_name, longitude, latitude = min(
             candidates,
-            key=lambda item: (item[2] - origin_lng) ** 2 + (item[3] - origin_lat) ** 2,
+            key=lambda item: self._distance_meters(origin_lat, origin_lng, item[3], item[2]),
         )
         return CheongjuBusStopMatch(
             service_id=service_id,
@@ -90,6 +92,7 @@ class CheongjuBusStopsService:
             endpoint=self.endpoint,
             fetched_at=fetched_at,
             total_count=total_count,
+            distance_meters=self._distance_meters(origin_lat, origin_lng, latitude, longitude),
         )
 
     def find_by_name(self, *, stop_name: str) -> CheongjuBusStopMatch | None:
@@ -129,6 +132,71 @@ class CheongjuBusStopsService:
             fetched_at=fetched_at,
             total_count=total_count,
         )
+
+    def search_by_name(self, *, stop_name: str, limit: int = 5) -> list[CheongjuBusStopMatch]:
+        """정류소명으로 후보 여러 개를 반환한다.
+
+        같은 이름의 상·하행 정류장이 존재할 수 있으므로, 단일 match 대신 후보 목록을
+        보존한다. 방향 판단은 다음 경로 계산 섹션에서 노선 진행 순서로 수행한다.
+        """
+        if not self._is_enabled():
+            return []
+
+        rows, total_count, fetched_at = self._catalog()
+        target = self._normalize_name(stop_name)
+        parsed_rows = [parsed for row in rows if (parsed := self._parse_row(row)) is not None]
+        exact = [item for item in parsed_rows if self._normalize_name(item[1]) == target]
+        candidates = exact or [item for item in parsed_rows if target in self._normalize_name(item[1])]
+        return [
+            CheongjuBusStopMatch(
+                service_id=service_id,
+                stop_name=matched_name,
+                longitude=longitude,
+                latitude=latitude,
+                endpoint=self.endpoint,
+                fetched_at=fetched_at,
+                total_count=total_count,
+            )
+            for service_id, matched_name, longitude, latitude in candidates[: max(1, limit)]
+        ]
+
+    def find_nearby(
+        self,
+        *,
+        origin_lat: float,
+        origin_lng: float,
+        limit: int = 5,
+        radius_meters: float = 1000.0,
+    ) -> list[CheongjuBusStopMatch]:
+        """좌표 주변 정류소 후보를 거리순으로 반환한다."""
+        if not self._is_enabled():
+            return []
+
+        rows, total_count, fetched_at = self._catalog()
+        candidates: list[tuple[float, tuple[str, str, float, float]]] = []
+        for row in rows:
+            parsed = self._parse_row(row)
+            if parsed is None:
+                continue
+            service_id, stop_name, longitude, latitude = parsed
+            distance = self._distance_meters(origin_lat, origin_lng, latitude, longitude)
+            if distance <= radius_meters:
+                candidates.append((distance, parsed))
+
+        candidates.sort(key=lambda item: item[0])
+        return [
+            CheongjuBusStopMatch(
+                service_id=service_id,
+                stop_name=stop_name,
+                longitude=longitude,
+                latitude=latitude,
+                endpoint=self.endpoint,
+                fetched_at=fetched_at,
+                total_count=total_count,
+                distance_meters=distance,
+            )
+            for distance, (service_id, stop_name, longitude, latitude) in candidates[: max(1, limit)]
+        ]
 
     def _catalog(self) -> tuple[list[dict], int, datetime]:
         now = time.monotonic()
@@ -175,6 +243,20 @@ class CheongjuBusStopsService:
     @staticmethod
     def _normalize_name(value: str) -> str:
         return "".join(value.replace("정류장", "").split()).lower()
+
+    @staticmethod
+    def _distance_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+        radius = 6371000.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lambda = math.radians(lng2 - lng1)
+        a = (
+            math.sin(d_phi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+        )
+        return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
 
     @staticmethod
     def _parse_row(row: dict) -> tuple[str, str, float, float] | None:

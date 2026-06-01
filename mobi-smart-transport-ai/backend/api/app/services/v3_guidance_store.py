@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Any
 
 from app.schemas.v3 import BeaconDecision, GuidanceSessionState, GuidanceState, new_session_id, utc_now
 
@@ -18,6 +18,22 @@ class V3SessionRecord:
     selected_stop_id: str | None = None
     selected_stop_name: str | None = None
     target_bus_id: str | None = None
+    selected_plan_id: str | None = None
+    origin_location: dict[str, float] | None = None
+    nearby_boarding_stops: list[dict[str, Any]] = field(default_factory=list)
+    nearby_alighting_stops: list[dict[str, Any]] = field(default_factory=list)
+    recommended_plan: dict[str, Any] | None = None
+    alternative_plans: list[dict[str, Any]] = field(default_factory=list)
+    selected_plan: dict[str, Any] | None = None
+    current_leg_index: int = 0
+    pending_question: str | None = None
+    pending_resolution_status: str | None = None
+    pending_heard_text: str | None = None
+    pending_top_candidate_name: str | None = None
+    pending_choice_names: list[str] = field(default_factory=list)
+    pending_origin_lat: float | None = None
+    pending_origin_lng: float | None = None
+    last_route_plan: dict[str, Any] | None = None
     geofence_armed: bool = False
     last_decision: BeaconDecision | None = None
     nearest_beacon: dict | None = None
@@ -48,6 +64,17 @@ class V3SessionRecord:
             selectedStopId=self.selected_stop_id,
             selectedStopName=self.selected_stop_name,
             targetBusId=self.target_bus_id,
+            selectedPlanId=self.selected_plan_id,
+            pendingDestinationCandidates=list(self.pending_choice_names),
+            originLocation=self.origin_location,
+            nearbyBoardingStops=list(self.nearby_boarding_stops),
+            nearbyAlightingStops=list(self.nearby_alighting_stops),
+            recommendedPlan=self.recommended_plan,
+            alternativePlans=list(self.alternative_plans),
+            selectedPlan=self.selected_plan,
+            currentLegIndex=self.current_leg_index,
+            pendingQuestion=self.pending_question,
+            pendingResolutionStatus=self.pending_resolution_status,
             geofenceArmed=self.geofence_armed,
             lastDecision=self.last_decision,
             nearestBeacon=self.nearest_beacon,

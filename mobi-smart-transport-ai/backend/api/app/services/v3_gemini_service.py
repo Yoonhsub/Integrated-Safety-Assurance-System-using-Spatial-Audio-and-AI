@@ -15,6 +15,18 @@ _DEFAULT_PRO_MODEL = "gemini-2.5-pro"
 _DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 _DEFAULT_TTS_VOICE = "Sulafat"
 _MAX_REPLY_LENGTH = 500
+_VISION_REQUIRED_TERMS = (
+    "건너편",
+    "오른쪽 정류장",
+    "오른쪽에 있는 정류장",
+    "왼쪽 정류장",
+    "왼쪽에 있는 정류장",
+    "횡단보도",
+    "도로를 건너",
+    "도로 건너",
+    "길을 건너",
+    "길 건너",
+)
 
 # Flash 1차 분류가 돌려줄 수 있는 의도 라벨(AgentIntent와 1:1).
 _INTENT_LABELS = (
@@ -65,7 +77,8 @@ def classify_intent(
         f"- intent: 다음 중 하나 — {', '.join(_INTENT_LABELS)}\n"
         "- complexity: 실시간 공공 버스데이터(노선 탐색/도착시간/지금 탈 수 있는지/버스 위치)가 "
         ' 필요하면 "COMPLEX", 인사·감사·잡담·단순 확인이면 "GENERAL"\n'
-        f"- destination: 발화에 목적지가 있으면 다음 목록 중 정확히 하나, 없으면 null — {', '.join(known_destinations)}\n"
+        "- destination: 발화에 목적지가 있으면 사용자가 말한 장소명/주소/정류장명 원문을 짧게 추출하고, 없으면 null\n"
+        f"참고용으로 이미 안정화된 목적지 이름은 다음과 같아 — {', '.join(known_destinations)}\n"
         "의도 가이드: 길/노선/몇번/가는법=FIND_ROUTE, 언제·몇분 뒤=QUERY_ARRIVAL, "
         "지금 이 버스 타도 되냐=ASK_CAN_BOARD_CURRENT_BUS, 놓쳤다·못 탔다=REPORT_MISSED_BUS, "
         "목적지 바꿔=CHANGE_DESTINATION, 'A 아니라 B'=CORRECT_DESTINATION, "
@@ -107,7 +120,9 @@ def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict
         complexity = "COMPLEX" if intent in _COMPLEX_INTENTS else "GENERAL"
 
     destination = data.get("destination")
-    if destination not in known_destinations:
+    if isinstance(destination, str):
+        destination = destination.strip() or None
+    else:
         destination = None
 
     return {"intent": intent, "complexity": complexity, "destination": destination}
@@ -117,7 +132,7 @@ def generate_optional_reply(*, utterance: str, wake_word: str) -> str | None:
     """Return a short non-safety reply when Gemini is configured and available."""
 
     model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
-    return _generate(
+    reply = _generate(
         model=model,
         system_instruction=(
             f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
@@ -129,6 +144,7 @@ def generate_optional_reply(*, utterance: str, wake_word: str) -> str | None:
         max_output_tokens=120,
         thinking_budget=0,
     )
+    return _without_vision_claims(reply)
 
 
 def generate_route_plan_summary(
@@ -204,9 +220,112 @@ def generate_route_plan_summary(
         thinking_budget=128,
         timeout_seconds=60.0,
     )
+    summary = _without_vision_claims(summary)
     if not summary:
         return None
     return model, summary, maps_sources
+
+
+def generate_route_plan_reply(
+    *,
+    route_plan: dict,
+    utterance: str,
+    wake_word: str,
+) -> str | None:
+    """Use Gemini only to verbalize an already-computed RoutePlan JSON.
+
+    Gemini must not create bus numbers, stops, arrivals, directions, or routes.
+    Flash is a safe availability fallback when Pro is quota-limited.
+    If the model output contains side-of-road claims that require vision, reject it
+    and let the caller use deterministic fallback text.
+    """
+    model = _model_from_env("GEMINI_PRO_MODEL", _DEFAULT_PRO_MODEL)
+    prompt = json.dumps(
+        {
+            "utterance": utterance,
+            "routePlan": _route_plan_explanation_payload(route_plan),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    instruction = (
+        f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
+        "You must not invent bus route numbers, stop names, arrival times, route IDs, node IDs, or directions. "
+        "Only explain the provided RoutePlan JSON. If a field is missing or unknown, say it is unknown. "
+        "입력으로 제공된 RoutePlan JSON에 있는 정보만 자연어로 설명해. "
+        "새 버스번호, 정류장명, 도착시간, 환승지, 도보거리, 방향을 절대 만들지 마. "
+        "status가 NEEDS_CONFIRMATION/NEEDS_CHOICE/NOT_FOUND/NO_ROUTE이면 question만 자연스럽게 말해. "
+        "status가 RESOLVED이면 recommendedPlan.summary, boardingInstruction, 첫 segment의 arrivals만 사용해. "
+        "recommendedPlan.verificationStatus와 warnings를 확인해. ODSAY_ONLY 또는 PARTIAL이면 TAGO 실시간 정보로 검증됐다고 말하지 마. "
+        "arrival이 없거나 첫 segment의 arrivals가 비어 있으면 도착시간을 만들지 말고 확인하지 못했다고 말해. "
+        "directionHint가 없으면 임의 방향을 만들지 말고 정류장 표지판을 확인해 달라고 말해. "
+        "현재 단계에서는 '건너편 정류장', '오른쪽 정류장', '횡단보도를 건너라'처럼 비전 검증이 필요한 표현을 쓰지 마. "
+        "반드시 한국어 반말 2문장 이내로 답해."
+    )
+    reply = _generate(
+        model=model,
+        system_instruction=instruction,
+        prompt=prompt,
+        max_output_tokens=220,
+        # gemini-2.5-pro는 thinkingBudget=0을 거부할 수 있으므로 최소 thinking budget을 둔다.
+        thinking_budget=128,
+        timeout_seconds=30.0,
+    )
+    if not reply:
+        flash_model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
+        if flash_model != model:
+            reply = _generate(
+                model=flash_model,
+                system_instruction=instruction,
+                prompt=prompt,
+                max_output_tokens=220,
+                thinking_budget=128,
+                timeout_seconds=30.0,
+            )
+    if not reply:
+        return None
+    return _without_vision_claims(reply)
+
+
+def _route_plan_explanation_payload(route_plan: dict) -> dict:
+    """Keep Gemini on the verified recommendation instead of provider evidence."""
+    recommended = route_plan.get("recommendedPlan")
+    if not isinstance(recommended, dict):
+        return {
+            "status": route_plan.get("status"),
+            "question": route_plan.get("question"),
+            "warnings": route_plan.get("warnings") or [],
+        }
+
+    raw_segments = recommended.get("segments")
+    segments: list[dict] = []
+    if isinstance(raw_segments, list):
+        for index, raw_segment in enumerate(raw_segments):
+            if not isinstance(raw_segment, dict):
+                continue
+            segments.append(
+                {
+                    "routeNo": raw_segment.get("routeNo"),
+                    "routeId": raw_segment.get("routeId"),
+                    "boardStop": raw_segment.get("boardStop"),
+                    "alightStop": raw_segment.get("alightStop"),
+                    "directionHint": raw_segment.get("directionHint"),
+                    "arrivals": raw_segment.get("arrivals") if index == 0 else [],
+                    "arrivalUnknown": raw_segment.get("arrivalUnknown"),
+                }
+            )
+    return {
+        "status": route_plan.get("status"),
+        "warnings": route_plan.get("warnings") or [],
+        "recommendedPlan": {
+            "planSource": recommended.get("planSource"),
+            "verificationStatus": recommended.get("verificationStatus"),
+            "summary": recommended.get("summary"),
+            "boardingInstruction": recommended.get("boardingInstruction"),
+            "warnings": recommended.get("warnings") or [],
+            "segments": segments,
+        },
+    }
 
 
 def generate_dynamic_response(
@@ -233,7 +352,7 @@ def generate_dynamic_response(
         "이 데이터를 바탕으로 사용자의 질문에 짧고 명확하게 반말로 대답해줘."
     )
 
-    return _generate(
+    reply = _generate(
         model=model,
         system_instruction=system_instruction,
         prompt=prompt,
@@ -243,6 +362,13 @@ def generate_dynamic_response(
         thinking_budget=128,
         timeout_seconds=30.0,
     )
+    return _without_vision_claims(reply)
+
+
+def _without_vision_claims(reply: str | None) -> str | None:
+    if not reply or any(term in reply for term in _VISION_REQUIRED_TERMS):
+        return None
+    return reply
 
 
 def synthesize_tts_wav(*, text: str) -> bytes | None:

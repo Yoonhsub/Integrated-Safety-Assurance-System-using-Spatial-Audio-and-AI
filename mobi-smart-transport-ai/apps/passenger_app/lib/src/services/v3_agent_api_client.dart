@@ -97,12 +97,16 @@ class V3AgentApiClient {
     required String wakeWord,
     required String utterance,
     String? mode,
+    double? originLat,
+    double? originLng,
   }) async {
     final json = await _postJson('/agent/converse', <String, Object?>{
       'sessionId': sessionId,
       'wakeWord': wakeWord,
       'utterance': utterance,
       if (mode != null) 'mode': mode,
+      if (originLat != null && originLng != null) 'originLat': originLat,
+      if (originLat != null && originLng != null) 'originLng': originLng,
     });
     return V3AgentResponse.fromJson(json);
   }
@@ -151,6 +155,27 @@ class V3AgentApiClient {
     final json = await _getJson('/bus/route-recommend', query);
     return V3RouteRecommendResponse.fromJson(json);
   }
+
+  Future<V3RoutePlanResponse> routePlan({
+    required String q,
+    double? originLat,
+    double? originLng,
+    String? mode,
+  }) async {
+    final query = <String, String>{
+      'q': q,
+    };
+    if (originLat != null && originLng != null) {
+      query['originLat'] = originLat.toString();
+      query['originLng'] = originLng.toString();
+    }
+    if (mode != null) {
+      query['mode'] = mode;
+    }
+    final json = await _getJson('/bus/route-plan', query);
+    return V3RoutePlanResponse.fromJson(json);
+  }
+
 
   Future<V3BusArrivalsResponse> arrivals({
     required String stopId,
@@ -272,6 +297,13 @@ class V3AgentApiClient {
 
   String? _errorMessage(Map<String, dynamic>? body) {
     if (body == null) return null;
+    final topLevelError = body['error'];
+    if (topLevelError is Map) {
+      final code = topLevelError['code']?.toString();
+      final message = topLevelError['message']?.toString();
+      if (code != null && message != null) return '$code: $message';
+      return code ?? message;
+    }
     final detail = body['detail'];
     if (detail is Map) {
       final error = detail['error'];
