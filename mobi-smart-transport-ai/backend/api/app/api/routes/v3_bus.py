@@ -14,6 +14,7 @@ from app.schemas.v3 import (
 )
 import os
 
+from app.services import cheongju_route_catalog
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
 from app.services.v3_gemini_service import generate_route_plan_summary
@@ -30,48 +31,47 @@ def _key(value: str) -> str:
     return "".join(value.strip().split()).lower()
 
 
-_ROUTE_RECOMMENDATIONS: dict[str, RouteRecommendation] = {
-    "sachang": RouteRecommendation(
-        destination="사창사거리",
-        stopId="mock-stop-001",
-        stopName="사창사거리 정류장",
-        routeNo="502",
-        routeId="mock-route-502",
-        confidence=0.95,
-    ),
-    "chungbuk_hospital": RouteRecommendation(
-        destination="충북대병원",
-        stopId="mock-stop-002",
-        stopName="충북대학교병원 정류장",
-        routeNo="823",
-        routeId="mock-route-823",
-        confidence=0.9,
-    ),
-    "cheongju_terminal": RouteRecommendation(
-        destination="청주고속버스터미널",
-        stopId="mock-stop-003",
-        stopName="청주고속버스터미널 정류장",
-        routeNo="502",
-        routeId="mock-route-502",
-        confidence=0.88,
-    ),
+# 별칭(STT 변형 포함) → 카탈로그 정규 목적지명. 실제 routeId/nodeId는
+# cheongju_route_catalog가 라이브 모드에서 런타임 해석한다.
+_DESTINATION_ALIASES: dict[str, str] = {
+    _key("사창사거리"): "사창사거리",
+    _key("사창 사거리"): "사창사거리",
+    _key("사직사거리"): "사창사거리",  # common speech/STT correction path for the demo
+    _key("사창"): "사창사거리",
+    _key("충북대병원"): "충북대병원",
+    _key("충북대학교병원"): "충북대병원",
+    _key("충북대학교 병원"): "충북대병원",
+    _key("충대병원"): "충북대병원",
+    _key("청주고속버스터미널"): "청주고속버스터미널",
+    _key("청주 고속버스터미널"): "청주고속버스터미널",
+    _key("고속버스터미널"): "청주고속버스터미널",
+    _key("청주터미널"): "청주고속버스터미널",
+    _key("터미널"): "청주고속버스터미널",
 }
 
-_DESTINATION_ALIASES: dict[str, str] = {
-    _key("사창사거리"): "sachang",
-    _key("사창 사거리"): "sachang",
-    _key("사직사거리"): "sachang",  # common speech/STT correction path for the demo
-    _key("사창"): "sachang",
-    _key("충북대병원"): "chungbuk_hospital",
-    _key("충북대학교병원"): "chungbuk_hospital",
-    _key("충북대학교 병원"): "chungbuk_hospital",
-    _key("충대병원"): "chungbuk_hospital",
-    _key("청주고속버스터미널"): "cheongju_terminal",
-    _key("청주 고속버스터미널"): "cheongju_terminal",
-    _key("고속버스터미널"): "cheongju_terminal",
-    _key("청주터미널"): "cheongju_terminal",
-    _key("터미널"): "cheongju_terminal",
-}
+
+def _recommendation_for(destination: str, *, live: bool) -> RouteRecommendation | None:
+    resolved = cheongju_route_catalog.resolve_or_mock(destination, live=live)
+    if resolved is None:
+        return None
+    return RouteRecommendation(
+        destination=resolved.destination,
+        stopId=resolved.stopId,
+        stopName=resolved.stopName,
+        routeNo=resolved.routeNo,
+        routeId=resolved.routeId,
+        confidence=resolved.confidence,
+        fallbackSource=FallbackSource(resolved.source),
+    )
+
+
+def _all_recommendations(*, live: bool) -> list[RouteRecommendation]:
+    out: list[RouteRecommendation] = []
+    for destination in cheongju_route_catalog.DESTINATIONS:
+        recommendation = _recommendation_for(destination, live=live)
+        if recommendation is not None:
+            out.append(recommendation)
+    return out
 
 # V3 demo catalog. These are deterministic mock arrivals for the voice-guidance
 # demo only. Congestion is intentionally None unless it comes from a real/cache
@@ -142,8 +142,9 @@ def route_recommend(
     originLat: float | None = Query(default=None, ge=-90, le=90),
     originLng: float | None = Query(default=None, ge=-180, le=180),
 ) -> RouteRecommendResponse:
-    alias = _DESTINATION_ALIASES.get(_key(destination))
-    if not alias:
+    canonical = _DESTINATION_ALIASES.get(_key(destination))
+    recommendation = _recommendation_for(canonical, live=_is_live_mode()) if canonical else None
+    if recommendation is None:
         raise HTTPException(
             status_code=404,
             detail={
@@ -154,7 +155,6 @@ def route_recommend(
                 }
             },
         )
-    recommendation = _ROUTE_RECOMMENDATIONS[alias]
     planning_result = None
     planning_data_source = None
     stop_evidence = None
@@ -175,7 +175,7 @@ def route_recommend(
                     f"{item.destination}: {item.stopName}, {item.routeNo}번, "
                     f"routeId={item.routeId}, confidence={item.confidence}"
                 )
-                for item in _ROUTE_RECOMMENDATIONS.values()
+                for item in _all_recommendations(live=_is_live_mode())
             ],
             arrival_context=_planning_arrival_context(evidence.arrivals),
             arrival_source=planning_data_source.value,

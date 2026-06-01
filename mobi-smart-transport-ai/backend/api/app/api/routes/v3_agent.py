@@ -22,6 +22,7 @@ from app.schemas.v3 import (
     TtsMode,
     V3Cue,
 )
+from app.services import cheongju_route_catalog
 from app.services.v3_gemini_service import (
     generate_optional_reply,
     synthesize_tts_wav,
@@ -33,27 +34,6 @@ def _is_live_mode() -> bool:
     return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
 
 router = APIRouter()
-
-_ROUTE_CATALOG: dict[str, dict[str, str]] = {
-    "사창사거리": {
-        "routeNo": "502",
-        "routeId": "mock-route-502",
-        "stopId": "mock-stop-001",
-        "stopName": "사창사거리 정류장",
-    },
-    "충북대병원": {
-        "routeNo": "823",
-        "routeId": "mock-route-823",
-        "stopId": "mock-stop-002",
-        "stopName": "충북대학교병원 정류장",
-    },
-    "청주고속버스터미널": {
-        "routeNo": "502",
-        "routeId": "mock-route-502",
-        "stopId": "mock-stop-003",
-        "stopName": "청주고속버스터미널 정류장",
-    },
-}
 
 _DESTINATION_ALIASES: tuple[tuple[str, str], ...] = (
     ("사창사거리", "사창사거리"),
@@ -109,12 +89,14 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         message = "네, 말씀하세요."
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
         destination = _extract_destination(utterance) or session.selected_destination or "사창사거리"
-        route = _ROUTE_CATALOG[destination]
-        session.selected_destination = destination
-        session.selected_route_no = route["routeNo"]
-        session.selected_route_id = route["routeId"]
-        session.selected_stop_id = route["stopId"]
-        session.selected_stop_name = route["stopName"]
+        resolved = cheongju_route_catalog.resolve_or_mock(destination, live=_is_live_mode())
+        if resolved is None:
+            resolved = cheongju_route_catalog.resolve_or_mock("사창사거리", live=_is_live_mode())
+        session.selected_destination = resolved.destination
+        session.selected_route_no = resolved.routeNo
+        session.selected_route_id = resolved.routeId
+        session.selected_stop_id = resolved.stopId
+        session.selected_stop_name = resolved.stopName
         session.target_bus_id = None
         session.last_decision = None
         session.nearest_beacon = None

@@ -17,7 +17,9 @@ class BusLocationService(DataGoKrClient):
         base_url: str = "https://apis.data.go.kr/1613000/BusLcInfoInqireService",
         client: httpx.Client | None = None,
     ):
-        super().__init__(api_key=api_key, base_url=base_url, client=client)
+        super().__init__(api_key=api_key, base_url=base_url)
+        if client is not None:
+            self.client = client
 
     def get_locations(self, cityCode: str, routeId: str) -> NormalizedBusLocationResponse:
         """지정된 노선의 운행 중인 버스 위치 목록을 반환합니다."""
