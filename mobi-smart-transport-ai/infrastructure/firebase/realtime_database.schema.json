@@ -127,5 +127,18 @@
       "relatedRequestId": "string | null",
       "createdAt": "datetime"
     }
+  },
+  "v3GuidanceSessions": {
+    "$sessionId": {
+      "sessionId": "string",
+      "passengerId": "string | null",
+      "routeId": "string | null",
+      "busNo": "string | null",
+      "stopId": "string | null",
+      "status": "string",
+      "currentStep": "string | null",
+      "createdAt": "datetime",
+      "updatedAt": "datetime"
+    }
   }
 }

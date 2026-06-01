@@ -54,6 +54,12 @@
     "systemLogs": {
       ".read": false,
       ".write": false
+    },
+    "v3GuidanceSessions": {
+      "$sessionId": {
+        ".read": "auth != null",
+        ".write": false
+      }
     }
   }
 }
