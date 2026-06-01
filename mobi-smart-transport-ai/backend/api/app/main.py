@@ -21,6 +21,11 @@ from app.api.routes import (
     v3_mock,
 )
 from app.services.firebase_client import get_firebase_client
+from pydantic import BaseModel
+
+class DataModeRequest(BaseModel):
+    mode: str
+
 
 
 def _project_root() -> Path:
@@ -137,4 +142,14 @@ def health() -> dict[str, object]:
         "firebaseInitialized": firebase.is_initialized,
         "firebaseCredentialsReady": firebase.settings.credentials_ready,
         "firebaseLastError": firebase.last_error,
+        "dataMode": "mock" if os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("true", "1", "yes") else "live",
     }
+
+
+@app.post("/config/data-mode", tags=["config"])
+def set_data_mode(request: DataModeRequest) -> dict[str, str]:
+    if request.mode == "live":
+        os.environ["PUBLIC_DATA_USE_MOCK"] = "false"
+    else:
+        os.environ["PUBLIC_DATA_USE_MOCK"] = "true"
+    return {"status": "success", "mode": request.mode}

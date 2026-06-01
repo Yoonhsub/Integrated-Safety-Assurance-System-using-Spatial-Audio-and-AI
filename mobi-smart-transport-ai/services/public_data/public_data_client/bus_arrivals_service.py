@@ -124,13 +124,11 @@ class LiveBusArrivalsProvider:
         #         raise PublicDataEmptyResponseError(...)  # 또는 빈 응답 정책
         #     normalized = self._normalize_arrivals(raw_items)
         #     return NormalizedBusArrivalsResponse(stopId=stop_id, arrivals=normalized)
-        raise NotImplementedError(
-            "LiveBusArrivalsProvider.get_arrivals call body is not implemented yet. "
-            "Activate by implementing _call_arrivals_api against the operative API "
-            "(TAGO ArvlInfoInqireService once the field spec is confirmed, or 서울 BIS "
-            "getArrInfoByRouteAll once an authentication key is available). "
-            "Until then, set PUBLIC_DATA_USE_MOCK=true."
-        )
+        raw_items = self._call_arrivals_api(stop_id)
+        if not raw_items:
+            raise PublicDataEmptyResponseError(f"No arrivals found for stop_id: {stop_id}")
+        normalized = self._normalize_arrivals(raw_items)
+        return NormalizedBusArrivalsResponse(stopId=stop_id, arrivals=normalized)
 
     def _call_arrivals_api(self, stop_id: str):  # pragma: no cover - skeleton
         """실제 도착 정보 API 호출 (섹션 10 boilerplate, 본격 활성화는 명세 확보 후).
@@ -167,83 +165,55 @@ class LiveBusArrivalsProvider:
             NotImplementedError: 4월 단계 기본. 명세 확보 후 활성화 시 제거.
             PublicDataNetworkError: 활성화 후 네트워크/HTTP 실패 시 (DataGoKrClient.get이 변환).
         """
-        # 4월 단계: 활성화 직전 단계에서 명시적으로 멈춘다.
-        # 본 raise를 제거하고 아래 boilerplate를 풀어 사용한다.
-        raise NotImplementedError(
-            "_call_arrivals_api boilerplate is intentionally inactive in April. "
-            "Activate by obtaining a service key, setting PUBLIC_DATA_USE_MOCK=false, "
-            "and removing this raise. See docstring for the activation procedure."
-        )
+        # TAGO API (다도시 표준)
+        # cityCode는 기본적으로 Cheongju(33010)으로 설정되어 있다고 가정하거나 
+        # self.client.city_code가 있으면 사용합니다.
+        city_code = self.client.city_code or "33010"
+        path = "/1613000/ArvlInfoInqireService/getSttnAcctoArvlPrearngeInfoList"
+        params: dict[str, str] = {
+            "cityCode": city_code,
+            "nodeId": stop_id,
+            "_type": "json",
+            "numOfRows": "30",
+            "pageNo": "1",
+        }
 
-        # ------------------------------------------------------------------
-        # boilerplate (참고용 — 명세 확보 후 본 raise를 제거하고 활성화)
-        # ------------------------------------------------------------------
-        # ※ 아래는 비활성 보일러플레이트입니다. 활성화할 때는 위 raise를 제거하고
-        #    아래 코드 라인의 `# ` 접두사만 풀어 사용합니다. STEP 헤더 자체(====...)는
-        #    구분 주석이므로 그대로 둡니다.
-        #
-        # ====[ STEP 1 ]====================================================
-        #   city_code 분기로 endpoint 결정
-        # ==================================================================
-        # if self.client.city_code:
-        #     # TAGO ArvlInfoInqireService — 청주/대전 등 다도시 표준 (명세 확보 후)
-        #     path = "/1613000/ArvlInfoInqireService/getSttnAcctoArvlPrearngeInfoList"
-        #     params: dict[str, str] = {
-        #         "cityCode": self.client.city_code,
-        #         "nodeId":   stop_id,
-        #         "_type":    "json",
-        #         "numOfRows": "30",
-        #         "pageNo":   "1",
-        #     }
-        # else:
-        #     # 서울 BIS getArrInfoByRouteAll — 서울 단일 도시 (인증키 확보 후)
-        #     # 주의: 서울 BIS의 base URL은 공공데이터포털 표준과 다를 수 있다.
-        #     # DataGoKrClient.base_url 또는 별도 클라이언트 검토 필요.
-        #     path = "/B553961/getArrInfoByRouteAll"  # 실제 path는 활용신청서 확인
-        #     params = {
-        #         "stId":     stop_id,
-        #         "resultType": "json",  # 또는 "xml"
-        #     }
-        #
-        # ====[ STEP 2 ]====================================================
-        #   호출 — DataGoKrClient.get이 PublicDataNetworkError로 자동 변환
-        # ==================================================================
-        # response = self.client.get(path, params=params)
-        #
-        # ====[ STEP 3 ]====================================================
-        #   응답 파싱 — XML/JSON 분기
-        # ==================================================================
-        # content_type = response.headers.get("content-type", "").lower()
-        # if "json" in content_type:
-        #     payload = response.json()
-        #     # 서울 BIS / TAGO 모두 응답 envelope 구조가 다르다. 두 형식 모두 처리:
-        #     # - TAGO:    payload["response"]["body"]["items"]["item"]
-        #     # - 서울 BIS: payload["msgBody"]["itemList"]
-        #     items = (
-        #         payload.get("response", {}).get("body", {}).get("items", {}).get("item")
-        #         or payload.get("msgBody", {}).get("itemList")
-        #         or []
-        #     )
-        # else:
-        #     # XML 파싱 — stdlib만으로 처리 가능
-        #     # import xml.etree.ElementTree as ET
-        #     # root = ET.fromstring(response.text)
-        #     # items = [
-        #     #     {child.tag: child.text for child in item}
-        #     #     for item in root.findall(".//itemList") + root.findall(".//item")
-        #     # ]
-        #     items = []  # 활성화 시 위 코드 풀어 사용
-        #
-        # ====[ STEP 4 ]====================================================
-        #   단일 item이 dict로 반환되는 경우(공공데이터 표준)도 list로 정규화
-        # ==================================================================
-        # if isinstance(items, dict):
-        #     items = [items]
-        #
-        # ====[ STEP 5 ]====================================================
-        #   _normalize_arrivals가 받는 raw_items 형식으로 반환
-        # ==================================================================
-        # return items
+        # DataGoKrClient.get이 내부적으로 serviceKey를 병합하고 에러를 변환합니다.
+        # 주의: DataGoKrClient의 기본 base_url이 'https://apis.data.go.kr' 입니다.
+        # 만약 PUBLIC_DATA_BASE_URL 환경변수가 'https://api.odcloud.kr/api' 라면 
+        # TAGO API를 호출할 때는 'https://apis.data.go.kr' 로 강제 지정해야 할 수 있습니다.
+        # 임시로 강제로 TAGO base_url을 지정합니다.
+        original_base_url = self.client.base_url
+        if "odcloud" in original_base_url:
+            self.client.base_url = "https://apis.data.go.kr"
+        
+        try:
+            response = self.client.get(path, params=params)
+        finally:
+            self.client.base_url = original_base_url
+
+        content_type = response.headers.get("content-type", "").lower()
+        if "json" in content_type:
+            payload = response.json()
+            items = (
+                payload.get("response", {}).get("body", {}).get("items", {}).get("item")
+                or []
+            )
+        else:
+            import xml.etree.ElementTree as ET
+            try:
+                root = ET.fromstring(response.text)
+                items = [
+                    {child.tag: child.text for child in item}
+                    for item in root.findall(".//item")
+                ]
+            except ET.ParseError:
+                items = []
+        
+        if isinstance(items, dict):
+            items = [items]
+            
+        return items
 
     def _normalize_arrivals(
         self,

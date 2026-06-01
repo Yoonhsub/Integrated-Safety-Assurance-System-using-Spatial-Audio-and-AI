@@ -7,10 +7,14 @@ class HomePage extends StatefulWidget {
     super.key,
     required this.agentName,
     required this.onEditAgentName,
+    required this.onReturnToModeSelection,
+    required this.dataMode,
   });
 
   final String agentName;
-  final Future<void> Function() onEditAgentName;
+  final VoidCallback onEditAgentName;
+  final VoidCallback onReturnToModeSelection;
+  final String dataMode;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -369,9 +373,13 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MOBI 승객 앱'),
-        centerTitle: true,
+        title: const Text('MOBI 탑승객 데모', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          IconButton(
+            tooltip: '초기 화면으로',
+            onPressed: widget.onReturnToModeSelection,
+            icon: const Icon(Icons.home_outlined),
+          ),
           IconButton(
             tooltip: '에이전트 이름 변경',
             onPressed: widget.onEditAgentName,
@@ -386,6 +394,39 @@ class _HomePageState extends State<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const _HeaderSection(),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: widget.dataMode == 'live'
+                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
+                      : Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.dataMode == 'live' ? Icons.cloud_done : Icons.science,
+                      size: 18,
+                      color: widget.dataMode == 'live'
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.tertiary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.dataMode == 'live' ? '실제 API 데이터 모드' : 'Mock 데이터 모드',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: widget.dataMode == 'live'
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.tertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text('시연 시나리오 선택', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               _StatusCard(
                 title: '에이전트 호출 이름',

@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/v3_agent_api_client.dart';
+import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
 import '../widgets/mock_control_panel.dart';
 import '../widgets/quick_action_panel.dart';
@@ -12,9 +13,13 @@ class V3GuidancePage extends StatefulWidget {
   const V3GuidancePage({
     super.key,
     required this.agentName,
+    required this.onReturnToModeSelection,
+    required this.dataMode,
   });
 
   final String agentName;
+  final VoidCallback onReturnToModeSelection;
+  final String dataMode;
 
   @override
   State<V3GuidancePage> createState() => _V3GuidancePageState();
@@ -48,6 +53,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   bool _isRoutePlanning = false;
   bool _useMockHeadTracking = false;
   HeadTrackingDebugSnapshot _headTracking = HeadTrackingDebugSnapshot.disabled();
+
+  // 실시간 채팅 상태
+  final List<ChatMessage> _chatMessages = [];
+  bool _isChatOpen = false;
 
   String get _wakeWord => widget.agentName;
 
@@ -122,6 +131,26 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _sendUtterance([String? utterance]) async {
+    return _sendUtteranceFromSource(utterance: utterance, fromChat: false);
+  }
+
+  /// 채팅에서 보낸 메시지를 처리한다.
+  Future<void> _sendChatMessage(String text) async {
+    if (text.trim().isEmpty) return;
+    setState(() {
+      _chatMessages.add(ChatMessage(
+        text: text.trim(),
+        isUser: true,
+        timestamp: DateTime.now(),
+      ));
+    });
+    await _sendUtteranceFromSource(utterance: text, fromChat: true);
+  }
+
+  Future<void> _sendUtteranceFromSource({
+    String? utterance,
+    required bool fromChat,
+  }) async {
     final text = (utterance ?? _utteranceController.text).trim();
     if (text.isEmpty) return;
 
@@ -155,6 +184,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           if (recommendation != null) {
             _lastRouteRecommendation = recommendation;
             _routePlanningStatus = planningStatus;
+          }
+          // 채팅에서 보낸 경우 에이전트 응답도 채팅 메시지에 추가
+          if (fromChat) {
+            _chatMessages.add(ChatMessage(
+              text: response.message,
+              isUser: false,
+              timestamp: DateTime.now(),
+            ));
           }
         });
         await _cueService.playCue(response.cue, fallbackMessage: response.message);
@@ -367,6 +404,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         title: const Text('V3 버스 탑승 보조'),
         actions: [
           IconButton(
+            tooltip: '초기 화면으로',
+            onPressed: () {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+              widget.onReturnToModeSelection();
+            },
+            icon: const Icon(Icons.home_outlined),
+          ),
+          IconButton(
             tooltip: '상태 새로고침',
             onPressed: _isBusy ? null : () => _runGuarded(_refreshState),
             icon: const Icon(Icons.refresh),
@@ -378,6 +423,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           ),
         ],
       ),
+      // 채팅 FAB 버튼
+      floatingActionButton: _isChatOpen
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => setState(() => _isChatOpen = true),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('채팅'),
+              tooltip: '실시간 채팅 열기',
+            ),
       body: SafeArea(
         child: Stack(
           children: [
@@ -470,6 +524,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             if (_isRoutePlanning)
               const Positioned.fill(
                 child: _RoutePlanningOverlay(message: _routePlanningMessage),
+              ),
+            // 실시간 채팅 오버레이
+            if (_isChatOpen)
+              Positioned.fill(
+                child: ChatOverlay(
+                  messages: _chatMessages,
+                  isBusy: _isBusy,
+                  onSendMessage: _sendChatMessage,
+                  onClose: () => setState(() => _isChatOpen = false),
+                ),
               ),
           ],
         ),
