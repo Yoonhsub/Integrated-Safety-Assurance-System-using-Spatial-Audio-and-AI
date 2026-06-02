@@ -14,6 +14,7 @@ import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/v3_agent_api_client.dart';
+import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
@@ -537,12 +538,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   /// Live 음성 대화 전용 발화: Gemini Live 스트리밍만 사용하고 실패/중단(barge-in) 시
   /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
-  Future<void> _speakLiveOnly(String message) async {
+  Future<void> _speakLiveOnly(String message, {VoidCallback? onStart}) async {
     if (message.trim().isEmpty) return;
     try {
       await _cueService.playLiveGeneratedSpeech(
         baseUrl: _apiBaseUrl,
         text: message,
+        onFirstAudio: onStart,
       );
     } catch (_) {
       // 스트리밍 실패/중단은 조용히 넘어간다(자막은 이미 표시됨).
@@ -853,6 +855,27 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<Position> _currentPosition() async {
+    // 웹: 관대한 옵션의 raw navigator.geolocation을 먼저 시도한다.
+    // (인앱 브라우저에서 geolocator의 엄격한 호출이 실패해도 maximumAge 캐시로
+    //  좌표를 받을 수 있다.)
+    if (kIsWeb) {
+      final coords = await getWebCoords();
+      if (coords != null) {
+        return Position(
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          timestamp: DateTime.now(),
+          accuracy: coords.accuracy,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+      }
+    }
+
     // 웹 브라우저에서는 isLocationServiceEnabled()가 권한이 있어도 false를 줄 수 있어
     // (그래서 위치를 제공했는데도 데모 배너가 떴다) 네이티브에서만 이 사전 점검을 한다.
     if (!kIsWeb && !await Geolocator.isLocationServiceEnabled()) {

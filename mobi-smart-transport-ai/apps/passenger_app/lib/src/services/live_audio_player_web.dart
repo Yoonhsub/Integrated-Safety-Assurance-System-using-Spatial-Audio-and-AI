@@ -36,11 +36,13 @@ class LiveAudioPlayer {
   Future<void> play({
     required String baseUrl,
     required String text,
+    void Function()? onFirstAudio,
   }) async {
     await stop();
 
     final browserPlayer = _browserPlayer();
     browserPlayer.start(24000.toJS);
+    var firstAudioSeen = false;
 
     final socket = web.WebSocket(_websocketUri(baseUrl).toString());
     _socket = socket;
@@ -84,6 +86,11 @@ class LiveAudioPlayer {
         case 'audio':
           final audio = decoded['data'];
           if (audio is String && audio.isNotEmpty) {
+            if (!firstAudioSeen) {
+              firstAudioSeen = true;
+              // 첫 오디오 청크 도착 시점 = 실제 소리 시작. 자막을 이때 맞춘다.
+              onFirstAudio?.call();
+            }
             browserPlayer.feedPcmBase64(audio.toJS);
           }
           break;

@@ -77,19 +77,21 @@ void main() {
 
   float level = clamp(uLevel, 0.0, 1.0);
   // 진폭에 따라 오로라가 위로 더 올라오고 더 밝아진다.
-  float rise = mix(0.18, 0.52, level);
+  float rise = mix(0.30, 0.78, level);
 
-  // 흐르는 노이즈 결.
+  // 흐르는 노이즈 결(조금 더 빠르게 흘러 또렷하게 울렁이도록).
   float t = uTime;
   float flow =
-      fbm(vec2(uv.x * 3.0 + t * 0.10, fromBottom * 2.2 - t * 0.16));
+      fbm(vec2(uv.x * 3.0 + t * 0.16, fromBottom * 2.2 - t * 0.26));
   float flow2 =
-      fbm(vec2(uv.x * 6.0 - t * 0.07, fromBottom * 3.0 + t * 0.11));
+      fbm(vec2(uv.x * 6.0 - t * 0.12, fromBottom * 3.0 + t * 0.19));
   float wave = mix(flow, flow2, 0.5);
 
   // 진폭이 클수록 결이 들쭉날쭉하게 출렁인다.
-  float jitter = (wave - 0.5) * mix(0.10, 0.42, level);
-  float band = rise + jitter;
+  float jitter = (wave - 0.5) * mix(0.18, 0.62, level);
+  // 좌우로 부드럽게 굽이치는 큰 파동을 더해 통화 중 생동감을 준다.
+  float swell = sin(uv.x * 6.2831 + t * 0.9) * 0.05 * (0.4 + level);
+  float band = rise + jitter + swell;
 
   // 아래쪽일수록 진하고 위로 갈수록 부드럽게 사라지는 세로 마스크.
   float vertical = smoothstep(band + 0.30, 0.0, fromBottom);
@@ -99,7 +101,7 @@ void main() {
   float clump = 0.65 + 0.35 * fbm(vec2(uv.x * 2.0 - t * 0.05, t * 0.08));
 
   float intensity = vertical * clump;
-  intensity *= mix(0.45, 1.15, level);
+  intensity *= mix(0.6, 1.45, level);
 
   vec3 deep, mid, light;
   palette(uMode, deep, mid, light);
@@ -115,7 +117,7 @@ void main() {
   // 위쪽 끝은 완전히 투명하게.
   alpha *= smoothstep(0.0, 0.12, fromBottom);
 
-  vec3 color = grad * (0.8 + 0.6 * level);
+  vec3 color = grad * (0.9 + 0.7 * level);
   // premultiplied alpha 출력.
   fragColor = vec4(color * alpha, alpha);
 }

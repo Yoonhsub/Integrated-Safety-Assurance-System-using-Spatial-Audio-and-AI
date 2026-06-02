@@ -6,5 +6,7 @@ class VoiceAudioLevel {
 
   double outputLevel() => 0.0;
 
+  double remainingPlaybackMs() => 0.0;
+
   Future<void> stopMic() async {}
 }

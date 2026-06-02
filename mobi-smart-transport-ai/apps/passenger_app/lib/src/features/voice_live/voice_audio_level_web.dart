@@ -10,6 +10,7 @@ extension type _MobiVoiceMic._(JSObject _) implements JSObject {
 
 extension type _MobiLiveAudio._(JSObject _) implements JSObject {
   external double getOutputLevel();
+  external double getRemainingMs();
 }
 
 extension type _MobiWindow._(JSObject _) implements JSObject {
@@ -44,6 +45,13 @@ class VoiceAudioLevel {
     final live = _MobiWindow._(web.window).liveAudio;
     if (live == null) return 0.0;
     final value = live.getOutputLevel();
+    return value.isFinite ? value : 0.0;
+  }
+
+  double remainingPlaybackMs() {
+    final live = _MobiWindow._(web.window).liveAudio;
+    if (live == null) return 0.0;
+    final value = live.getRemainingMs();
     return value.isFinite ? value : 0.0;
   }
 

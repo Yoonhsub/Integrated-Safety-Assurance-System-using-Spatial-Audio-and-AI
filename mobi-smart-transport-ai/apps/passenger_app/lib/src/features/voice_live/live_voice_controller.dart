@@ -30,7 +30,8 @@ class LiveProcessResult {
 
 typedef LiveUtteranceProcessor = Future<LiveProcessResult> Function(
     String utterance);
-typedef LiveSpeak = Future<void> Function(String text);
+// onStart는 실제 오디오 첫 청크가 도착(=소리 시작)할 때 호출된다(자막 동기화용).
+typedef LiveSpeak = Future<void> Function(String text, {VoidCallback? onStart});
 
 /// LiveVoicePage의 상태 머신·turn-taking·오디오 레벨·자막을 관리한다.
 ///
@@ -142,29 +143,35 @@ class LiveVoiceController {
 
     _calibrate(mic);
 
-    // 오로라 진폭(실 RMS, thinking만 fake pulse)
+    // 오로라 진폭(실 RMS, thinking만 fake pulse). RMS가 작아 빈약해 보이므로
+    // 게인+소프트 부스트로 가시성을 키운다.
     double target;
     switch (state.value) {
       case VoiceTurnState.listening:
-        target = muted.value ? 0.04 : mic;
+        target = muted.value ? 0.06 : _boost(mic);
       case VoiceTurnState.speaking:
-        target = out;
+        target = math.max(0.22, _boost(out)); // AI 발화 중엔 항상 또렷하게.
       case VoiceTurnState.thinking:
         final t = DateTime.now().millisecondsSinceEpoch / 1000.0;
-        target = 0.28 + 0.16 * (0.5 + 0.5 * math.sin(t * 2.2));
+        target = 0.34 + 0.18 * (0.5 + 0.5 * math.sin(t * 2.2));
       case VoiceTurnState.idle:
-        target = 0.04;
+        target = 0.05;
     }
+    // 상승은 빠르게, 하락은 더 천천히(발화 중 잠깐의 무음에 꺼지지 않게).
     level.value = _analyzer.smoothLevel(
       current: level.value,
       target: target.clamp(0.0, 1.0),
+      attack: 0.5,
+      release: 0.045,
     );
 
     if (_ending) return;
     if (state.value == VoiceTurnState.listening && !muted.value && _calibrated) {
       _vadListening(mic);
-    } else if (state.value == VoiceTurnState.speaking && _calibrated) {
-      _vadBargeIn(mic);
+    } else if (state.value == VoiceTurnState.speaking &&
+        _calibrated &&
+        !muted.value) {
+      _vadBargeIn(mic, out);
     } else {
       _userSpeaking = false;
       _bargeStartedAt = null;
@@ -183,6 +190,24 @@ class LiveVoiceController {
       _speechThreshold = math.max(0.06, _noiseFloor * 2.6 + 0.02);
       _silenceThreshold = math.max(0.035, _noiseFloor * 1.7 + 0.012);
       _calibrated = true;
+    }
+  }
+
+  // 작은 RMS를 또렷하게 키운다(게인 + soft-knee 곡선).
+  double _boost(double rms) {
+    final v = (rms * 2.4).clamp(0.0, 1.0);
+    return math.pow(v, 0.7).toDouble();
+  }
+
+  // 스케줄된 재생이 끝날 때까지 대기(막판 음성 잘림 방지). barge-in/종료로 stop되면
+  // 남은 시간이 0이 되어 즉시 빠져나온다.
+  Future<void> _drainPlayback() async {
+    for (var i = 0; i < 120; i++) {
+      if (_disposed) return;
+      final remain = _audioLevel.remainingPlaybackMs();
+      if (remain <= 80) return;
+      final wait = remain > 200 ? 200 : remain.ceil();
+      await Future.delayed(Duration(milliseconds: wait));
     }
   }
 
@@ -217,9 +242,12 @@ class LiveVoiceController {
     _endpointing = false;
   }
 
-  void _vadBargeIn(double level) {
-    // 에코(AI 음성)가 마이크로 새는 것을 줄이려 더 높은 임계 + 지속시간 요구.
-    if (level >= _speechThreshold * 1.35) {
+  void _vadBargeIn(double mic, double output) {
+    // AI 음성 에코로 인한 오인을 막는다: 사용자의 마이크 입력이 충분히 크고,
+    // 동시에 현재 AI 출력 레벨보다 뚜렷하게 높을 때만 barge-in으로 인정한다.
+    final loudEnough = mic >= _speechThreshold * 1.8 + 0.04;
+    final overAi = mic >= output * 1.6 + 0.05;
+    if (loudEnough && overAi) {
       _bargeStartedAt ??= DateTime.now();
       if (DateTime.now().difference(_bargeStartedAt!) >= _bargeInSustain) {
         _bargeStartedAt = null;
@@ -321,11 +349,20 @@ class LiveVoiceController {
     try {
       await _speech.stop();
     } catch (_) {}
-    captions.commitFinal(speaker: Speaker.agent, text: _goodbye);
     _setState(VoiceTurnState.speaking);
+    var shown = false;
+    void showCaption() {
+      if (shown) return;
+      shown = true;
+      captions.commitFinal(speaker: Speaker.agent, text: _goodbye);
+    }
+
     try {
-      await speak(_goodbye);
+      await speak(_goodbye, onStart: showCaption);
     } catch (_) {}
+    showCaption();
+    // 작별 인사가 끝까지 재생된 뒤에 통화를 닫는다(말 씹힘 방지).
+    await _drainPlayback();
     if (_disposed) return;
     onEnd();
   }
@@ -352,46 +389,39 @@ class LiveVoiceController {
       if (_disposed) return;
 
       final reply = result.spokenText.trim();
-      if (reply.isNotEmpty) {
+      // 종료/전환이면 떠나는 동안 VAD·재듣기를 멈춘다.
+      if (result.endSession || result.navigateNow) _ending = true;
+
+      // 자막은 실제 소리가 시작될 때 맞춘다(텍스트 먼저 뜨고 소리 늦는 문제 완화).
+      var captionShown = false;
+      void showAgentCaption() {
+        if (captionShown || reply.isEmpty) return;
+        captionShown = true;
         captions.commitFinal(speaker: Speaker.agent, text: reply);
       }
 
-      if (result.endSession) {
-        _ending = true;
-        _setState(VoiceTurnState.speaking);
-        if (reply.isNotEmpty) {
-          try {
-            await speak(reply);
-          } catch (_) {}
-        }
-        if (_disposed) return;
-        onEnd();
-        return;
-      }
-
-      if (result.navigateNow) {
-        _setState(VoiceTurnState.speaking);
-        if (reply.isNotEmpty) {
-          try {
-            await speak(reply);
-          } catch (_) {}
-        }
-        if (_disposed) return;
-        _navigateRequested = true;
-        onNavigate();
-        return;
-      }
-
-      // 응답 음성. barge-in으로 끊기면 speak()가 반환되고 곧바로 다시 듣는다.
       _setState(VoiceTurnState.speaking);
       if (reply.isNotEmpty) {
         try {
-          await speak(reply);
+          await speak(reply, onStart: showAgentCaption);
         } catch (_) {
           // 음성 출력 실패/중단해도 대화는 계속한다.
         }
       }
-      if (_disposed || _ending) return;
+      showAgentCaption(); // 오디오가 없더라도 자막은 보장.
+      await _drainPlayback(); // 마지막 음성이 잘리지 않도록 재생 완료까지 대기.
+      if (_disposed) return;
+
+      if (result.navigateNow) {
+        _navigateRequested = true;
+        onNavigate();
+        return;
+      }
+      if (result.endSession) {
+        onEnd();
+        return;
+      }
+      if (_ending) return;
       _setState(VoiceTurnState.listening);
       _beginListening();
       _resetInactivityTimer();

@@ -13,6 +13,7 @@ class LiveAudioPlayer {
   Future<void> play({
     required String baseUrl,
     required String text,
+    void Function()? onFirstAudio,
   }) async {
     throw const LiveAudioPlaybackException(
       'Gemini Live API 스트리밍 재생은 웹에서만 지원돼.',

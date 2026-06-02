@@ -99,10 +99,15 @@ class AudioHapticCueService {
   Future<void> playLiveGeneratedSpeech({
     required String baseUrl,
     required String text,
+    void Function()? onFirstAudio,
   }) async {
     await _flutterTts.stop();
     await _audioPlayer.stop();
-    await _liveAudioPlayer.play(baseUrl: baseUrl, text: text);
+    await _liveAudioPlayer.play(
+      baseUrl: baseUrl,
+      text: text,
+      onFirstAudio: onFirstAudio,
+    );
   }
 
   Future<void> stopCue() async {

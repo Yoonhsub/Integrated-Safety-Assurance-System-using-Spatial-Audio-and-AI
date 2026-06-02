@@ -82,6 +82,14 @@
     nextStartTime = startAt + buffer.duration;
   }
 
+  // 스케줄된(버퍼된) 재생이 끝날 때까지 남은 시간(ms). 통화 종료/전환 시
+  // AI 마지막 말이 잘리지 않도록 drain 대기에 사용한다.
+  function getRemainingMs() {
+    if (!audioContext) return 0;
+    const remaining = (nextStartTime - audioContext.currentTime) * 1000;
+    return remaining > 0 ? remaining : 0;
+  }
+
   // 현재 AI 출력 오디오의 RMS(0~1). 재생 중이 아니면 0.
   function getOutputLevel() {
     if (!analyser || !analyserBuffer) return 0;
