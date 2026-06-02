@@ -1,7 +1,7 @@
 """실시간 내비게이션 통합 상태 API.
 
-Flutter 추적 패널이 60초마다 한 번 호출해 도착/위치/보행경로/근처정류장/운행상태를
-한 번에 받는다. 과호출 방지를 위해 서버측 캐시(기본 30s)를 둔다.
+Flutter 추적 패널이 30초마다 한 번 호출해 도착/위치/보행경로/근처정류장/운행상태를
+한 번에 받는다. 과호출 방지를 위해 서버측 캐시(기본 15s)를 둔다.
 Phase 5 Agent Trace step을 안전 payload(키/정밀좌표/원본응답 제외)로 부착한다.
 """
 from __future__ import annotations
@@ -28,6 +28,8 @@ def live_status(
     boardLng: float | None = Query(default=None, ge=-180, le=180),
     alightLat: float | None = Query(default=None, ge=-90, le=90),
     alightLng: float | None = Query(default=None, ge=-180, le=180),
+    destLat: float | None = Query(default=None, ge=-90, le=90),
+    destLng: float | None = Query(default=None, ge=-180, le=180),
     boardStopName: str | None = Query(default=None),
     alightStopName: str | None = Query(default=None),
     destName: str | None = Query(default=None),
@@ -45,6 +47,8 @@ def live_status(
         board_lng=boardLng,
         alight_lat=alightLat,
         alight_lng=alightLng,
+        dest_lat=destLat,
+        dest_lng=destLng,
         board_stop_name=boardStopName,
         alight_stop_name=alightStopName,
         dest_name=destName,

@@ -74,12 +74,13 @@ class LiveStatusResponse(StrictApiModel):
     selectedBoardStop: NearbyStop | None = None
     selectedAlightStop: NearbyStop | None = None
     walkingRouteToBoardStop: WalkingRouteResponse | None = None
+    walkingRouteFromAlightStop: WalkingRouteResponse | None = None
     arrivals: list[V3BusArrival] = Field(default_factory=list)
     busPositions: list[V3BusPosition] = Field(default_factory=list)
     serviceStatus: RoutePlanServiceStatus | None = None
     congestion: str = "미제공"
     lastUpdatedAt: datetime
-    nextRefreshSeconds: int = 60
+    nextRefreshSeconds: int = 30
     warnings: list[str] = Field(default_factory=list)
     fallbackSource: FallbackSource = FallbackSource.ERROR
     trace: list[AgentTraceEvent] = Field(default_factory=list)

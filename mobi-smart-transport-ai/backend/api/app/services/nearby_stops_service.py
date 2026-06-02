@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from app.schemas.v3 import FallbackSource, utc_now
 from app.schemas.v3_map import GeoPoint, NearbyStop, NearbyStopsResponse
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
@@ -20,18 +22,22 @@ def find_named_stop(
     origin_lng: float | None = None,
 ) -> NearbyStop | None:
     """Resolve an approved stop coordinate by name without inventing a point."""
-    try:
-        match = (
-            _service.find_nearest(
-                stop_name=stop_name,
-                origin_lat=origin_lat,
-                origin_lng=origin_lng,
+    match = None
+    for candidate_name in _candidate_stop_names(stop_name):
+        try:
+            match = (
+                _service.find_nearest(
+                    stop_name=candidate_name,
+                    origin_lat=origin_lat,
+                    origin_lng=origin_lng,
+                )
+                if origin_lat is not None and origin_lng is not None
+                else _service.find_by_name(stop_name=candidate_name)
             )
-            if origin_lat is not None and origin_lng is not None
-            else _service.find_by_name(stop_name=stop_name)
-        )
-    except Exception:
-        return None
+        except Exception:
+            return None
+        if match is not None:
+            break
     if match is None:
         return None
     return NearbyStop(
@@ -42,6 +48,17 @@ def find_named_stop(
         distanceMeters=round(match.distance_meters or 0.0, 1),
         source="PUBLIC_API",
     )
+
+
+def _candidate_stop_names(stop_name: str) -> list[str]:
+    """ODsay 결합 정류장명을 승인 카탈로그에서 확인 가능한 단위로 펼친다."""
+    candidates = [stop_name.strip()]
+    candidates.extend(
+        part.strip()
+        for part in re.split(r"[.·,/]", stop_name)
+        if part.strip()
+    )
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
 def find_nearby_stops(

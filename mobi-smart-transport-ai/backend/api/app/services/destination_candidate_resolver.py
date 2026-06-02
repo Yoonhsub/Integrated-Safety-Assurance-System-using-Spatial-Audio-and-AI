@@ -441,10 +441,26 @@ class DestinationCandidateResolver:
     ) -> list[DestinationCandidate]:
         candidates: list[DestinationCandidate] = []
 
-        candidates.extend(_known_place_candidates(normalized))
-        candidates.extend(_seed_stop_name_candidates(normalized))
+        known_candidates = _known_place_candidates(normalized)
+        seed_candidates = _seed_stop_name_candidates(normalized)
 
         if live:
+            candidates.extend(
+                self._verified_live_known_candidates(
+                    known_candidates,
+                    normalized=normalized,
+                    origin_lat=origin_lat,
+                    origin_lng=origin_lng,
+                )
+            )
+            # 실 API 모드에서 오타로 추론한 seed 정류장을 임의 좌표로 확정하지 않는다.
+            # 사용자가 정확히 말한 seed 이름만 보존하고, 오타 후보는 승인 카탈로그로
+            # 검증된 known place 흐름에서만 확인 질문으로 올린다.
+            candidates.extend(
+                item
+                for item in seed_candidates
+                if _normalize(item.name) == normalized
+            )
             candidates.extend(self._public_stop_candidates(query))
             candidates.extend(
                 self._local_search.search(
@@ -454,8 +470,96 @@ class DestinationCandidateResolver:
                     limit=5,
                 )
             )
+        else:
+            candidates.extend(known_candidates)
+            candidates.extend(seed_candidates)
 
         return [item for item in candidates if item.confidence >= _CONFIRMATION_THRESHOLD]
+
+    def _verified_live_known_candidates(
+        self,
+        candidates: list[DestinationCandidate],
+        *,
+        normalized: str,
+        origin_lat: float | None,
+        origin_lng: float | None,
+    ) -> list[DestinationCandidate]:
+        verified: list[DestinationCandidate] = []
+        for candidate in candidates:
+            if (
+                _normalize(candidate.name) == normalized
+                or _is_unambiguous_known_alias(normalized, candidate.name)
+            ):
+                verified.append(candidate)
+                continue
+            public_candidate = self._verify_inferred_candidate(
+                candidate,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+            )
+            if public_candidate is not None:
+                verified.append(public_candidate)
+        return verified
+
+    def _verify_inferred_candidate(
+        self,
+        candidate: DestinationCandidate,
+        *,
+        origin_lat: float | None,
+        origin_lng: float | None,
+    ) -> DestinationCandidate | None:
+        """오타 추론 후보를 청주 승인 정류장/Kakao 결과로 재검증한다."""
+        target = _normalize(candidate.name)
+        try:
+            matches = self._stop_catalog.search_by_name(stop_name=candidate.name, limit=5)
+        except Exception:
+            matches = []
+        stop_match = next(
+            (
+                item
+                for item in matches
+                if target == _normalize(item.stop_name)
+                or target in _normalize(item.stop_name)
+            ),
+            None,
+        )
+        if stop_match is not None:
+            return candidate.model_copy(
+                update={
+                    "latitude": stop_match.latitude,
+                    "longitude": stop_match.longitude,
+                    "source": FallbackSource.PUBLIC_API,
+                }
+            )
+
+        try:
+            local_matches = self._local_search.search(
+                candidate.name,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+                limit=5,
+            )
+        except Exception:
+            local_matches = []
+        local_match = next(
+            (
+                item
+                for item in local_matches
+                if target == _normalize(item.name)
+                or target in _normalize(item.name)
+            ),
+            None,
+        )
+        if local_match is None:
+            return None
+        return candidate.model_copy(
+            update={
+                "latitude": local_match.latitude,
+                "longitude": local_match.longitude,
+                "address": local_match.address,
+                "source": FallbackSource.PUBLIC_API,
+            }
+        )
 
     def _public_stop_candidates(self, query: str) -> list[DestinationCandidate]:
         try:

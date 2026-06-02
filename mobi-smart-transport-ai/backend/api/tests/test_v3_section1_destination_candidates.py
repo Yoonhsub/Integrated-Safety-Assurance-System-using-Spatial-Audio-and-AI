@@ -49,7 +49,18 @@ def test_destination_resolver_prefers_stt_confirmation_over_live_keyword_choice(
             return []
 
     class LiveLocalSearch:
-        def search(self, *_, **__):
+        def search(self, query, *_, **__):
+            if query == "상당산성":
+                return [
+                    DestinationCandidate(
+                        name="상당산성",
+                        type=DestinationCandidateType.PLACE,
+                        confidence=0.91,
+                        latitude=36.6610,
+                        longitude=127.5349,
+                        source=FallbackSource.PUBLIC_API,
+                    )
+                ]
             return [
                 DestinationCandidate(
                     name="상단산성 한옥마을 주차장",
@@ -71,6 +82,62 @@ def test_destination_resolver_prefers_stt_confirmation_over_live_keyword_choice(
     assert result.topCandidate is not None
     assert result.topCandidate.name == "상당산성"
     assert result.question == "혹시 상당산성 맞아?"
+
+
+def test_destination_resolver_verifies_cheongju_typo_before_confirmation() -> None:
+    class EmptyLocalSearch:
+        def search(self, *_, **__):
+            return []
+
+    class SachangStopCatalog:
+        def search_by_name(self, *, stop_name: str, limit: int = 5):
+            if stop_name != "사창사거리":
+                return []
+            return [
+                CheongjuBusStopMatch(
+                    service_id="1933",
+                    stop_name="사창사거리",
+                    longitude=127.4596675,
+                    latitude=36.63594787,
+                    endpoint="https://api.odcloud.kr/api/example",
+                    fetched_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    total_count=3402,
+                )
+            ]
+
+        def find_nearby(self, **_):
+            return self.search_by_name(stop_name="사창사거리")
+
+    resolver = DestinationCandidateResolver(
+        stop_catalog=SachangStopCatalog(),
+        local_search=EmptyLocalSearch(),
+    )
+    result = resolver.resolve(heard_text="사당사거리", live=True)
+
+    assert result.status == "NEEDS_CONFIRMATION"
+    assert result.topCandidate is not None
+    assert result.topCandidate.name == "사창사거리"
+    assert result.topCandidate.source == "PUBLIC_API"
+    assert result.question == "혹시 사창사거리 맞아?"
+
+
+def test_destination_resolver_does_not_suggest_unverified_cheongju_typo() -> None:
+    class EmptyProvider:
+        def search_by_name(self, **_):
+            return []
+
+        def find_nearby(self, **_):
+            return []
+
+        def search(self, *_, **__):
+            return []
+
+    provider = EmptyProvider()
+    resolver = DestinationCandidateResolver(stop_catalog=provider, local_search=provider)
+    result = resolver.resolve(heard_text="사당사거리", live=True)
+
+    assert result.status == "NOT_FOUND"
+    assert result.topCandidate is None
 
 
 def test_destination_candidates_needs_choice_for_ambiguous_terminal() -> None:

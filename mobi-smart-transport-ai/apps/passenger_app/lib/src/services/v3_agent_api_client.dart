@@ -242,6 +242,8 @@ class V3AgentApiClient {
     double? boardLng,
     double? alightLat,
     double? alightLng,
+    double? destLat,
+    double? destLng,
     String? boardStopName,
     String? alightStopName,
     String? destName,
@@ -261,6 +263,7 @@ class V3AgentApiClient {
     _addCoordinatePair(query, 'user', userLat, userLng);
     _addCoordinatePair(query, 'board', boardLat, boardLng);
     _addCoordinatePair(query, 'alight', alightLat, alightLng);
+    _addCoordinatePair(query, 'dest', destLat, destLng);
     if (boardStopName != null && boardStopName.isNotEmpty) {
       query['boardStopName'] = boardStopName;
     }

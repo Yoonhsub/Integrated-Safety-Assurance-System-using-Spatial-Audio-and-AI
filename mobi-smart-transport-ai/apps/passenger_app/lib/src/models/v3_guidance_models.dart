@@ -429,17 +429,23 @@ class V3DestinationCandidate {
     required this.name,
     required this.type,
     required this.confidence,
+    this.latitude,
+    this.longitude,
   });
 
   final String name;
   final String type;
   final double confidence;
+  final double? latitude;
+  final double? longitude;
 
   factory V3DestinationCandidate.fromJson(Map<String, dynamic> json) {
     return V3DestinationCandidate(
       name: _stringValue(json['name'], fallback: ''),
       type: _stringValue(json['type'], fallback: 'PLACE'),
       confidence: _doubleValue(json['confidence']),
+      latitude: _nullableDouble(json['latitude']),
+      longitude: _nullableDouble(json['longitude']),
     );
   }
 
@@ -1286,6 +1292,7 @@ class V3LiveStatus {
     this.selectedBoardStop,
     this.selectedAlightStop,
     this.walkingRouteToBoardStop,
+    this.walkingRouteFromAlightStop,
     this.serviceStatus,
     this.lastUpdatedAt,
   });
@@ -1296,6 +1303,7 @@ class V3LiveStatus {
   final V3NearbyStop? selectedBoardStop;
   final V3NearbyStop? selectedAlightStop;
   final V3WalkingRoute? walkingRouteToBoardStop;
+  final V3WalkingRoute? walkingRouteFromAlightStop;
   final List<V3BusArrival> arrivals;
   final List<V3BusPosition> busPositions;
   final V3RouteServiceStatus? serviceStatus;
@@ -1316,6 +1324,7 @@ class V3LiveStatus {
     final board = _mapValue(json['selectedBoardStop']);
     final alight = _mapValue(json['selectedAlightStop']);
     final walking = _mapValue(json['walkingRouteToBoardStop']);
+    final egressWalking = _mapValue(json['walkingRouteFromAlightStop']);
     final user = _mapValue(json['userLocation']);
     return V3LiveStatus(
       routeNo: _stringValue(json['routeNo'], fallback: ''),
@@ -1326,13 +1335,15 @@ class V3LiveStatus {
       selectedAlightStop: alight == null ? null : V3NearbyStop.fromJson(alight),
       walkingRouteToBoardStop:
           walking == null ? null : V3WalkingRoute.fromJson(walking),
+      walkingRouteFromAlightStop:
+          egressWalking == null ? null : V3WalkingRoute.fromJson(egressWalking),
       arrivals: parseList(json['arrivals'], V3BusArrival.fromJson),
       busPositions: parseList(json['busPositions'], V3BusPosition.fromJson),
-      serviceStatus:
-          V3RouteServiceStatus.fromNullableJson(_mapValue(json['serviceStatus'])),
+      serviceStatus: V3RouteServiceStatus.fromNullableJson(
+          _mapValue(json['serviceStatus'])),
       congestion: _stringValue(json['congestion'], fallback: '미제공'),
       lastUpdatedAt: _dateTimeValue(json['lastUpdatedAt']),
-      nextRefreshSeconds: _nullableInt(json['nextRefreshSeconds']) ?? 60,
+      nextRefreshSeconds: _nullableInt(json['nextRefreshSeconds']) ?? 30,
       warnings: _stringList(json['warnings']),
       fallbackSource: _stringValue(json['fallbackSource'], fallback: 'ERROR'),
     );

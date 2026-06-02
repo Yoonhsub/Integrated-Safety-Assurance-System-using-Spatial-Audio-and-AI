@@ -88,10 +88,14 @@ class LiveVoiceController {
   static const Duration _bargeInSustain = Duration(milliseconds: 320);
   // STT 자체 안전망(내 VAD가 먼저 끊으므로 길게).
   static const Duration _sttSafetyPause = Duration(seconds: 5);
+  static const Duration _sttRestartDelay = Duration(milliseconds: 350);
+  static const Duration _sttRetryDelay = Duration(milliseconds: 700);
   static const Duration _tick = Duration(milliseconds: 33);
 
   Timer? _levelTimer;
   Timer? _inactivityTimer;
+  Timer? _listenRetryTimer;
+  int _listenGeneration = 0;
   bool _speechReady = false;
   bool _isCommitting = false;
   bool _disposed = false;
@@ -166,7 +170,9 @@ class LiveVoiceController {
     );
 
     if (_ending) return;
-    if (state.value == VoiceTurnState.listening && !muted.value && _calibrated) {
+    if (state.value == VoiceTurnState.listening &&
+        !muted.value &&
+        _calibrated) {
       _vadListening(mic);
     } else if (state.value == VoiceTurnState.speaking &&
         _calibrated &&
@@ -278,30 +284,69 @@ class LiveVoiceController {
         await _speech.stop();
       } catch (_) {}
     } else if (state.value == VoiceTurnState.listening) {
-      _beginListening();
+      _beginListening(delay: _sttRestartDelay);
     }
   }
 
-  void _beginListening() {
+  void _beginListening({Duration delay = Duration.zero}) {
     if (_disposed || !_speechReady || muted.value || _ending) return;
+    _listenRetryTimer?.cancel();
+    final generation = ++_listenGeneration;
+    if (delay > Duration.zero) {
+      _listenRetryTimer = Timer(delay, () {
+        _listenRetryTimer = null;
+        _startListening(generation);
+      });
+      return;
+    }
+    _startListening(generation);
+  }
+
+  Future<void> _startListening(int generation) async {
+    if (_disposed ||
+        generation != _listenGeneration ||
+        !_speechReady ||
+        muted.value ||
+        _ending ||
+        state.value != VoiceTurnState.listening) {
+      return;
+    }
+    if (_speech.isListening) return;
     _partial = '';
     _userSpeaking = false;
     _speechStartedAt = null;
     _lastVoiceAt = null;
     _bargingIn = false;
     _bargeStartedAt = null;
-    _speech.listen(
-      localeId: 'ko_KR',
-      // 내 VAD가 먼저 자연스럽게 끊으므로 STT pause는 안전망 용도로 길게 둔다.
-      pauseFor: _sttSafetyPause,
-      listenFor: const Duration(seconds: 120),
-      onResult: _onResult,
-      listenOptions: SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: true,
-        listenMode: ListenMode.dictation,
-      ),
-    );
+    try {
+      await _speech.listen(
+        localeId: 'ko_KR',
+        // 내 VAD가 먼저 자연스럽게 끊으므로 STT pause는 안전망 용도로 길게 둔다.
+        pauseFor: _sttSafetyPause,
+        listenFor: const Duration(seconds: 120),
+        onResult: _onResult,
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: true,
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    } catch (_) {
+      // Web Speech API는 직전 recognition 종료가 정착되기 전에 재시작하면
+      // 예외를 내거나 요청을 무시할 수 있다. 아래 재시도가 복구한다.
+    }
+    if (!_speech.isListening) _scheduleListeningRetry();
+  }
+
+  void _scheduleListeningRetry() {
+    if (_disposed ||
+        !_speechReady ||
+        muted.value ||
+        _ending ||
+        state.value != VoiceTurnState.listening) {
+      return;
+    }
+    _beginListening(delay: _sttRetryDelay);
   }
 
   void _onResult(SpeechRecognitionResult result) {
@@ -326,6 +371,10 @@ class LiveVoiceController {
   void _onListenEnded() {
     if (_disposed) return;
     if (state.value != VoiceTurnState.listening) return;
+    if (_partial.trim().isEmpty) {
+      _scheduleListeningRetry();
+      return;
+    }
     _commitUserTurn(_partial);
   }
 
@@ -374,11 +423,13 @@ class LiveVoiceController {
     final spoken = text.trim();
     if (spoken.isEmpty) {
       if (state.value == VoiceTurnState.listening && !_ending) {
-        Future.delayed(const Duration(milliseconds: 250), _beginListening);
+        _scheduleListeningRetry();
       }
       return;
     }
     _isCommitting = true;
+    _listenRetryTimer?.cancel();
+    _listenGeneration += 1;
     _inactivityTimer?.cancel();
     try {
       await _speech.stop();
@@ -423,7 +474,9 @@ class LiveVoiceController {
       }
       if (_ending) return;
       _setState(VoiceTurnState.listening);
-      _beginListening();
+      // 브라우저 STT가 직전 세션 종료를 반영할 시간을 준 뒤 다시 연다.
+      // 실패하면 _startListening이 실제 listening 상태를 확인하고 재시도한다.
+      _beginListening(delay: _sttRestartDelay);
       _resetInactivityTimer();
     } finally {
       _isCommitting = false;
@@ -438,6 +491,9 @@ class LiveVoiceController {
     _levelTimer = null;
     _inactivityTimer?.cancel();
     _inactivityTimer = null;
+    _listenRetryTimer?.cancel();
+    _listenRetryTimer = null;
+    _listenGeneration += 1;
     try {
       await _speech.cancel();
     } catch (_) {}
@@ -454,6 +510,7 @@ class LiveVoiceController {
   void dispose() {
     _levelTimer?.cancel();
     _inactivityTimer?.cancel();
+    _listenRetryTimer?.cancel();
     state.dispose();
     level.dispose();
     shaderMode.dispose();
