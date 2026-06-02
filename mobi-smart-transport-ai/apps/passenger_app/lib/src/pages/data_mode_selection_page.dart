@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../services/api_base_url.dart';
+
 class DataModeSelectionPage extends StatefulWidget {
   const DataModeSelectionPage({super.key, required this.onModeSelected});
 
@@ -12,11 +14,8 @@ class DataModeSelectionPage extends StatefulWidget {
 }
 
 class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
-  // 환경 변수에서 API 기본 URL을 가져오며, 기본값은 localhost:8000
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'MOBI_API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
-  );
+  // 빌드 define이 없으면 웹은 현재 origin을 사용한다(배포본 localhost 호출 방지).
+  static final String _apiBaseUrl = resolveApiBaseUrl();
 
   bool _isSwitching = false;
 

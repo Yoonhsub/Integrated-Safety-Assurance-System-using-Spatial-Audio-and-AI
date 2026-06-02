@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/backend_api_client.dart';
 import '../services/v3_agent_api_client.dart';
@@ -24,10 +25,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'MOBI_API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
-  );
+  static final String _apiBaseUrl = resolveApiBaseUrl();
 
   static const String _defaultBusStopId = 'mock-stop-001';
   static const String _passengerUserId = 'passenger-demo-001';
@@ -46,12 +44,12 @@ class _HomePageState extends State<HomePage> {
   final VoiceGuideService _voiceGuideService = VoiceGuideService();
   final AudioHapticCueService _cueService = AudioHapticCueService();
 
-  final BackendApiClient _backendApiClient = const BackendApiClient(
+  final BackendApiClient _backendApiClient = BackendApiClient(
     baseUrl: _apiBaseUrl,
     useMockData: false,
   );
 
-  final V3AgentApiClient _v3AgentApiClient = const V3AgentApiClient(
+  final V3AgentApiClient _v3AgentApiClient = V3AgentApiClient(
     baseUrl: _apiBaseUrl,
   );
 

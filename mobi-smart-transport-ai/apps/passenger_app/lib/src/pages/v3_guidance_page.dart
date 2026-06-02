@@ -11,6 +11,7 @@ import '../features/voice_live/live_caption_controller.dart';
 import '../features/voice_live/live_voice_controller.dart';
 import '../features/voice_live/live_voice_page.dart';
 import '../models/v3_guidance_models.dart';
+import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/voice_guide_service.dart';
@@ -38,10 +39,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   static const String _routePlanningMessage =
       '요청하신 내용을 응답하기 위해 경로를 계산 중입니다. 잠시만 기다려 주세요.';
 
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'MOBI_API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
-  );
+  static final String _apiBaseUrl = resolveApiBaseUrl();
 
   static const String _sessionId = 'demo-session';
 
@@ -99,7 +97,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void initState() {
     super.initState();
-    _client = const V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService();
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
@@ -246,7 +244,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         builder: (_) => LiveVoicePage(
           agentName: _wakeWord,
           processor: _processLiveUtterance,
-          speak: (text) => _speakAgentMessage(text),
+          speak: _speakLiveOnly,
           stopAudio: () => _cueService.stopCue(),
           onExit: _onLiveVoiceExit,
         ),
@@ -535,6 +533,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     if (no.contains(compact)) return true;
     if (compact.length <= 6) return no.any(compact.contains);
     return false;
+  }
+
+  /// Live 음성 대화 전용 발화: Gemini Live 스트리밍만 사용하고 실패/중단(barge-in) 시
+  /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
+  Future<void> _speakLiveOnly(String message) async {
+    if (message.trim().isEmpty) return;
+    try {
+      await _cueService.playLiveGeneratedSpeech(
+        baseUrl: _apiBaseUrl,
+        text: message,
+      );
+    } catch (_) {
+      // 스트리밍 실패/중단은 조용히 넘어간다(자막은 이미 표시됨).
+    }
   }
 
   Future<void> _speakAgentMessage(String message,

@@ -47,6 +47,7 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
       captions: _captions,
       processor: widget.processor,
       speak: widget.speak,
+      stopAudio: widget.stopAudio,
       onNavigate: () => _exit(navigated: true),
       onEnd: () => _exit(navigated: false),
     );
