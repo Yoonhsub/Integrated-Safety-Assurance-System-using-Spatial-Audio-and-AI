@@ -5,16 +5,20 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import '../models/v3_guidance_models.dart';
+import 'live_audio_player.dart';
 
 class AudioHapticCueService {
   AudioHapticCueService({
     FlutterTts? flutterTts,
     AudioPlayer? audioPlayer,
+    LiveAudioPlayer? liveAudioPlayer,
   })  : _flutterTts = flutterTts ?? FlutterTts(),
-        _audioPlayer = audioPlayer ?? AudioPlayer();
+        _audioPlayer = audioPlayer ?? AudioPlayer(),
+        _liveAudioPlayer = liveAudioPlayer ?? LiveAudioPlayer();
 
   final FlutterTts _flutterTts;
   final AudioPlayer _audioPlayer;
+  final LiveAudioPlayer _liveAudioPlayer;
   Timer? _cueTimer;
   String? _activeCueType;
   bool _isConfigured = false;
@@ -60,7 +64,6 @@ class AudioHapticCueService {
     }
   }
 
-
   Future<void> playDing({bool vibrate = true}) async {
     await stopCue();
     if (vibrate) {
@@ -85,17 +88,36 @@ class AudioHapticCueService {
     await _audioPlayer.play(BytesSource(audioBytes));
   }
 
+  Future<void> prepareLiveGeneratedSpeech() async {
+    try {
+      await _liveAudioPlayer.prepare();
+    } catch (_) {
+      // The WAV/local fallback remains available when Web Audio cannot unlock.
+    }
+  }
+
+  Future<void> playLiveGeneratedSpeech({
+    required String baseUrl,
+    required String text,
+  }) async {
+    await _flutterTts.stop();
+    await _audioPlayer.stop();
+    await _liveAudioPlayer.play(baseUrl: baseUrl, text: text);
+  }
+
   Future<void> stopCue() async {
     _cueTimer?.cancel();
     _cueTimer = null;
     _activeCueType = null;
     await _flutterTts.stop();
     await _audioPlayer.stop();
+    await _liveAudioPlayer.stop();
   }
 
   Future<void> dispose() async {
     await stopCue();
     await _audioPlayer.dispose();
+    await _liveAudioPlayer.dispose();
   }
 
   Future<void> _configureTts() async {

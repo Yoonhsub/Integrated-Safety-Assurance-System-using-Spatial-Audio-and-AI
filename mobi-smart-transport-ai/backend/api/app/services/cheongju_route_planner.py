@@ -54,10 +54,11 @@ class CheongjuRoutePlanner:
         resolver: DestinationCandidateResolver | None = None,
         route_service: BusRouteService | None = None,
         arrival_fetcher: ArrivalFetcher | None = None,
+        sequence_cache: RouteStopSequenceCache | None = None,
     ) -> None:
         self._resolver = resolver or DestinationCandidateResolver()
         self._arrival_fetcher = arrival_fetcher
-        self._sequence_cache = RouteStopSequenceCache(
+        self._sequence_cache = sequence_cache or RouteStopSequenceCache(
             route_service=route_service or BusRouteService(),
             city_code=CHEONGJU_CITY_CODE,
             mock_sequences=_mock_route_sequences(),
@@ -74,6 +75,7 @@ class CheongjuRoutePlanner:
         origin_lat: float | None = None,
         origin_lng: float | None = None,
         live: bool = False,
+        use_live_sequences: bool | None = None,
     ) -> RoutePlanResponse:
         destination = self._resolver.resolve(
             heard_text=heard_text,
@@ -115,7 +117,8 @@ class CheongjuRoutePlanner:
                 question="목적지 주변 하차 정류장을 찾지 못했어. 목적지를 조금 더 정확히 말해줘.",
             )
 
-        raw_plans = self._find_plans(destination=destination, sequences=self._route_sequences(live=live))
+        sequence_live = live if use_live_sequences is None else use_live_sequences
+        raw_plans = self._find_plans(destination=destination, sequences=self._route_sequences(live=sequence_live))
         candidates = [
             self._to_candidate(index, raw)
             for index, raw in enumerate(raw_plans[:_MAX_RAW_PLANS_TO_ENRICH], start=1)
@@ -123,6 +126,19 @@ class CheongjuRoutePlanner:
         plans = self._ranker.rank(candidates)[:_MAX_PLANS]
         recommended = plans[0] if plans else None
         fallback = _strongest_source([destination.fallbackSource, *(plan.fallbackSource for plan in plans)])
+        if recommended is None:
+            # 버스 경로가 없더라도 목적지가 도보 가능한 거리면 실패로 끝내지 않고
+            # 보행 안내를 제공한다. (짧은 거리에서 "경로를 찾지 못했어"로 막히던 문제)
+            walk_message = _walkable_destination_message(
+                destination, origin_lat=origin_lat, origin_lng=origin_lng
+            )
+            if walk_message is not None:
+                return self._empty_response(
+                    status=RoutePlanStatus.ALREADY_NEAR_DESTINATION,
+                    destination=destination,
+                    heard_text=heard_text,
+                    question=walk_message,
+                )
         question = None if recommended else "현재 후보 정류장 조합으로 갈 수 있는 직통 또는 1회 환승 경로를 찾지 못했어."
         return RoutePlanResponse(
             status=RoutePlanStatus.RESOLVED if recommended else RoutePlanStatus.NO_ROUTE,
@@ -407,6 +423,36 @@ def _near_destination_message(
         return None
     rounded_distance = max(0, int(round(distance / 10.0) * 10))
     return f"이미 {candidate.name} 근처야. 도보로 약 {rounded_distance}m 이동하면 돼. 따로 버스를 탈 필요는 없어."
+
+
+def _walkable_destination_message(
+    destination: DestinationResolveResponse,
+    *,
+    origin_lat: float | None,
+    origin_lng: float | None,
+) -> str | None:
+    candidate = destination.topCandidate
+    if (
+        candidate is None
+        or candidate.latitude is None
+        or candidate.longitude is None
+        or origin_lat is None
+        or origin_lng is None
+    ):
+        return None
+    try:
+        threshold = max(0.0, float(os.getenv("CHEONGJU_WALKABLE_DESTINATION_METERS", "1500")))
+    except ValueError:
+        threshold = 1500.0
+    distance = _distance_meters(origin_lat, origin_lng, candidate.latitude, candidate.longitude)
+    if distance > threshold:
+        return None
+    rounded = max(0, int(round(distance / 10.0) * 10))
+    minutes = max(1, int(round(distance / 67.0)))  # 보행 약 4km/h 기준
+    return (
+        f"{candidate.name}까지는 버스보다 걷는 게 빨라. "
+        f"도보로 약 {rounded}m, {minutes}분 정도 거리야. 보행 경로로 안내할게."
+    )
 
 
 def _near_destination_threshold(candidate_type: DestinationCandidateType) -> float:

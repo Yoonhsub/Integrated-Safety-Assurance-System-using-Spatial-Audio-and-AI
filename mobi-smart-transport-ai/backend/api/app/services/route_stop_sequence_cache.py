@@ -43,6 +43,7 @@ class RouteStopSequenceCache:
         self._route_ids_by_node: dict[str, set[str]] = {}
         self._loaded_live_route_nos: set[str] = set()
         self._lock = Lock()
+        self._load_lock = Lock()
         for sequence in mock_sequences:
             normalized = self.register_sequence(sequence)
             self._mock_route_ids.add(normalized.route_id)
@@ -89,6 +90,10 @@ class RouteStopSequenceCache:
         return sorted(mock_sequences, key=lambda sequence: (sequence.route_no, sequence.route_id))
 
     def load_live_routes(self, route_nos: Iterable[str]) -> None:
+        with self._load_lock:
+            self._load_live_routes(route_nos)
+
+    def _load_live_routes(self, route_nos: Iterable[str]) -> None:
         for route_no in sorted({value.strip() for value in route_nos if value.strip()}):
             if route_no in self._loaded_live_route_nos:
                 continue

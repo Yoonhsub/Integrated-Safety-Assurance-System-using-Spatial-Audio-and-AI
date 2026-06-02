@@ -24,6 +24,7 @@ _CATALOG: dict[str, dict[str, str]] = {
     "사창사거리": {"routeNo": "502", "stopName": "사창사거리"},
     "충북대병원": {"routeNo": "823", "stopName": "충북대학교병원"},
     "청주고속버스터미널": {"routeNo": "502", "stopName": "고속버스터미널"},
+    "상당구청": {"routeNo": "862", "stopName": "상당구청"},
 }
 
 # mock 모드 전용 ID. 데모 시나리오의 안정적인 busId(BUS_2 등)가 이 stopId에 묶여 있다.
@@ -31,12 +32,14 @@ _MOCK_IDS: dict[str, dict[str, str]] = {
     "사창사거리": {"routeId": "mock-route-502", "stopId": "mock-stop-001", "stopName": "사창사거리 정류장"},
     "충북대병원": {"routeId": "mock-route-823", "stopId": "mock-stop-002", "stopName": "충북대학교병원 정류장"},
     "청주고속버스터미널": {"routeId": "mock-route-502", "stopId": "mock-stop-003", "stopName": "청주고속버스터미널 정류장"},
+    "상당구청": {"routeId": "mock-route-862", "stopId": "mock-stop-004", "stopName": "상당구청 정류장"},
 }
 
 _CONFIDENCE: dict[str, float] = {
     "사창사거리": 0.95,
     "충북대병원": 0.9,
     "청주고속버스터미널": 0.88,
+    "상당구청": 0.95,
 }
 
 DESTINATIONS: tuple[str, ...] = tuple(_CATALOG.keys())

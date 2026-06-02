@@ -45,6 +45,7 @@ _INTENT_LABELS = (
     "REPORT_MISSED_BUS",
     "CORRECT_DESTINATION",
     "CHANGE_DESTINATION",
+    "END_CONVERSATION",
     "UNKNOWN",
 )
 # 실시간 공공 버스데이터가 필요한(=복잡) 의도. 나머지는 일반 대화로 본다.
@@ -90,7 +91,9 @@ def classify_intent(
         "의도 가이드: 길/노선/몇번/가는법=FIND_ROUTE, 언제·몇분 뒤=QUERY_ARRIVAL, "
         "지금 이 버스 타도 되냐=ASK_CAN_BOARD_CURRENT_BUS, 놓쳤다·못 탔다=REPORT_MISSED_BUS, "
         "목적지 바꿔=CHANGE_DESTINATION, 'A 아니라 B'=CORRECT_DESTINATION, "
-        "안내 시작·이걸로 해줘=SELECT_ARRIVAL, 호출어만 부름=WAKE_ONLY, 그 외 잡담=UNKNOWN."
+        "안내 시작·이걸로 해줘=SELECT_ARRIVAL, 호출어만 부름=WAKE_ONLY, "
+        "대화를 끝내거나 그만하고 싶어함·작별 인사·'됐어 그만'·'이제 괜찮아'·'나중에 또 부를게'="
+        "END_CONVERSATION(키워드가 아니라 종료하려는 의사가 보이면 분류), 그 외 잡담=UNKNOWN."
     )
     raw = _generate(
         model=model,
@@ -185,7 +188,7 @@ def generate_route_plan_summary(
         ),
         max_output_tokens=2048,
         thinking_budget=128,
-        timeout_seconds=60.0,
+        timeout_seconds=8.0,
         tools=[{"googleMaps": {}}],
         tool_config={
             "retrievalConfig": {
@@ -231,7 +234,7 @@ def generate_route_plan_summary(
         ),
         max_output_tokens=1024,
         thinking_budget=128,
-        timeout_seconds=60.0,
+        timeout_seconds=6.0,
     )
     summary = _without_vision_claims(summary)
     if not summary:
@@ -285,7 +288,7 @@ def generate_route_plan_reply(
         # gemini-2.5-pro는 thinkingBudget=0을 거부할 수 있으므로 최소 thinking budget을 둔다.
         thinking_budget=128,
         # 프론트 converse 타임아웃(60s) 안에 Pro+Flash 폴백이 모두 끝나도록 짧게 잡는다.
-        timeout_seconds=12.0,
+        timeout_seconds=6.0,
         history=history,
     )
     if not reply:
@@ -297,7 +300,7 @@ def generate_route_plan_reply(
                 prompt=prompt,
                 max_output_tokens=220,
                 thinking_budget=128,
-                timeout_seconds=10.0,
+                timeout_seconds=5.0,
                 history=history,
             )
     if not reply:
@@ -383,7 +386,7 @@ def generate_dynamic_response(
         # 복잡 응답은 Pro로 처리하므로 최소 thinking budget을 부여해야 실제 응답이 생성된다.
         thinking_budget=128,
         # 프론트 converse 타임아웃(60s) 안에 끝나도록 짧게 잡는다.
-        timeout_seconds=12.0,
+        timeout_seconds=4.0,
         history=history,
     )
     return _without_vision_claims(reply)
@@ -482,7 +485,7 @@ def _generate(
     prompt: str,
     max_output_tokens: int,
     thinking_budget: int | None = None,
-    timeout_seconds: float = 8.0,
+    timeout_seconds: float = 5.0,
     history: list[dict] | None = None,
 ) -> str | None:
     payload = _generate_payload(
@@ -524,7 +527,7 @@ def _generate_payload(
     prompt: str,
     max_output_tokens: int,
     thinking_budget: int | None = None,
-    timeout_seconds: float = 8.0,
+    timeout_seconds: float = 5.0,
     tools: list[dict] | None = None,
     tool_config: dict | None = None,
     history: list[dict] | None = None,

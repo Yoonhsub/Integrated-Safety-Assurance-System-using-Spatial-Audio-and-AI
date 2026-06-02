@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import v3_agent
 from app.main import app
+from app.services.v3_gemini_live_audio_service import GeminiLiveAudioChunk
 from app.services.v3_guidance_store import v3_guidance_store
 
 client = TestClient(app)
@@ -82,6 +83,38 @@ def test_agent_tts_returns_generated_wav(monkeypatch) -> None:
     assert response.headers["content-type"] == "audio/wav"
     assert response.headers["x-gemini-tts-voice"] == "Sulafat"
     assert response.content == b"RIFFdemo"
+
+
+def test_agent_live_tts_streams_generated_pcm_chunks(monkeypatch) -> None:
+    async def fake_stream(*, text: str):
+        assert text == "안녕"
+        yield GeminiLiveAudioChunk(
+            data="AQID",
+            mime_type="audio/pcm;rate=24000",
+        )
+
+    monkeypatch.setattr(v3_agent, "stream_live_audio_pcm", fake_stream)
+
+    with client.websocket_connect("/agent/tts/live") as websocket:
+        websocket.send_json({"text": "안녕"})
+        start = websocket.receive_json()
+        audio = websocket.receive_json()
+        done = websocket.receive_json()
+
+    assert start == {
+        "type": "start",
+        "provider": "GEMINI_LIVE_API",
+        "model": "gemini-2.5-flash-native-audio-preview-12-2025",
+        "voice": "Sulafat",
+        "sampleRate": 24000,
+        "channels": 1,
+    }
+    assert audio == {
+        "type": "audio",
+        "data": "AQID",
+        "mimeType": "audio/pcm;rate=24000",
+    }
+    assert done == {"type": "done", "chunkCount": 1}
 
 
 def test_v3_bus_and_mock_endpoints_do_not_require_live_api_keys() -> None:

@@ -279,15 +279,19 @@ def plan_transit_route_tool(
     trace: AgentTraceRecorder | None = None,
 ) -> RoutePlanResponse:
     live = _resolve_live(mode)
+    arrivals_by_route: dict[tuple[str, str, str], V3BusArrivalsResponse] = {}
 
     def fetch(stop_id: str, route_no: str | None, route_id: str | None = None) -> V3BusArrivalsResponse:
-        return get_arrivals_tool(
-            route_id=route_id,
-            route_no=route_no,
-            stop_id=stop_id,
-            mode=mode,
-            live=live,
-        )
+        key = (stop_id.strip(), route_no or "", route_id or "")
+        if key not in arrivals_by_route:
+            arrivals_by_route[key] = get_arrivals_tool(
+                route_id=route_id,
+                route_no=route_no,
+                stop_id=stop_id,
+                mode=mode,
+                live=live,
+            )
+        return arrivals_by_route[key]
 
     planner = TransitPlannerOrchestrator(
         resolver=resolver or DestinationCandidateResolver(),
@@ -700,6 +704,7 @@ def _resolve_live(mode: str | None) -> bool:
 
 def _destination_candidate_text(utterance: str) -> str | None:
     cleaned = utterance.strip()
+    cleaned = re.sub(r"^혹시나?\s+", "", cleaned).strip()
     cleaned = re.sub(r"^(나|나는|난|저|저는|내가|제가)\s+", "", cleaned).strip()
     if "아니라" in cleaned:
         cleaned = cleaned.split("아니라", 1)[1].strip()

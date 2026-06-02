@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import Response
+from pydantic import ValidationError
 
 from app.schemas.v3 import (
     AgentConverseRequest,
@@ -21,7 +23,6 @@ from app.schemas.v3 import (
 )
 from app.services import cheongju_route_catalog
 from app.services.v3_agent_tools import (
-    build_grounded_agent_reply_tool,
     classify_agent_intent,
     get_arrivals_tool,
     get_bus_locations_tool,
@@ -38,8 +39,13 @@ from app.services.v3_gemini_service import (
     classify_intent,
     generate_dynamic_response,
     generate_optional_reply,
-    generate_route_plan_reply,
     synthesize_tts_wav,
+)
+from app.services.v3_gemini_live_audio_service import (
+    GeminiLiveAudioUnavailable,
+    live_audio_model,
+    live_audio_voice,
+    stream_live_audio_pcm,
 )
 from app.services.v3_guidance_store import V3SessionRecord, v3_guidance_store
 
@@ -97,6 +103,78 @@ def tts(payload: AgentTtsRequest) -> Response:
     )
 
 
+@router.websocket("/tts/live")
+async def tts_live(websocket: WebSocket) -> None:
+    """Proxy Gemini Live API PCM chunks without exposing the server API key."""
+
+    await websocket.accept()
+    try:
+        payload = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        request = AgentTtsRequest.model_validate(payload)
+        await websocket.send_json(
+            {
+                "type": "start",
+                "provider": "GEMINI_LIVE_API",
+                "model": live_audio_model(),
+                "voice": live_audio_voice(),
+                "sampleRate": 24000,
+                "channels": 1,
+            }
+        )
+        chunk_count = 0
+        async for chunk in stream_live_audio_pcm(text=request.text.strip()):
+            chunk_count += 1
+            await websocket.send_json(
+                {
+                    "type": "audio",
+                    "data": chunk.data,
+                    "mimeType": chunk.mime_type,
+                }
+            )
+        await websocket.send_json({"type": "done", "chunkCount": chunk_count})
+    except (asyncio.TimeoutError, ValidationError):
+        await _send_live_audio_error(
+            websocket,
+            code="INVALID_LIVE_TTS_REQUEST",
+            message="Live TTS request was missing or invalid.",
+        )
+    except GeminiLiveAudioUnavailable:
+        await _send_live_audio_error(
+            websocket,
+            code="GEMINI_LIVE_TTS_UNAVAILABLE",
+            message="Gemini Live API audio could not be generated.",
+        )
+    except Exception:
+        await _send_live_audio_error(
+            websocket,
+            code="GEMINI_LIVE_TTS_ERROR",
+            message="Live TTS streaming failed.",
+        )
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
+async def _send_live_audio_error(
+    websocket: WebSocket,
+    *,
+    code: str,
+    message: str,
+) -> None:
+    try:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "code": code,
+                "message": message,
+            }
+        )
+    except RuntimeError:
+        pass
+
+
 @router.post("/converse", response_model=AgentConverseResponse)
 def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     trace = AgentTraceRecorder()
@@ -150,18 +228,26 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         session.to_response(),
         wake_word=wake_word,
     ).intent
-    # 1차 추론: 먼저 발화의 의도/목적지를 (대화 맥락과 함께) Gemini로 추론한 뒤,
-    # 그 결과로 도구/공공 API 호출 단계로 넘어간다. Gemini가 불확실하거나 사용할 수
-    # 없을 때만 결정적 키워드 분류 결과로 폴백한다.
-    classification = classify_intent(
-        utterance=utterance,
-        wake_word=wake_word,
-        known_destinations=cheongju_route_catalog.DESTINATIONS,
-        history=history,
+    contextual_reply_hint = (
+        _contextual_followup_reply(session=session, utterance=utterance)
+        if keyword_intent == AgentIntent.UNKNOWN
+        else None
+    )
+    # Deterministic route keywords and selected-route follow-ups should not wait
+    # for Gemini. Flash is useful only when the local classifier is uncertain.
+    classification = (
+        classify_intent(
+            utterance=utterance,
+            wake_word=wake_word,
+            known_destinations=cheongju_route_catalog.DESTINATIONS,
+            history=history,
+        )
+        if keyword_intent == AgentIntent.UNKNOWN and contextual_reply_hint is None
+        else None
     )
     intent = keyword_intent
     nlp_destination: str | None = None
-    reasoning_source = "keyword"
+    reasoning_source = "context" if contextual_reply_hint else "keyword"
     if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
         intent = AgentIntent(classification["intent"])
         nlp_destination = classification["destination"]
@@ -187,6 +273,10 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
 
     if intent == AgentIntent.WAKE_ONLY:
         message = "네, 말씀하세요."
+
+    elif intent == AgentIntent.END_CONVERSATION:
+        # 종료 의사는 Gemini가 자연어로 판별한다(키워드 매칭 아님).
+        message = "지금 내가 수행할 작업이 없는 것 같아. 언제든 필요하면 불러줘."
 
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
         route_plan, message, tts_mode, used_gemini, fallback_source = _handle_route_request(
@@ -312,7 +402,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         message = "괜찮아. 다음 버스를 다시 안내할게."
 
     else:
-        contextual_reply = _contextual_followup_reply(session=session, utterance=utterance)
+        contextual_reply = contextual_reply_hint or _contextual_followup_reply(session=session, utterance=utterance)
         if contextual_reply:
             message = contextual_reply
             tts_mode = TtsMode.LOCAL_TTS
@@ -741,29 +831,14 @@ def _route_plan_response_tuple(
     else:
         _clear_pending(session)
 
-    gemini_event = trace.start(
+    trace.skip(
         "GEMINI_REPLY_GENERATION",
         "자연어 안내 생성",
+        "검증된 경로를 10초 안에 안내하기 위해 규칙 기반 문장을 즉시 사용했어.",
         provider="Gemini",
         operation="generateGroundedReply",
     )
-    gemini_message = build_grounded_agent_reply_tool(
-        route_plan,
-        session.to_response(),
-        utterance=utterance,
-        wake_word=wake_word,
-        reply_builder=generate_route_plan_reply,
-        history=history,
-    )
-    if gemini_message:
-        trace.done(gemini_event, "검증된 경로 JSON을 바탕으로 안내 문장을 만들었어.")
-        return route_plan, gemini_message, TtsMode.GEMINI_OPTIONAL, True, route_plan.fallbackSource
-    trace.done(
-        gemini_event,
-        "Gemini 안내를 사용하지 않고 검증된 규칙 기반 문장을 사용했어.",
-        warning="Gemini 응답은 선택 사항이라 deterministic fallback을 사용했어.",
-    )
-    return route_plan, _deterministic_route_plan_message(route_plan), TtsMode.LOCAL_TTS, False, route_plan.fallbackSource
+    return route_plan, _deterministic_route_plan_message(route_plan), TtsMode.SAFETY_LOCAL, False, route_plan.fallbackSource
 
 
 def _try_answer_pending_destination(

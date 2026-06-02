@@ -60,11 +60,11 @@ def test_agent_converse_confirmation_followup_uses_pending_route_plan_context() 
     assert first.status_code == 200
     first_body = first.json()
     assert first_body["routePlan"]["status"] == "NEEDS_CONFIRMATION"
-    assert first_body["message"] == "혹시 상당산성이 맞아?"
+    assert first_body["message"] == "혹시 상당산성 맞아?"
 
     pending = client.get("/guidance/state", params={"sessionId": "s-confirm"}).json()
     assert pending["pendingResolutionStatus"] == "NEEDS_CONFIRMATION"
-    assert pending["pendingQuestion"] == "혹시 상당산성이 맞아?"
+    assert pending["pendingQuestion"] == "혹시 상당산성 맞아?"
 
     second = _say("s-confirm", "응 맞아")
 
@@ -157,14 +157,14 @@ def test_agent_converse_rejects_partial_origin_coordinates() -> None:
     assert response.status_code == 422
 
 
-def test_agent_route_plan_gemini_reply_is_bound_to_computed_json(monkeypatch) -> None:
+def test_agent_route_plan_uses_verified_deterministic_reply_without_waiting_for_gemini(monkeypatch) -> None:
     captured = {}
 
     def fake_reply(**kwargs):
         captured.update(kwargs)
         return "계산된 RoutePlan 기준으로 862번을 타면 돼."
 
-    monkeypatch.setattr(v3_agent, "generate_route_plan_reply", fake_reply)
+    monkeypatch.setattr(v3_agent, "generate_route_plan_reply", fake_reply, raising=False)
 
     response = _say(
         "s-gemini",
@@ -175,10 +175,10 @@ def test_agent_route_plan_gemini_reply_is_bound_to_computed_json(monkeypatch) ->
 
     assert response.status_code == 200
     body = response.json()
-    assert body["usedGemini"] is True
-    assert body["ttsMode"] == "GEMINI_OPTIONAL"
-    assert body["message"] == "계산된 RoutePlan 기준으로 862번을 타면 돼."
-    assert captured["route_plan"]["recommendedPlan"]["segments"][0]["routeNo"] == "862"
+    assert body["usedGemini"] is False
+    assert body["ttsMode"] == "SAFETY_LOCAL"
+    assert "862번" in body["message"]
+    assert captured == {}
 
 
 def test_agent_arrival_refresh_uses_selected_plan_route_and_boarding_stop(monkeypatch) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from app.schemas.v3 import (
@@ -26,7 +27,11 @@ from app.services.odsay_route_mapper import OdsayRouteMapper
 from app.services.route_plan_enricher import RoutePlanEnricher
 from app.services.route_ranker import RouteRanker
 from app.services.route_stop_sequence_cache import RouteSequence, RouteStopNode, RouteStopSequenceCache
-from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
+from app.services.transit_planner_orchestrator import (
+    TransitPlannerOrchestrator,
+    _max_sync_enrich_candidates,
+    _sync_enrich_timeout_seconds,
+)
 
 
 def test_odsay_client_keeps_longitude_in_x_and_latitude_in_y(monkeypatch) -> None:
@@ -159,6 +164,47 @@ def test_odsay_messages_do_not_add_side_of_road_claims() -> None:
     text = response.recommendedPlan.boardingInstruction
     for prohibited in ("건너편", "오른쪽", "왼쪽", "도로를 건너"):
         assert prohibited not in text
+
+
+def test_sync_tago_enrichment_defaults_to_one_candidate_and_is_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", raising=False)
+    assert _max_sync_enrich_candidates() == 1
+
+    monkeypatch.setenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "99")
+    assert _max_sync_enrich_candidates() == 5
+
+    monkeypatch.setenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "invalid")
+    assert _max_sync_enrich_candidates() == 1
+
+
+def test_slow_tago_enrichment_returns_odsay_candidate_without_blocking(monkeypatch) -> None:
+    class SlowEnricher:
+        def enrich(self, candidate, *, live):
+            time.sleep(0.2)
+            return candidate
+
+    monkeypatch.setenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "0.05")
+    orchestrator = _orchestrator(
+        local_response=_local_response(plans=[]),
+        odsay_client=_FakeOdsayClient(),
+        enricher=SlowEnricher(),
+    )
+
+    started = time.perf_counter()
+    response = orchestrator.plan(heard_text="상당산성", origin_lat=36.1, origin_lng=127.1, live=True)
+
+    assert time.perf_counter() - started < 0.15
+    assert response.recommendedPlan is not None
+    assert response.recommendedPlan.verificationStatus == RoutePlanVerificationStatus.ODSAY_ONLY
+    assert any("TAGO 실시간 보강이 지연" in warning for warning in response.warnings)
+
+
+def test_sync_tago_enrichment_timeout_is_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", raising=False)
+    assert _sync_enrich_timeout_seconds() == 4.0
+
+    monkeypatch.setenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "99")
+    assert _sync_enrich_timeout_seconds() == 8.0
 
 
 def test_odsay_mapper_removes_side_of_road_claims_from_provider_stop_names() -> None:

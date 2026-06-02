@@ -37,7 +37,7 @@ def test_destination_candidates_needs_confirmation_for_stt_like_misrecognition()
     body = response.json()
     assert body["status"] == "NEEDS_CONFIRMATION"
     assert body["topCandidate"]["name"] == "상당산성"
-    assert body["question"] == "혹시 상당산성이 맞아?"
+    assert body["question"] == "혹시 상당산성 맞아?"
 
 
 def test_destination_resolver_prefers_stt_confirmation_over_live_keyword_choice() -> None:
@@ -70,7 +70,7 @@ def test_destination_resolver_prefers_stt_confirmation_over_live_keyword_choice(
     assert result.status == "NEEDS_CONFIRMATION"
     assert result.topCandidate is not None
     assert result.topCandidate.name == "상당산성"
-    assert result.question == "혹시 상당산성이 맞아?"
+    assert result.question == "혹시 상당산성 맞아?"
 
 
 def test_destination_candidates_needs_choice_for_ambiguous_terminal() -> None:

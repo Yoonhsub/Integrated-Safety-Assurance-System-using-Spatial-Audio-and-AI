@@ -163,10 +163,8 @@ def passenger_app_root() -> RedirectResponse:
 
 @app.post("/config/data-mode", tags=["config"])
 def set_data_mode(request: DataModeRequest) -> dict[str, str]:
-    if request.mode == "live":
-        os.environ["PUBLIC_DATA_USE_MOCK"] = "false"
-    else:
-        os.environ["PUBLIC_DATA_USE_MOCK"] = "true"
+    # Data mode is a client-scoped choice. V3 requests already send mode, so
+    # mutating process-wide state here can leak one user's selection to others.
     return {"status": "success", "mode": request.mode}
 
 

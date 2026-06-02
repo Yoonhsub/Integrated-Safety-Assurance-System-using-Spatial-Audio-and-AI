@@ -33,6 +33,8 @@ class V3AgentApiClient {
     http.Client? httpClient,
   }) : _httpClient = httpClient;
 
+  static const Duration _converseTimeout = Duration(seconds: 45);
+
   final String baseUrl;
   final Duration timeout;
   final http.Client? _httpClient;
@@ -102,14 +104,17 @@ class V3AgentApiClient {
     double? originLat,
     double? originLng,
   }) async {
-    final json = await _postJson('/agent/converse', <String, Object?>{
-      'sessionId': sessionId,
-      'wakeWord': wakeWord,
-      'utterance': utterance,
-      if (mode != null) 'mode': mode,
-      if (originLat != null && originLng != null) 'originLat': originLat,
-      if (originLat != null && originLng != null) 'originLng': originLng,
-    });
+    final json = await _postJson(
+        '/agent/converse',
+        <String, Object?>{
+          'sessionId': sessionId,
+          'wakeWord': wakeWord,
+          'utterance': utterance,
+          if (mode != null) 'mode': mode,
+          if (originLat != null && originLng != null) 'originLat': originLat,
+          if (originLat != null && originLng != null) 'originLng': originLng,
+        },
+        customTimeout: _converseTimeout);
     return V3AgentResponse.fromJson(json);
   }
 
@@ -237,6 +242,8 @@ class V3AgentApiClient {
     double? boardLng,
     double? alightLat,
     double? alightLng,
+    String? boardStopName,
+    String? alightStopName,
     String? destName,
     String? mode,
   }) async {
@@ -248,10 +255,18 @@ class V3AgentApiClient {
     if (alightStopId != null && alightStopId.isNotEmpty) {
       query['alightStopId'] = alightStopId;
     }
-    if (sessionId != null && sessionId.isNotEmpty) query['sessionId'] = sessionId;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      query['sessionId'] = sessionId;
+    }
     _addCoordinatePair(query, 'user', userLat, userLng);
     _addCoordinatePair(query, 'board', boardLat, boardLng);
     _addCoordinatePair(query, 'alight', alightLat, alightLng);
+    if (boardStopName != null && boardStopName.isNotEmpty) {
+      query['boardStopName'] = boardStopName;
+    }
+    if (alightStopName != null && alightStopName.isNotEmpty) {
+      query['alightStopName'] = alightStopName;
+    }
     if (destName != null && destName.isNotEmpty) query['destName'] = destName;
     if (mode != null) query['mode'] = mode;
     final json = await _getJson('/navigation/live-status', query);
@@ -326,8 +341,9 @@ class V3AgentApiClient {
 
   Future<Map<String, dynamic>> _postJson(
     String path,
-    Map<String, Object?> payload,
-  ) async {
+    Map<String, Object?> payload, {
+    Duration? customTimeout,
+  }) async {
     try {
       final response = await _client
           .post(
@@ -335,7 +351,7 @@ class V3AgentApiClient {
             headers: const <String, String>{'Content-Type': 'application/json'},
             body: jsonEncode(payload),
           )
-          .timeout(timeout);
+          .timeout(customTimeout ?? timeout);
       return _decodeResponse(response);
     } on TimeoutException {
       throw const V3ApiException('API 연결 시간이 초과됐어.');

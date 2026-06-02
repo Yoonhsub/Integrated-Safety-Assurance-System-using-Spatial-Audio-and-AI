@@ -103,6 +103,16 @@ _KNOWN_PLACES: tuple[_KnownPlace, ...] = (
         address="충청북도 청주시 흥덕구 가경동",
         confidence=0.91,
     ),
+    _KnownPlace(
+        name="상당구청",
+        type=DestinationCandidateType.PLACE,
+        latitude=36.5515,
+        longitude=127.5005,
+        aliases=("상당구청", "청주시상당구청"),
+        address="충청북도 청주시 상당구 단재로 466",
+        stop_id="mock-stop-004",
+        confidence=0.95,
+    ),
 )
 
 
@@ -146,6 +156,14 @@ _SEED_STOPS: tuple[_SeedStop, ...] = (
         longitude=127.5329,
         aliases=("상당산성", "상당산성입구"),
         direction_hint="상당산성 방향",
+    ),
+    _SeedStop(
+        stop_id="mock-stop-004",
+        stop_name="상당구청 정류장",
+        latitude=36.5515,
+        longitude=127.5005,
+        aliases=("상당구청",),
+        direction_hint="효촌 방면",
     ),
 )
 
@@ -371,7 +389,12 @@ class DestinationCandidateResolver:
             _normalize(top.name) == normalized
             or _is_unambiguous_known_alias(normalized, top.name)
         )
-        if exact_top_name and top.confidence >= 0.90:
+        if exact_top_name and not close_choices:
+            # 사용자가 말한 지명과 후보 이름이 정확히 일치하고 경쟁 후보가 없으면
+            # 확신 점수와 무관하게 바로 확정한다. (사창사거리처럼 명확한 목적지에서
+            # 불필요한 "혹시 ~ 맞아?" 재질문이 떠 아무 동작도 안 하던 문제 방지)
+            status = DestinationResolveStatus.RESOLVED
+        elif exact_top_name and top.confidence >= 0.90:
             status = DestinationResolveStatus.RESOLVED
         elif len(close_choices) >= 1 and top.confidence < 0.94:
             status = DestinationResolveStatus.NEEDS_CHOICE
@@ -379,7 +402,8 @@ class DestinationCandidateResolver:
             question = f"{names} 중 어디로 갈까?"
         elif top.confidence < _RESOLVED_THRESHOLD or _normalize(top.name) != normalized and top.confidence < 0.95:
             status = DestinationResolveStatus.NEEDS_CONFIRMATION
-            question = f"혹시 {top.name}이 맞아?"
+            # 받침 유무에 따라 '이/가'가 달라지는 문제를 피하려고 조사 없이 묻는다.
+            question = f"혹시 {top.name} 맞아?"
 
         if top.latitude is None or top.longitude is None:
             status = DestinationResolveStatus.NOT_FOUND

@@ -17,6 +17,17 @@ def test_health_exposes_runtime_mode():
     assert body["firebaseMode"] in {"mock", "firebase-admin"}
 
 
+def test_data_mode_selection_does_not_mutate_process_wide_default(monkeypatch):
+    monkeypatch.setenv("PUBLIC_DATA_USE_MOCK", "true")
+    client = TestClient(app)
+
+    response = client.post("/config/data-mode", json={"mode": "live"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "mode": "live"}
+    assert client.get("/health").json()["dataMode"] == "mock"
+
+
 def test_firebase_client_imports_and_uses_mock_without_credentials():
     from app.services.firebase_client import FirebaseClient
 

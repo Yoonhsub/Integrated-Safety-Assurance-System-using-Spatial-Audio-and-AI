@@ -37,8 +37,20 @@ def _resolve_live(mode: str | None) -> bool:
     return os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off")
 
 
-def _board_alight_coords(route_no, route_id, board_stop_id, alight_stop_id,
-                         board_lat, board_lng, alight_lat, alight_lng):
+def _board_alight_coords(
+    route_no,
+    route_id,
+    board_stop_id,
+    alight_stop_id,
+    board_lat,
+    board_lng,
+    alight_lat,
+    alight_lng,
+    board_stop_name=None,
+    alight_stop_name=None,
+    user_lat=None,
+    user_lng=None,
+):
     """제공된 좌표 우선, 없으면 노선 노드 좌표로 보강한다."""
     from app.api.routes.v3_bus import _node_coordinate, _route_nodes
 
@@ -53,10 +65,36 @@ def _board_alight_coords(route_no, route_id, board_stop_id, alight_stop_id,
             board = _node_coordinate(nodes.get(board_stop_id))
         if alight is None and alight_stop_id:
             alight = _node_coordinate(nodes.get(alight_stop_id))
+    if board is None and board_stop_name:
+        match = nearby_stops_service.find_named_stop(
+            stop_name=board_stop_name,
+            origin_lat=user_lat,
+            origin_lng=user_lng,
+        )
+        if match is not None:
+            board = match.latitude, match.longitude
+    if alight is None and alight_stop_name:
+        match = nearby_stops_service.find_named_stop(stop_name=alight_stop_name)
+        if match is not None:
+            alight = match.latitude, match.longitude
     return board, alight
 
 
-def _cache_key(route_no, route_id, board_stop_id, alight_stop_id, user_lat, user_lng, live):
+def _cache_key(
+    route_no,
+    route_id,
+    board_stop_id,
+    alight_stop_id,
+    user_lat,
+    user_lng,
+    board_lat,
+    board_lng,
+    alight_lat,
+    alight_lng,
+    board_stop_name,
+    alight_stop_name,
+    live,
+):
     return (
         route_no,
         route_id or "",
@@ -64,6 +102,12 @@ def _cache_key(route_no, route_id, board_stop_id, alight_stop_id, user_lat, user
         alight_stop_id or "",
         round(user_lat, 4) if user_lat is not None else None,
         round(user_lng, 4) if user_lng is not None else None,
+        round(board_lat, 4) if board_lat is not None else None,
+        round(board_lng, 4) if board_lng is not None else None,
+        round(alight_lat, 4) if alight_lat is not None else None,
+        round(alight_lng, 4) if alight_lng is not None else None,
+        board_stop_name or "",
+        alight_stop_name or "",
         bool(live),
     )
 
@@ -81,11 +125,27 @@ def get_live_status(
     board_lng: float | None = None,
     alight_lat: float | None = None,
     alight_lng: float | None = None,
+    board_stop_name: str | None = None,
+    alight_stop_name: str | None = None,
     dest_name: str | None = None,
     mode: str | None = None,
 ) -> LiveStatusResponse:
     live = _resolve_live(mode)
-    key = _cache_key(route_no, route_id, board_stop_id, alight_stop_id, user_lat, user_lng, live)
+    key = _cache_key(
+        route_no,
+        route_id,
+        board_stop_id,
+        alight_stop_id,
+        user_lat,
+        user_lng,
+        board_lat,
+        board_lng,
+        alight_lat,
+        alight_lng,
+        board_stop_name,
+        alight_stop_name,
+        live,
+    )
     now = time.monotonic()
     cached = _CACHE.get(key)
     if cached is not None and cached[0] > now:
@@ -117,6 +177,7 @@ def get_live_status(
     board_coord, alight_coord = _board_alight_coords(
         route_no, route_id, board_stop_id, alight_stop_id,
         board_lat, board_lng, alight_lat, alight_lng,
+        board_stop_name, alight_stop_name, user_lat, user_lng,
     )
 
     # 3) 버스 위치
@@ -172,7 +233,7 @@ def get_live_status(
     if board_coord is not None:
         selected_board = NearbyStop(
             stopId=board_stop_id,
-            stopName=next((s.stopName for s in nearby if s.stopId == board_stop_id), "승차 정류장"),
+            stopName=board_stop_name or next((s.stopName for s in nearby if s.stopId == board_stop_id), "승차 정류장"),
             latitude=board_coord[0],
             longitude=board_coord[1],
             distanceMeters=0.0,
@@ -182,7 +243,7 @@ def get_live_status(
     if alight_coord is not None and alight_stop_id:
         selected_alight = NearbyStop(
             stopId=alight_stop_id,
-            stopName="하차 정류장",
+            stopName=alight_stop_name or "하차 정류장",
             latitude=alight_coord[0],
             longitude=alight_coord[1],
             distanceMeters=0.0,

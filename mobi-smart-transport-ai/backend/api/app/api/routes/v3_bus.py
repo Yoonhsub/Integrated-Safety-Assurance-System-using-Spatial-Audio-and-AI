@@ -184,6 +184,18 @@ _MOCK_ARRIVALS_BY_STOP: dict[str, list[V3BusArrival]] = {
             congestion=None,
         )
     ],
+    "mock-stop-004": [
+        V3BusArrival(
+            busId="BUS_862_SANGDANG",
+            routeNo="862",
+            routeId="mock-route-862",
+            stopId="mock-stop-004",
+            arrivalMinutes=7,
+            remainingStops=3,
+            lowFloor=True,
+            congestion=None,
+        )
+    ],
 }
 
 
@@ -235,15 +247,23 @@ def _build_route_plan(
 ) -> RoutePlanResponse:
     _validate_origin_pair(origin_lat, origin_lng)
     live = _resolve_live(mode)
+    arrivals_by_route: dict[tuple[str, str, str], V3BusArrivalsResponse] = {}
+
+    def fetch_arrivals(stop_id: str, route_no: str | None, route_id: str | None) -> V3BusArrivalsResponse:
+        key = (stop_id.strip(), route_no or "", route_id or "")
+        if key not in arrivals_by_route:
+            arrivals_by_route[key] = _route_plan_arrivals(
+                stop_id,
+                route_no=route_no,
+                route_id=route_id,
+                live=live,
+                mode=mode,
+            )
+        return arrivals_by_route[key]
+
     planner = TransitPlannerOrchestrator(
         resolver=_destination_resolver,
-        arrival_fetcher=lambda stop_id, route_no, route_id: _route_plan_arrivals(
-            stop_id,
-            route_no=route_no,
-            route_id=route_id,
-            live=live,
-            mode=mode,
-        ),
+        arrival_fetcher=fetch_arrivals,
     )
     return planner.plan(
         heard_text=q,

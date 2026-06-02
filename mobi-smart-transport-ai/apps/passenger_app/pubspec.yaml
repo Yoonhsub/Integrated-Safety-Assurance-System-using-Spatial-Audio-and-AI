@@ -18,8 +18,11 @@ dependencies:
   geolocator: ^14.0.2
   shared_preferences: ^2.5.3
   speech_to_text: ^7.3.0
+  web: ^1.1.1
   mobi_mobile_sensors:
     path: ../../packages/mobile_sensors
+  flutter_map: ^8.3.0
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:
@@ -28,3 +31,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  shaders:
+    - assets/shaders/voice_aurora.frag

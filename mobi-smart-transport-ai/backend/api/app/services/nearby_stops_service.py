@@ -13,6 +13,37 @@ from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
 _service = CheongjuBusStopsService()
 
 
+def find_named_stop(
+    *,
+    stop_name: str,
+    origin_lat: float | None = None,
+    origin_lng: float | None = None,
+) -> NearbyStop | None:
+    """Resolve an approved stop coordinate by name without inventing a point."""
+    try:
+        match = (
+            _service.find_nearest(
+                stop_name=stop_name,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+            )
+            if origin_lat is not None and origin_lng is not None
+            else _service.find_by_name(stop_name=stop_name)
+        )
+    except Exception:
+        return None
+    if match is None:
+        return None
+    return NearbyStop(
+        stopId=match.service_id,
+        stopName=match.stop_name,
+        latitude=match.latitude,
+        longitude=match.longitude,
+        distanceMeters=round(match.distance_meters or 0.0, 1),
+        source="PUBLIC_API",
+    )
+
+
 def find_nearby_stops(
     *,
     lat: float,

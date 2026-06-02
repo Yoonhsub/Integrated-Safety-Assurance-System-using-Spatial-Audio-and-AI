@@ -75,6 +75,12 @@ class _MobiAppState extends State<MobiApp> {
       home = DataModeSelectionPage(onModeSelected: _onModeSelected);
     } else if (agentName == null) {
       home = AgentNameSetupPage(onSaved: _saveAgentName);
+    } else if (dataMode == 'live') {
+      home = V3GuidancePage(
+        agentName: agentName,
+        onReturnToModeSelection: _resetToModeSelection,
+        dataMode: dataMode,
+      );
     } else {
       home = HomePage(
         agentName: agentName,

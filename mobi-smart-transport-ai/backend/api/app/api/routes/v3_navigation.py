@@ -28,6 +28,8 @@ def live_status(
     boardLng: float | None = Query(default=None, ge=-180, le=180),
     alightLat: float | None = Query(default=None, ge=-90, le=90),
     alightLng: float | None = Query(default=None, ge=-180, le=180),
+    boardStopName: str | None = Query(default=None),
+    alightStopName: str | None = Query(default=None),
     destName: str | None = Query(default=None),
     mode: str | None = Query(default=None),
 ) -> LiveStatusResponse:
@@ -43,6 +45,8 @@ def live_status(
         board_lng=boardLng,
         alight_lat=alightLat,
         alight_lng=alightLng,
+        board_stop_name=boardStopName,
+        alight_stop_name=alightStopName,
         dest_name=destName,
         mode=mode,
     )

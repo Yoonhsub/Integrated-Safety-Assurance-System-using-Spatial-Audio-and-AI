@@ -23,6 +23,12 @@ def test_normalize_user_utterance_removes_mobi_wake_word() -> None:
     assert normalized.destination_candidate_text == "사창사거리"
 
 
+def test_normalize_user_utterance_removes_optional_question_prefix() -> None:
+    normalized = normalize_user_utterance("혹시 성화동 925 어떻게 가?")
+
+    assert normalized.destination_candidate_text == "성화동 925"
+
+
 def test_sanitize_agent_reply_removes_mobi_user_address() -> None:
     assert sanitize_agent_reply_tool("그래, 모비야. 내가 안내해줄게.") == "내가 안내해줄게."
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from collections.abc import Callable
 from typing import Any
 
@@ -22,6 +24,17 @@ from app.services.route_ranker import RouteRanker
 from app.services.route_stop_sequence_cache import RouteStopSequenceCache
 from services.public_data.public_data_client import BusRouteService
 
+_SHARED_ROUTE_SERVICE = BusRouteService()
+_SHARED_LOCAL_SEQUENCE_CACHE = RouteStopSequenceCache(
+    route_service=_SHARED_ROUTE_SERVICE,
+    mock_sequences=_mock_route_sequences(),
+)
+_SHARED_ENRICHMENT_SEQUENCE_CACHE = RouteStopSequenceCache(
+    route_service=_SHARED_ROUTE_SERVICE,
+    mock_sequences=_mock_route_sequences(),
+)
+_ENRICHMENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tago-enrich")
+
 
 class TransitPlannerOrchestrator:
     """Combines ODsay primary candidates with the existing Cheongju planners."""
@@ -36,21 +49,38 @@ class TransitPlannerOrchestrator:
         odsay_mapper: OdsayRouteMapper | None = None,
         enricher: RoutePlanEnricher | None = None,
         ranker: RouteRanker | None = None,
+        local_sequence_cache: RouteStopSequenceCache | None = None,
+        enrichment_sequence_cache: RouteStopSequenceCache | None = None,
     ) -> None:
         self._resolver = resolver or DestinationCandidateResolver()
-        self._route_service = route_service or BusRouteService()
+        using_shared_route_service = route_service is None
+        self._route_service = route_service or _SHARED_ROUTE_SERVICE
         self._arrival_fetcher = arrival_fetcher
+        local_sequence_cache = local_sequence_cache or (
+            _SHARED_LOCAL_SEQUENCE_CACHE
+            if using_shared_route_service
+            else RouteStopSequenceCache(
+                route_service=self._route_service,
+                mock_sequences=_mock_route_sequences(),
+            )
+        )
         self._local_planner = CheongjuRoutePlanner(
             resolver=self._resolver,
             route_service=self._route_service,
             arrival_fetcher=arrival_fetcher,
+            sequence_cache=local_sequence_cache,
         )
         self._odsay_client = odsay_client or OdsayClient()
         self._odsay_mapper = odsay_mapper or OdsayRouteMapper()
         self._enricher = enricher or RoutePlanEnricher(
-            sequence_cache=RouteStopSequenceCache(
-                route_service=self._route_service,
-                mock_sequences=_mock_route_sequences(),
+            sequence_cache=enrichment_sequence_cache
+            or (
+                _SHARED_ENRICHMENT_SEQUENCE_CACHE
+                if using_shared_route_service
+                else RouteStopSequenceCache(
+                    route_service=self._route_service,
+                    mock_sequences=_mock_route_sequences(),
+                )
             ),
             arrival_fetcher=arrival_fetcher,
         )
@@ -64,13 +94,17 @@ class TransitPlannerOrchestrator:
         origin_lng: float | None = None,
         live: bool = False,
     ) -> RoutePlanResponse:
+        use_odsay = live and self._odsay_enabled()
         local_response = self._local_planner.plan(
             heard_text=heard_text,
             origin_lat=origin_lat,
             origin_lng=origin_lng,
             live=live,
+            # ODsay already supplies the live route candidates. Loading every
+            # configured TAGO route before that search adds tens of seconds.
+            use_live_sequences=live and not use_odsay,
         )
-        if not live or not self._odsay_enabled():
+        if not use_odsay:
             return local_response
         if (
             local_response.destination.status != DestinationResolveStatus.RESOLVED
@@ -91,19 +125,33 @@ class TransitPlannerOrchestrator:
                 destination_lng=destination.longitude,
             )
             mapped = self._odsay_mapper.map_result(result, destination_name=destination.name)
-            enriched = [self._enricher.enrich(candidate, live=live) for candidate in mapped]
+            enrich_limit = _max_sync_enrich_candidates()
+            enriched, enrichment_timed_out = self._enrich_with_deadline(
+                mapped[:enrich_limit],
+                live=live,
+            )
         except OdsayUnavailableError as exc:
             return _local_fallback_response(local_response, warning="ODsay unavailable; local planner fallback used", error=exc)
         except Exception as exc:
             return _local_fallback_response(local_response, warning="ODsay unavailable; local planner fallback used", error=exc)
 
-        if not enriched:
+        if not mapped:
             return _local_fallback_response(
                 local_response,
                 warning="ODsay returned no usable bus candidates; local planner fallback used",
             )
 
-        candidates = _dedupe_candidates([*enriched, *local_response.plans])
+        # Keep ODsay alternatives visible, but enrich only the first candidates
+        # synchronously so the verified primary guidance is ready quickly.
+        candidates = _dedupe_candidates([*enriched, *mapped[len(enriched) :]])
+        if enrichment_timed_out:
+            candidates = [
+                _with_warning(
+                    candidate,
+                    "TAGO 실시간 보강이 지연되어 ODsay 경로를 먼저 안내함",
+                )
+                for candidate in candidates
+            ]
         plans = self._ranker.rank(candidates)[:5]
         recommended = plans[0] if plans else None
         warnings = _dedupe([warning for plan in plans for warning in plan.warnings])
@@ -117,11 +165,13 @@ class TransitPlannerOrchestrator:
             alternatives=plans[1:],
             agentMessage=recommended.boardingInstruction if recommended else local_response.question,
             question=None if recommended else local_response.question,
-            fallbackSource=_strongest_source([local_response.fallbackSource, *(plan.fallbackSource for plan in plans)]),
+            fallbackSource=_strongest_source([destination.source, *(plan.fallbackSource for plan in plans)]),
             warnings=warnings,
             rawProviderEvidence={
                 "provider": "ODSAY",
-                "odsayCandidates": len(enriched),
+                "odsayCandidates": len(mapped),
+                "tagoEnrichedCandidates": len(enriched),
+                "tagoEnrichmentTimedOut": enrichment_timed_out,
                 "localCandidates": len(local_response.plans),
             },
         )
@@ -129,6 +179,41 @@ class TransitPlannerOrchestrator:
     def _odsay_enabled(self) -> bool:
         enabled = getattr(self._odsay_client, "is_enabled", None)
         return bool(enabled()) if callable(enabled) else bool(getattr(self._odsay_client, "enabled", False))
+
+    def _enrich_with_deadline(
+        self,
+        candidates: list[RoutePlanCandidate],
+        *,
+        live: bool,
+    ) -> tuple[list[RoutePlanCandidate], bool]:
+        enriched: list[RoutePlanCandidate] = []
+        for candidate in candidates:
+            future = _ENRICHMENT_EXECUTOR.submit(self._enricher.enrich, candidate, live=live)
+            try:
+                enriched.append(future.result(timeout=_sync_enrich_timeout_seconds()))
+            except FutureTimeoutError:
+                return enriched, True
+        return enriched, False
+
+
+def _max_sync_enrich_candidates() -> int:
+    try:
+        value = int(os.getenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "1"))
+    except ValueError:
+        value = 1
+    return max(0, min(value, 5))
+
+
+def _sync_enrich_timeout_seconds() -> float:
+    try:
+        value = float(os.getenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "4.0"))
+    except ValueError:
+        value = 4.0
+    return max(0.05, min(value, 8.0))
+
+
+def _with_warning(candidate: RoutePlanCandidate, warning: str) -> RoutePlanCandidate:
+    return candidate.model_copy(update={"warnings": _dedupe([*candidate.warnings, warning])})
 
 
 def _local_fallback_response(
