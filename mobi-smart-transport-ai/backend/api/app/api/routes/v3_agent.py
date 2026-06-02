@@ -57,6 +57,10 @@ def _resolve_live(mode: str | None) -> bool:
 
 router = APIRouter()
 
+# 대화 맥락을 Gemini에 넘길 때 사용할 한도(토큰/지연을 적당히 묶기 위함).
+_MAX_HISTORY_TURNS = 6
+_MAX_HISTORY_CHARS = 300
+
 _DESTINATION_ALIASES: tuple[tuple[str, str], ...] = (
     ("사창사거리", "사창사거리"),
     ("사창 사거리", "사창사거리"),
@@ -135,6 +139,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
             "대기 중인 목적지 후보가 없어 선택 처리를 생략했어.",
         )
 
+    history = _conversation_history_for_gemini(session)
     intent_event = trace.start(
         "CLASSIFY_INTENT",
         "요청 의도 분류",
@@ -145,24 +150,32 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         session.to_response(),
         wake_word=wake_word,
     ).intent
-    classification = (
-        classify_intent(
-            utterance=utterance,
-            wake_word=wake_word,
-            known_destinations=cheongju_route_catalog.DESTINATIONS,
-        )
-        if keyword_intent == AgentIntent.UNKNOWN
-        else None
+    # 1차 추론: 먼저 발화의 의도/목적지를 (대화 맥락과 함께) Gemini로 추론한 뒤,
+    # 그 결과로 도구/공공 API 호출 단계로 넘어간다. Gemini가 불확실하거나 사용할 수
+    # 없을 때만 결정적 키워드 분류 결과로 폴백한다.
+    classification = classify_intent(
+        utterance=utterance,
+        wake_word=wake_word,
+        known_destinations=cheongju_route_catalog.DESTINATIONS,
+        history=history,
     )
     intent = keyword_intent
     nlp_destination: str | None = None
+    reasoning_source = "keyword"
     if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
         intent = AgentIntent(classification["intent"])
         nlp_destination = classification["destination"]
+        reasoning_source = "gemini"
     trace.done(
         intent_event,
-        "요청 의도를 분류했어.",
-        safe_payload={"intent": intent.value, "destinationText": nlp_destination},
+        "발화 의도를 먼저 추론한 뒤 처리 단계로 넘어갔어.",
+        safe_payload={
+            "intent": intent.value,
+            "destinationText": nlp_destination,
+            "reasoningSource": reasoning_source,
+            "keywordIntent": keyword_intent.value,
+            "historyTurns": len(history) // 2,
+        },
     )
 
     message = "요청을 이해하지 못했어. 버튼으로 다시 선택해줘."
@@ -183,6 +196,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
             nlp_destination=nlp_destination,
             live=live,
             trace=trace,
+            history=history,
         )
 
     elif intent == AgentIntent.QUERY_ARRIVAL:
@@ -256,6 +270,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
                         utterance=utterance,
                         wake_word=wake_word,
                         context_data=context_data,
+                        history=history,
                     )
                     message = dynamic_msg or "아직 타야 할 버스가 오지 않은 것 같아."
                     used_gemini = bool(dynamic_msg)
@@ -304,14 +319,18 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
             used_gemini = False
             fallback_source = FallbackSource.CACHE if session.selected_plan or session.recommended_plan else FallbackSource.MOCK
         else:
-            gemini_reply = generate_optional_reply(utterance=utterance, wake_word=wake_word)
+            gemini_reply = generate_optional_reply(
+                utterance=utterance, wake_word=wake_word, history=history
+            )
             if gemini_reply:
                 message = gemini_reply
                 tts_mode = TtsMode.GEMINI_OPTIONAL
                 used_gemini = True
                 fallback_source = FallbackSource.GEMINI
             else:
-                message = "지금은 답하기 어려워. 잠시 후에 다시 말해줄래?"
+                # Gemini를 쓸 수 없을 때도 같은 문장만 앵무새처럼 반복하지 않도록
+                # 대화 맥락/세션 상태에 따라 다른 로컬 폴백을 만든다.
+                message = _local_smalltalk_fallback(session, utterance)
 
     return _agent_response(
         trace=trace,
@@ -528,6 +547,46 @@ def _first_arrival_text(segment: dict) -> str | None:
         return f"첫 번째 버스는 약 {minutes}분 뒤 도착 예정이야."
     return None
 
+def _conversation_history_for_gemini(session: V3SessionRecord) -> list[dict]:
+    """세션의 대화 기록을 Gemini contents용 user/model 턴 목록으로 변환한다.
+
+    대화창을 초기화(세션 리셋)하기 전까지 누적된 맥락을 에이전트가 기억하도록,
+    최근 turn들을 (오래된 것부터) user→model 순서로 펼쳐서 반환한다.
+    """
+    history_raw = getattr(session, "conversation_history", None)
+    if not isinstance(history_raw, list) or not history_raw:
+        return []
+    turns: list[dict] = []
+    for entry in history_raw[-_MAX_HISTORY_TURNS:]:
+        if not isinstance(entry, dict):
+            continue
+        utterance = entry.get("utterance")
+        response = entry.get("response")
+        if isinstance(utterance, str) and utterance.strip():
+            turns.append({"role": "user", "text": utterance.strip()[:_MAX_HISTORY_CHARS]})
+        if isinstance(response, str) and response.strip():
+            turns.append({"role": "model", "text": response.strip()[:_MAX_HISTORY_CHARS]})
+    return turns
+
+
+def _local_smalltalk_fallback(session: V3SessionRecord, utterance: str) -> str:
+    """Gemini를 쓸 수 없을 때의 로컬 잡담 폴백.
+
+    같은 문장만 반복하지 않도록 세션 상태(선택된 경로/목적지/대기 질문)에 따라
+    맥락 있는 안내로 바꾼다.
+    """
+    if session.pending_question:
+        return session.pending_question
+    if session.selected_route_no and session.selected_destination:
+        return (
+            f"지금은 {session.selected_destination} 방향 {session.selected_route_no}번 안내를 잡아두고 있어. "
+            "도착정보나 다른 목적지가 필요하면 말해줘."
+        )
+    if session.selected_destination:
+        return f"현재 목적지는 {session.selected_destination}로 잡혀 있어. 경로가 필요하면 '몇 번 버스 타야 돼?'처럼 물어봐."
+    return "어디로 갈지 장소나 정류장 이름을 말해주면 버스 경로를 찾아줄게."
+
+
 def _handle_route_request(
     *,
     session: V3SessionRecord,
@@ -536,6 +595,7 @@ def _handle_route_request(
     nlp_destination: str | None,
     live: bool,
     trace: AgentTraceRecorder,
+    history: list[dict] | None = None,
 ) -> tuple[RoutePlanResponse | None, str, TtsMode, bool, FallbackSource]:
     explicit_destination = _extract_destination(payload.utterance) or nlp_destination
     if explicit_destination:
@@ -572,6 +632,7 @@ def _handle_route_request(
             origin_lat=payload.originLat,
             origin_lng=payload.originLng,
             trace=trace,
+            history=history,
         )
 
     # 기존 테스트/버튼 플로우에 등록된 목적지만 위치 없는 고정 카탈로그 폴백을 유지한다.
@@ -596,6 +657,7 @@ def _handle_route_request(
             origin_lat=None,
             origin_lng=None,
             trace=trace,
+            history=history,
         )
 
     resolved = cheongju_route_catalog.resolve_or_mock(legacy_destination, live=live)
@@ -616,6 +678,7 @@ def _handle_route_request(
             origin_lat=None,
             origin_lng=None,
             trace=trace,
+            history=history,
         )
     _apply_legacy_route(session, resolved.destination, resolved.routeNo, resolved.routeId, resolved.stopId, resolved.stopName)
 
@@ -636,6 +699,7 @@ def _handle_route_request(
                 utterance=payload.utterance,
                 wake_word=payload.wakeWord,
                 context_data=context_data,
+                history=history,
             )
             if dynamic_msg:
                 used_gemini = True
@@ -661,6 +725,7 @@ def _route_plan_response_tuple(
     origin_lat: float | None,
     origin_lng: float | None,
     trace: AgentTraceRecorder,
+    history: list[dict] | None = None,
 ) -> tuple[RoutePlanResponse, str, TtsMode, bool, FallbackSource]:
     route_plan = verify_route_tool(route_plan)
     session.origin_location = (
@@ -688,6 +753,7 @@ def _route_plan_response_tuple(
         utterance=utterance,
         wake_word=wake_word,
         reply_builder=generate_route_plan_reply,
+        history=history,
     )
     if gemini_message:
         trace.done(gemini_event, "검증된 경로 JSON을 바탕으로 안내 문장을 만들었어.")
@@ -788,6 +854,7 @@ def _try_answer_pending_destination(
         origin_lat=origin_lat,
         origin_lng=origin_lng,
         trace=trace,
+        history=_conversation_history_for_gemini(session),
     )
     return _agent_response(
         trace=trace,

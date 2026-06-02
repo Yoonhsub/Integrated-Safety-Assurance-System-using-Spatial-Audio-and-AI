@@ -66,6 +66,7 @@ def classify_intent(
     utterance: str,
     wake_word: str,
     known_destinations: tuple[str, ...],
+    history: list[dict] | None = None,
 ) -> dict | None:
     """Flash로 발화의 복잡도/의도/목적지를 1차 분류한다.
 
@@ -97,6 +98,7 @@ def classify_intent(
         prompt=utterance,
         max_output_tokens=120,
         thinking_budget=0,
+        history=history,
     )
     if not raw:
         return None
@@ -135,7 +137,9 @@ def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict
     return {"intent": intent, "complexity": complexity, "destination": destination}
 
 
-def generate_optional_reply(*, utterance: str, wake_word: str) -> str | None:
+def generate_optional_reply(
+    *, utterance: str, wake_word: str, history: list[dict] | None = None
+) -> str | None:
     """Return a short non-safety reply when Gemini is configured and available."""
 
     model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
@@ -144,12 +148,14 @@ def generate_optional_reply(*, utterance: str, wake_word: str) -> str | None:
         system_instruction=(
             f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
             "한국어 반말로 짧고 명확하게 답해. "
+            "이전 대화 맥락을 기억하고 이어서 자연스럽게 답해. "
             "실시간 버스 도착 시간, 버스 탑승 가능 여부, 위치 안전 여부를 추측하지 마. "
             "그런 요청에는 앱의 안전 안내와 버스 조회 버튼을 사용하라고 답해."
         ),
         prompt=utterance,
         max_output_tokens=120,
         thinking_budget=0,
+        history=history,
     )
     return _without_vision_claims(reply)
 
@@ -238,6 +244,7 @@ def generate_route_plan_reply(
     route_plan: dict,
     utterance: str,
     wake_word: str,
+    history: list[dict] | None = None,
 ) -> str | None:
     """Use Gemini only to verbalize an already-computed RoutePlan JSON.
 
@@ -277,7 +284,9 @@ def generate_route_plan_reply(
         max_output_tokens=220,
         # gemini-2.5-pro는 thinkingBudget=0을 거부할 수 있으므로 최소 thinking budget을 둔다.
         thinking_budget=128,
-        timeout_seconds=30.0,
+        # 프론트 converse 타임아웃(60s) 안에 Pro+Flash 폴백이 모두 끝나도록 짧게 잡는다.
+        timeout_seconds=12.0,
+        history=history,
     )
     if not reply:
         flash_model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
@@ -288,7 +297,8 @@ def generate_route_plan_reply(
                 prompt=prompt,
                 max_output_tokens=220,
                 thinking_budget=128,
-                timeout_seconds=30.0,
+                timeout_seconds=10.0,
+                history=history,
             )
     if not reply:
         return None
@@ -343,14 +353,16 @@ def generate_dynamic_response(
     utterance: str,
     wake_word: str,
     context_data: dict,
+    history: list[dict] | None = None,
 ) -> str | None:
     """Use Pro to generate a natural conversational response based on live API data."""
     model = _model_from_env("GEMINI_PRO_MODEL", _DEFAULT_PRO_MODEL)
-    
+
     system_instruction = (
         f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
         f"{_GROUNDED_TRANSIT_RULE}"
         "한국어 반말로 짧고 명확하게 답해. 절대 구구절절 설명하지 말고 2문장 이내로 말해. "
+        "이전 대화 맥락을 기억하고 이어서 자연스럽게 답해. "
         "제공된 실시간 공공 API 데이터(context_data)에 기반해서만 대답하고, 정보가 부족하면 "
         "솔직하게 정보가 없다고 말해."
     )
@@ -370,7 +382,9 @@ def generate_dynamic_response(
         # gemini-2.5-pro는 thinking 비활성화(budget 0)를 거부한다("only works in thinking mode").
         # 복잡 응답은 Pro로 처리하므로 최소 thinking budget을 부여해야 실제 응답이 생성된다.
         thinking_budget=128,
-        timeout_seconds=30.0,
+        # 프론트 converse 타임아웃(60s) 안에 끝나도록 짧게 잡는다.
+        timeout_seconds=12.0,
+        history=history,
     )
     return _without_vision_claims(reply)
 
@@ -469,6 +483,7 @@ def _generate(
     max_output_tokens: int,
     thinking_budget: int | None = None,
     timeout_seconds: float = 8.0,
+    history: list[dict] | None = None,
 ) -> str | None:
     payload = _generate_payload(
         model=model,
@@ -477,8 +492,29 @@ def _generate(
         max_output_tokens=max_output_tokens,
         thinking_budget=thinking_budget,
         timeout_seconds=timeout_seconds,
+        history=history,
     )
     return _extract_text(payload) if payload else None
+
+
+def _history_contents(history: list[dict] | None) -> list[dict]:
+    """이전 대화 턴을 Gemini contents 형식(user/model 교대)으로 변환한다.
+
+    history 항목은 ``{"role": "user"|"model", "text": str}`` 형태를 기대한다.
+    대화창을 초기화하기 전까지 에이전트가 맥락을 기억하도록 현재 발화 앞에 붙인다.
+    """
+    if not history:
+        return []
+    contents: list[dict] = []
+    for turn in history:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        text = turn.get("text")
+        if role not in {"user", "model"} or not isinstance(text, str) or not text.strip():
+            continue
+        contents.append({"role": role, "parts": [{"text": text.strip()}]})
+    return contents
 
 
 def _generate_payload(
@@ -491,6 +527,7 @@ def _generate_payload(
     timeout_seconds: float = 8.0,
     tools: list[dict] | None = None,
     tool_config: dict | None = None,
+    history: list[dict] | None = None,
 ) -> dict | None:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -506,7 +543,10 @@ def _generate_payload(
 
     payload = {
         "system_instruction": {"parts": [{"text": system_instruction}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [
+            *_history_contents(history),
+            {"role": "user", "parts": [{"text": prompt}]},
+        ],
         "generationConfig": generation_config,
     }
     if tools:

@@ -484,6 +484,7 @@ def build_grounded_agent_reply_tool(
     utterance: str,
     wake_word: str,
     reply_builder: Callable[..., str | None] | None = None,
+    history: list[dict] | None = None,
 ) -> str | None:
     verified = verify_route_tool(route_plan)
     if reply_builder is None:
@@ -494,6 +495,7 @@ def build_grounded_agent_reply_tool(
         route_plan=verified.model_dump(mode="json"),
         utterance=utterance,
         wake_word=wake_word,
+        history=history,
     )
     return sanitize_agent_reply_tool(reply, assistant_name=wake_word)
 
