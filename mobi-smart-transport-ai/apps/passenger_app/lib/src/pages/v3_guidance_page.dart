@@ -39,12 +39,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   );
 
   static const String _sessionId = 'demo-session';
-  static const bool _webDemoOriginEnabled = bool.fromEnvironment(
-    'MOBI_WEB_DEMO_ORIGIN_ENABLED',
-    defaultValue: true,
-  );
-  static const double _webDemoOriginLat = 36.6359;
-  static const double _webDemoOriginLng = 127.4596;
 
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
@@ -62,7 +56,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   String? _errorMessage;
   bool _isBusy = false;
   bool _isRoutePlanning = false;
-  bool _usingWebDemoOrigin = false;
   bool _useMockHeadTracking = false;
   HeadTrackingDebugSnapshot _headTracking =
       HeadTrackingDebugSnapshot.disabled();
@@ -72,6 +65,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   String? _liveRouteError;
   bool _liveRoutePanelVisible = false;
   bool _isLiveRouteLoading = false;
+  // 앱 진입 시 1회 확보해 두는 실제 사용자 위치. 경로 탐색마다 새로 받지 않고 재사용한다.
+  Position? _cachedPosition;
+  // 위치 권한이 거부/불가해 실제 위치를 쓸 수 없는 상태.
+  bool _locationDenied = false;
+  // 위치 권한 확인이 진행 중인지(중복 요청 방지).
+  bool _resolvingLocation = false;
   bool _isAgentTraceExpanded = false;
 
   // 실시간 채팅 상태
@@ -89,6 +88,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
     );
     _bootstrap();
+    // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
+    _ensureLocation(forceRequest: true);
   }
 
   @override
@@ -329,6 +330,31 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
   }
 
+  /// 첫 접속 시(혹은 사용자가 다시 시도할 때) 위치 권한을 요청하고 실제 위치를 캐시한다.
+  /// 경로 탐색 시점이 아니라 진입 시점에 호출해 사용자 위치를 미리 확보한다.
+  Future<void> _ensureLocation({bool forceRequest = false}) async {
+    if (_resolvingLocation) return;
+    if (_cachedPosition != null && !forceRequest) return;
+    _resolvingLocation = true;
+    try {
+      final position = await _currentPosition();
+      if (!mounted) return;
+      setState(() {
+        _cachedPosition = position;
+        _locationDenied = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      // 실제 위치를 못 받으면 사창사거리 같은 가짜 좌표를 만들지 않는다.
+      // 위치 없이 진행하고, 사용자가 권한을 켤 수 있도록 안내 배너만 띄운다.
+      setState(() {
+        _locationDenied = true;
+      });
+    } finally {
+      _resolvingLocation = false;
+    }
+  }
+
   Future<_RoutePlanningPreparation> _beginRoutePlanning() async {
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
@@ -341,28 +367,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     });
     await _cueService.playDing();
 
-    try {
-      final position = await _currentPosition();
-      if (mounted) {
-        setState(() {
-          _usingWebDemoOrigin = false;
-        });
-      }
-      return _RoutePlanningPreparation(position: position);
-    } catch (_) {
-      if (kIsWeb && _webDemoOriginEnabled) {
-        if (mounted) {
-          setState(() {
-            _usingWebDemoOrigin = true;
-          });
-        }
-        return _RoutePlanningPreparation(
-          position: _webDemoPosition(),
-          usesDemoOrigin: true,
-        );
-      }
-      return const _RoutePlanningPreparation();
+    // 진입 시 확보한 실제 위치를 우선 사용한다. 없으면 한 번 더 시도한다.
+    if (_cachedPosition == null) {
+      await _ensureLocation(forceRequest: true);
     }
+    final position = _cachedPosition;
+    if (position != null) {
+      return _RoutePlanningPreparation(position: position);
+    }
+    // 실제 위치가 없으면 가짜 좌표(사창사거리)를 보내지 않고 위치 없이 진행한다.
+    return const _RoutePlanningPreparation();
   }
 
   Future<void> _activateLiveRoutePanel(
@@ -455,11 +469,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
     }
     final plan = routePlan.recommendedPlan!;
-    final locationLabel = preparation.usesDemoOrigin
-        ? '웹 시연 기준 위치(사창사거리)로'
-        : preparation.position == null
-            ? '현재 위치 없이'
-            : '현재 위치 기준으로';
+    final locationLabel =
+        preparation.position == null ? '현재 위치 없이' : '현재 위치 기준으로';
     final typeLabel = plan.type == 'DIRECT' ? '직통' : '1회 환승';
     return '$locationLabel $typeLabel 경로 ${routePlan.plans.length}개를 계산했습니다. 추천 점수 ${plan.score.toStringAsFixed(1)}점.';
   }
@@ -500,7 +511,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<Position> _currentPosition() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
+    // 웹 브라우저에서는 isLocationServiceEnabled()가 권한이 있어도 false를 줄 수 있어
+    // (그래서 위치를 제공했는데도 데모 배너가 떴다) 네이티브에서만 이 사전 점검을 한다.
+    if (!kIsWeb && !await Geolocator.isLocationServiceEnabled()) {
       throw StateError('Location services are disabled.');
     }
 
@@ -516,24 +529,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     return Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.medium,
-        timeLimit: Duration(seconds: 8),
+        timeLimit: Duration(seconds: 12),
       ),
-    );
-  }
-
-  Position _webDemoPosition() {
-    return Position(
-      latitude: _webDemoOriginLat,
-      longitude: _webDemoOriginLng,
-      timestamp: DateTime.now(),
-      accuracy: 0,
-      altitude: 0,
-      altitudeAccuracy: 0,
-      heading: 0,
-      headingAccuracy: 0,
-      speed: 0,
-      speedAccuracy: 0,
-      isMocked: true,
     );
   }
 
@@ -621,7 +618,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _lastBeaconDecision = null;
         _latestGeofenceMessage = null;
         _routePlanningStatus = null;
-        _usingWebDemoOrigin = false;
         _liveRoutePanelVisible = false;
         _liveRouteStatus = null;
         _liveRouteError = null;
@@ -710,9 +706,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       }),
                     ),
                   ],
-                  if (_usingWebDemoOrigin) ...[
+                  if (_locationDenied) ...[
                     const SizedBox(height: 12),
-                    const _WebDemoOriginBanner(),
+                    _LocationNeededBanner(
+                      onRetry: _isBusy
+                          ? null
+                          : () => _ensureLocation(forceRequest: true),
+                    ),
                   ],
                   if (_liveRoutePanelVisible) ...[
                     const SizedBox(height: 12),
@@ -1089,18 +1089,34 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-class _WebDemoOriginBanner extends StatelessWidget {
-  const _WebDemoOriginBanner();
+class _LocationNeededBanner extends StatelessWidget {
+  const _LocationNeededBanner({this.onRetry});
+
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: Theme.of(context).colorScheme.tertiaryContainer,
-      child: const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text(
-          '웹 시연 기준 위치 사용 중: 브라우저 위치 권한을 사용할 수 없어 '
-          '사창사거리 좌표를 기준으로 경로를 계산합니다. 위치 권한을 허용하면 실제 사용자 위치를 사용합니다.',
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '위치 권한이 필요해요. 정확한 경로를 안내하려면 브라우저에서 위치 접근을 허용해줘. '
+              '위치 없이도 등록된 목적지는 안내할 수 있지만, 현재 위치 기준 경로는 권한이 있어야 정확해.',
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.my_location),
+                label: const Text('위치 권한 다시 시도'),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2017,13 +2033,9 @@ class _RoutePlanningOverlay extends StatelessWidget {
 }
 
 class _RoutePlanningPreparation {
-  const _RoutePlanningPreparation({
-    this.position,
-    this.usesDemoOrigin = false,
-  });
+  const _RoutePlanningPreparation({this.position});
 
   final Position? position;
-  final bool usesDemoOrigin;
 }
 
 class _HeadTrackingCard extends StatelessWidget {
