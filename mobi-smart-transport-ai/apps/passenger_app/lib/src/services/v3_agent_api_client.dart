@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/v3_guidance_models.dart';
+import 'converse_live.dart';
 
 class V3ApiException implements Exception {
   const V3ApiException(this.message, {this.statusCode});
@@ -116,6 +117,29 @@ class V3AgentApiClient {
         },
         customTimeout: _converseTimeout);
     return V3AgentResponse.fromJson(json);
+  }
+
+  /// 처리 단계 'thought'를 실시간 스트리밍하고 마지막에 최종 응답을 주는 WS 스트림.
+  /// 웹에서만 동작하며, 실패 시 호출자가 [converse]로 폴백한다.
+  Stream<ConverseEvent> converseLive({
+    required String sessionId,
+    required String wakeWord,
+    required String utterance,
+    String? mode,
+    double? originLat,
+    double? originLng,
+  }) {
+    return openConverseLive(
+      baseUrl: baseUrl,
+      request: <String, Object?>{
+        'sessionId': sessionId,
+        'wakeWord': wakeWord,
+        'utterance': utterance,
+        if (mode != null) 'mode': mode,
+        if (originLat != null && originLng != null) 'originLat': originLat,
+        if (originLat != null && originLng != null) 'originLng': originLng,
+      },
+    );
   }
 
   Future<Uint8List> synthesizeSpeech({required String text}) async {

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-enum Speaker { user, agent }
+enum Speaker { user, agent, thinking }
 
 /// 한 발화(또는 진행 중 partial) 자막 항목.
 @immutable
@@ -61,8 +61,28 @@ class LiveCaptionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 처리 중 '생각' 한 줄을 회색으로 추가한다(세션 로그에는 남기지 않는 임시 줄).
+  void addThought(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    _temporaryLines.add(LiveCaptionLine(
+      speaker: Speaker.thinking,
+      text: t,
+      isFinal: true,
+      createdAt: DateTime.now(),
+    ));
+    notifyListeners();
+  }
+
+  /// 화면의 '생각' 줄만 제거한다(답변이 시작될 때 호출).
+  void clearThoughts() {
+    _temporaryLines.removeWhere((line) => line.speaker == Speaker.thinking);
+    notifyListeners();
+  }
+
   /// 에이전트 응답을 한 글자씩 타이핑되듯 점진적으로 노출한다(GPT 스타일 스트리밍).
   void streamAgent(String text) {
+    clearThoughts();
     _streamTimer?.cancel();
     final full = text.trim();
     if (full.isEmpty) return;

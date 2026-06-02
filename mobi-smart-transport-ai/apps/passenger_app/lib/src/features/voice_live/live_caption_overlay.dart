@@ -78,8 +78,11 @@ class LiveCaptionOverlay extends StatelessWidget {
     final out = <_VisualLine>[];
     for (var e = 0; e < entries.length; e++) {
       final entry = entries[e];
-      final prefix =
-          entry.speaker == Speaker.user ? '사용자: ' : '$agentName: ';
+      final prefix = switch (entry.speaker) {
+        Speaker.user => '사용자: ',
+        Speaker.thinking => '',
+        Speaker.agent => '$agentName: ',
+      };
       final full = '$prefix${entry.text}';
       final tp = TextPainter(
         text: TextSpan(text: full, style: _lineStyle),
@@ -178,7 +181,13 @@ class _AnimatedCaptionLine extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Text(
           line.text,
-          style: LiveCaptionOverlay._lineStyle,
+          style: line.speaker == Speaker.thinking
+              ? LiveCaptionOverlay._lineStyle.copyWith(
+                  color: Colors.white60,
+                  fontStyle: FontStyle.italic,
+                  fontSize: 14,
+                )
+              : LiveCaptionOverlay._lineStyle,
         ),
       ),
     );

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -32,10 +32,26 @@ class AgentTraceRecorder:
     exposing raw provider responses or server-only diagnostics.
     """
 
-    def __init__(self, *, trace_id: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        trace_id: str | None = None,
+        listener: Callable[[str, AgentTraceEvent], None] | None = None,
+    ) -> None:
         self.trace_id = trace_id or f"trace-{uuid4().hex}"
         self._events: list[AgentTraceEvent] = []
         self._started: dict[str, tuple[float, datetime]] = {}
+        # phase("start"|"end")와 이벤트를 받는 선택적 리스너(실시간 thought 스트리밍용).
+        self._listener = listener
+
+    def _emit(self, phase: str, event: AgentTraceEvent) -> None:
+        if self._listener is None:
+            return
+        try:
+            self._listener(phase, event)
+        except Exception:
+            # 리스너 오류가 트레이싱/응답을 깨뜨리지 않게 한다.
+            pass
 
     def start(
         self,
@@ -63,6 +79,7 @@ class AgentTraceRecorder:
                 startedAt=started_at,
             )
         )
+        self._emit("start", self._events[-1])
         return event_id
 
     def done(
@@ -125,6 +142,7 @@ class AgentTraceRecorder:
             warning=self._sanitize_optional_text(warning),
         )
         self._events.append(event)
+        self._emit("end", event)
         return event
 
     def record(
@@ -202,6 +220,7 @@ class AgentTraceRecorder:
             }
         )
         self._events[event.step - 1] = updated
+        self._emit("end", updated)
         return updated
 
     def _sanitize(self, value: Any, *, depth: int) -> Any:

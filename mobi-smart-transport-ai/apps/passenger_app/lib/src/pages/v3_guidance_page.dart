@@ -13,6 +13,7 @@ import '../features/voice_live/live_voice_page.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
+import '../services/converse_live.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
@@ -254,7 +255,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   /// Live 음성 발화 1턴 처리: 길안내 동의 → 네비 전환, 그 외 → 에이전트 응답.
-  Future<LiveProcessResult> _processLiveUtterance(String utterance) async {
+  Future<LiveProcessResult> _processLiveUtterance(
+    String utterance, {
+    void Function(String thought)? onThought,
+  }) async {
     final text = utterance.trim();
     if (text.isEmpty) return const LiveProcessResult(spokenText: '');
 
@@ -280,13 +284,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final shouldPlanRoute = _looksLikeRouteRequest(text);
     final preparation = shouldPlanRoute ? await _beginRoutePlanning() : null;
     try {
-      final response = await _client.converse(
-        sessionId: _sessionId,
-        wakeWord: _wakeWord,
-        utterance: text,
-        mode: widget.dataMode,
+      final response = await _converseWithThoughts(
+        text: text,
         originLat: preparation?.position?.latitude,
         originLng: preparation?.position?.longitude,
+        onThought: onThought ?? (_) {},
       );
       // 종료 의사는 백엔드 Gemini가 자연어로 판별(END_CONVERSATION).
       if (response.intent == 'END_CONVERSATION') {
@@ -412,14 +414,29 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
     try {
       await _runGuarded(() async {
-        final response = await _client.converse(
-          sessionId: _sessionId,
-          wakeWord: _wakeWord,
-          utterance: text,
-          mode: widget.dataMode,
+        // 처리 중 단계별 '생각'을 회색 줄로 보여 주고, 최종 응답을 받는다.
+        final thinkingMessages = <ChatMessage>[];
+        final response = await _converseWithThoughts(
+          text: text,
           originLat: planningPreparation?.position?.latitude,
           originLng: planningPreparation?.position?.longitude,
+          onThought: (thought) {
+            final msg = ChatMessage(
+              text: thought,
+              isUser: false,
+              timestamp: DateTime.now(),
+              source: fromChat ? 'chat' : 'voice',
+              kind: 'thinking',
+            );
+            thinkingMessages.add(msg);
+            if (mounted) setState(() => _chatMessages.add(msg));
+          },
         );
+        // 답변이 준비되면 임시 생각줄은 정리한다.
+        if (thinkingMessages.isNotEmpty && mounted) {
+          setState(() =>
+              _chatMessages.removeWhere((m) => thinkingMessages.contains(m)));
+        }
         final state = await _client.fetchState(sessionId: _sessionId);
         V3RouteRecommendResponse? recommendation;
         V3RoutePlanResponse? routePlan = response.routePlan;
@@ -557,6 +574,47 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     if (no.contains(compact)) return true;
     if (compact.length <= 6) return no.any(compact.contains);
     return false;
+  }
+
+  /// converse를 WS 스트리밍으로 호출해 처리 단계 'thought'를 실시간 전달하고,
+  /// 최종 응답을 돌려준다. 웹이 아니거나 스트림 실패 시 일반 converse로 폴백한다.
+  Future<V3AgentResponse> _converseWithThoughts({
+    required String text,
+    required double? originLat,
+    required double? originLng,
+    required void Function(String thought) onThought,
+  }) async {
+    try {
+      V3AgentResponse? finalResponse;
+      final stream = _client
+          .converseLive(
+            sessionId: _sessionId,
+            wakeWord: _wakeWord,
+            utterance: text,
+            mode: widget.dataMode,
+            originLat: originLat,
+            originLng: originLng,
+          )
+          .timeout(const Duration(seconds: 45));
+      await for (final event in stream) {
+        if (event is ConverseThought) {
+          onThought(event.text);
+        } else if (event is ConverseFinal) {
+          finalResponse = event.response;
+        }
+      }
+      if (finalResponse != null) return finalResponse;
+    } catch (_) {
+      // 스트리밍 미지원/실패 → 일반 REST converse로 폴백.
+    }
+    return _client.converse(
+      sessionId: _sessionId,
+      wakeWord: _wakeWord,
+      utterance: text,
+      mode: widget.dataMode,
+      originLat: originLat,
+      originLng: originLng,
+    );
   }
 
   /// Live 음성 대화 전용 발화: Gemini Live 스트리밍만 사용하고 실패/중단(barge-in) 시
@@ -1584,6 +1642,18 @@ class _ConversationLogCard extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final m = ordered[index];
+                if (m.isThinking) {
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      m.text,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  );
+                }
                 final isUser = m.isUser;
                 final sourceIcon =
                     m.source == 'voice' ? Icons.mic : Icons.chat_bubble_outline;

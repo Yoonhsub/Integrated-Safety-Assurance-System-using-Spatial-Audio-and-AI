@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
@@ -177,9 +177,131 @@ async def _send_live_audio_error(
         pass
 
 
+# 처리 단계를 사용자용 'thought' 한 줄로 매핑(생각 사슬 스트리밍).
+_THOUGHT_ON_START = {
+    "NORMALIZE_UTTERANCE": "요청을 받았어. 무슨 말인지 정리하는 중...",
+    "CLASSIFY_INTENT": "무엇을 원하는지 파악하는 중...",
+    "DESTINATION_RESOLVE": "목적지를 공공데이터에서 확인하는 중...",
+    "KAKAO_PLACE_SEARCH": "장소를 검색하는 중...",
+    "NEARBY_STOP_SEARCH": "근처 정류장을 찾는 중...",
+    "NEAR_DESTINATION_GUARD": "목적지가 가까운지 확인하는 중...",
+    "ODSAY_ROUTE_SEARCH": "대중교통 경로를 계산하는 중...",
+    "TAGO_ROUTE_VERIFY": "버스 노선을 검증하는 중...",
+    "TAGO_ARRIVAL_LOOKUP": "실시간 도착정보를 확인하는 중...",
+    "TAGO_BUS_LOCATION_LOOKUP": "버스 위치를 확인하는 중...",
+    "SERVICE_STATUS_CHECK": "운행 상태를 확인하는 중...",
+    "DESTINATION_INFERENCE": "정확히 같은 곳이 없네. 비슷한 청주 지역을 추론하는 중...",
+}
+
+
+def _thought_for_event(phase: str, event) -> str | None:
+    if phase == "start":
+        return _THOUGHT_ON_START.get(event.type)
+    if phase == "end" and event.type == "DESTINATION_INFERENCE" and event.status == "DONE":
+        verified = (event.safePayload or {}).get("verified")
+        if isinstance(verified, str) and verified:
+            return f"혹시 {verified}를 말한 걸까? 확인해봐야겠어."
+    return None
+
+
+@router.websocket("/converse/live")
+async def converse_live(websocket: WebSocket) -> None:
+    """대화 처리 단계를 실시간 'thought'로 스트리밍하고 마지막에 최종 응답을 보낸다."""
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+        payload = AgentConverseRequest.model_validate(raw)
+    except (asyncio.TimeoutError, ValidationError):
+        await _send_live_audio_error(
+            websocket,
+            code="INVALID_CONVERSE_REQUEST",
+            message="Converse request was missing or invalid.",
+        )
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+        return
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def listener(phase: str, event) -> None:
+        text = _thought_for_event(phase, event)
+        if text:
+            loop.call_soon_threadsafe(queue.put_nowait, ("thought", text))
+
+    trace = AgentTraceRecorder(listener=listener)
+
+    async def run() -> None:
+        try:
+            response = await asyncio.to_thread(_run_converse, payload, trace=trace)
+            loop.call_soon_threadsafe(queue.put_nowait, ("final", response))
+        except Exception:  # noqa: BLE001
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", None))
+
+    task = asyncio.create_task(run())
+    min_gap = 0.8
+    last_emit = 0.0
+    sent: set[str] = set()
+    emitted = 0
+    final_response: AgentConverseResponse | None = None
+    errored = False
+    try:
+        while True:
+            kind, value = await queue.get()
+            if kind == "thought":
+                if value in sent or emitted >= 9:
+                    continue
+                gap = min_gap - (loop.time() - last_emit)
+                if gap > 0:
+                    await asyncio.sleep(gap)
+                last_emit = loop.time()
+                sent.add(value)
+                emitted += 1
+                await websocket.send_json({"type": "thought", "text": value})
+            elif kind == "final":
+                final_response = value
+                break
+            else:
+                errored = True
+                break
+        if errored or final_response is None:
+            await _send_live_audio_error(
+                websocket,
+                code="CONVERSE_FAILED",
+                message="Conversation processing failed.",
+            )
+        else:
+            await websocket.send_json(
+                {
+                    "type": "final",
+                    "response": final_response.model_dump(mode="json", by_alias=True),
+                }
+            )
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        try:
+            await task
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
 @router.post("/converse", response_model=AgentConverseResponse)
 def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
-    trace = AgentTraceRecorder()
+    return _run_converse(payload, trace=AgentTraceRecorder())
+
+
+def _run_converse(
+    payload: AgentConverseRequest,
+    *,
+    trace: AgentTraceRecorder,
+) -> AgentConverseResponse:
     session = v3_guidance_store.get(payload.sessionId, wake_word=payload.wakeWord)
     wake_word = session.wake_word.strip()
     normalize_event = trace.start(

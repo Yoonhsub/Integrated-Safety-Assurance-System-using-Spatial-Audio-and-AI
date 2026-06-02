@@ -7,6 +7,7 @@ class ChatMessage {
     required this.isUser,
     required this.timestamp,
     this.source = 'chat',
+    this.kind = 'message',
   });
 
   final String text;
@@ -15,6 +16,11 @@ class ChatMessage {
 
   /// 발화 경로: 'chat'(채팅 입력) 또는 'voice'(음성 인식).
   final String source;
+
+  /// 'message'(일반 발화/답변) 또는 'thinking'(처리 중 회색 생각줄).
+  final String kind;
+
+  bool get isThinking => kind == 'thinking';
 }
 
 /// A floating chat overlay panel that sits on top of the guidance page.
@@ -253,6 +259,33 @@ class _ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // 처리 중 '생각' 줄: 답변이 아니라 작업 내용이므로 회색 텍스트로 구분 표시.
+    if (message.isThinking) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 6, left: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.more_horiz,
+                  size: 14, color: colorScheme.onSurface.withValues(alpha: 0.45)),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  message.text,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurface.withValues(alpha: 0.5),
+                        fontStyle: FontStyle.italic,
+                        height: 1.3,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final isUser = message.isUser;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
     final bgColor = isUser

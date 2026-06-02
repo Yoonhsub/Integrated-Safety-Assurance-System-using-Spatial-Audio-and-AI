@@ -28,8 +28,11 @@ class LiveProcessResult {
   final bool endSession;
 }
 
+// onThought는 처리 중 단계별 '생각' 한 줄을 받는다(회색 자막 스트리밍용).
 typedef LiveUtteranceProcessor = Future<LiveProcessResult> Function(
-    String utterance);
+  String utterance, {
+  void Function(String thought)? onThought,
+});
 // onStart는 실제 오디오 첫 청크가 도착(=소리 시작)할 때 호출된다(자막 동기화용).
 typedef LiveSpeak = Future<void> Function(String text, {VoidCallback? onStart});
 
@@ -448,7 +451,15 @@ class LiveVoiceController {
       captions.commitFinal(speaker: Speaker.user, text: spoken);
       _setState(VoiceTurnState.thinking);
 
-      final result = await processor(spoken);
+      final result = await processor(
+        spoken,
+        onThought: (thought) {
+          // 생각 중 상태에서만 회색 줄을 보여 준다.
+          if (!_disposed && state.value == VoiceTurnState.thinking) {
+            captions.addThought(thought);
+          }
+        },
+      );
       if (_disposed) return;
 
       final reply = result.spokenText.trim();
