@@ -108,6 +108,58 @@ def classify_intent(
     return _parse_classification(raw, known_destinations)
 
 
+def infer_cheongju_destination(
+    *,
+    heard_text: str,
+    known_destinations: tuple[str, ...],
+) -> str | None:
+    """오인식된 목적지를 청주시 내 실제 지명 후보 하나로 추론한다.
+
+    반환값은 '추측'일 뿐이며, 호출자가 반드시 우리 API(resolver)로 실재를 검증한 뒤에만
+    사용해야 한다. 검증되지 않은 임의 지명을 그대로 사용자에게 묻지 않는다.
+    Gemini 미설정/실패 시 None.
+    """
+    heard = (heard_text or "").strip()
+    if not heard:
+        return None
+    model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
+    system_instruction = (
+        "너는 충청북도 청주시 지리 보조야. 사용자가 음성으로 말한 목적지가 STT 오인식 등으로 "
+        "실제와 다를 수 있어. 발음·표기가 가장 비슷하면서 '청주시'에 실제로 존재하는 "
+        "장소·정류장·교차로·지명 후보를 딱 하나만 추론해. 반드시 청주 안의 실제 지명만 대고, "
+        "추측이 어려우면 null을 줘. 다른 도시 지명이나 없는 곳을 지어내지 마. "
+        'JSON 객체 하나만 출력: {"guess": "<청주 지명>"} 또는 {"guess": null}\n'
+        f"참고용 알려진 청주 목적지: {', '.join(known_destinations)}"
+    )
+    raw = _generate(
+        model=model,
+        system_instruction=system_instruction,
+        prompt=heard,
+        max_output_tokens=48,
+        thinking_budget=0,
+    )
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text[:4].lower() == "json":
+            text = text[4:]
+    try:
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        data = json.loads(text[start:end])
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    guess = data.get("guess")
+    if not isinstance(guess, str):
+        return None
+    guess = guess.strip()
+    return guess or None
+
+
 def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict | None:
     text = raw.strip()
     if text.startswith("```"):

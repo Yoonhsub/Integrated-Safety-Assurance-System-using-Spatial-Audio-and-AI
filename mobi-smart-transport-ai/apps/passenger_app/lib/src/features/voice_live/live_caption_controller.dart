@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 enum Speaker { user, agent }
@@ -32,6 +34,7 @@ class LiveCaptionLine {
 class LiveCaptionController extends ChangeNotifier {
   final List<LiveCaptionLine> _temporaryLines = [];
   final List<LiveCaptionLine> _sessionLog = [];
+  Timer? _streamTimer;
 
   List<LiveCaptionLine> get visibleLines => List.unmodifiable(_temporaryLines);
   List<LiveCaptionLine> get sessionLog => List.unmodifiable(_sessionLog);
@@ -56,6 +59,42 @@ class LiveCaptionController extends ChangeNotifier {
       ));
     }
     notifyListeners();
+  }
+
+  /// 에이전트 응답을 한 글자씩 타이핑되듯 점진적으로 노출한다(GPT 스타일 스트리밍).
+  void streamAgent(String text) {
+    _streamTimer?.cancel();
+    final full = text.trim();
+    if (full.isEmpty) return;
+    final line = LiveCaptionLine(
+      speaker: Speaker.agent,
+      text: '',
+      isFinal: false,
+      createdAt: DateTime.now(),
+    );
+    _temporaryLines.add(line);
+    final index = _temporaryLines.length - 1;
+    var shown = 0;
+    notifyListeners();
+    _streamTimer = Timer.periodic(const Duration(milliseconds: 32), (timer) {
+      if (index >= _temporaryLines.length) {
+        timer.cancel();
+        return;
+      }
+      shown = (shown + 2).clamp(0, full.length);
+      final partial = full.substring(0, shown);
+      final done = shown >= full.length;
+      _temporaryLines[index] = _temporaryLines[index].copyWith(
+        text: partial,
+        isFinal: done,
+      );
+      notifyListeners();
+      if (done) {
+        timer.cancel();
+        _streamTimer = null;
+        _sessionLog.add(_temporaryLines[index]);
+      }
+    });
   }
 
   /// 발화 확정. 같은 화자의 미확정 줄이 있으면 그것을 확정하고, 없으면 새로 추가한다.
@@ -83,6 +122,8 @@ class LiveCaptionController extends ChangeNotifier {
 
   /// 남은 partial을 final로 정리해 세션 로그에 보존한다(X 종료 직전 호출).
   void flushTemporaryToSessionLog() {
+    _streamTimer?.cancel();
+    _streamTimer = null;
     if (_temporaryLines.isNotEmpty && !_temporaryLines.last.isFinal) {
       final pending = _temporaryLines.last.copyWith(isFinal: true);
       _temporaryLines[_temporaryLines.length - 1] = pending;
@@ -93,7 +134,15 @@ class LiveCaptionController extends ChangeNotifier {
 
   /// 화면의 임시 자막만 제거한다(세션 로그는 유지).
   void clearTemporary() {
+    _streamTimer?.cancel();
+    _streamTimer = null;
     _temporaryLines.clear();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _streamTimer?.cancel();
+    super.dispose();
   }
 }

@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'aurora_voice_shader.dart';
@@ -135,8 +134,7 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 18),
                   child: _BottomControls(
-                    muted: _controller.muted,
-                    onToggleMute: (m) => _controller.setMuted(m),
+                    onMicTap: () => _controller.handleMicTap(),
                     onClose: () => _exit(navigated: false),
                   ),
                 ),
@@ -189,34 +187,39 @@ class _TopStatus extends StatelessWidget {
 
 class _BottomControls extends StatelessWidget {
   const _BottomControls({
-    required this.muted,
-    required this.onToggleMute,
+    required this.onMicTap,
     required this.onClose,
   });
 
-  final ValueListenable<bool> muted;
-  final ValueChanged<bool> onToggleMute;
+  final VoidCallback onMicTap;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        ValueListenableBuilder<bool>(
-          valueListenable: muted,
-          builder: (context, isMuted, _) => _RoundButton(
-            icon: isMuted ? Icons.mic_off : Icons.mic,
-            background: Colors.white.withValues(alpha: 0.12),
-            onTap: () => onToggleMute(!isMuted),
-          ),
+        const Text(
+          '잘 안 들리면 마이크를 탭해서 다시 말해줘',
+          style: TextStyle(color: Colors.white60, fontSize: 12),
         ),
-        const SizedBox(width: 28),
-        _RoundButton(
-          icon: Icons.close,
-          background: const Color(0xFFE53935),
-          size: 64,
-          onTap: onClose,
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _RoundButton(
+              icon: Icons.mic,
+              background: Colors.white.withValues(alpha: 0.12),
+              onTap: onMicTap,
+            ),
+            const SizedBox(width: 28),
+            _RoundButton(
+              icon: Icons.close,
+              background: const Color(0xFFE53935),
+              size: 64,
+              onTap: onClose,
+            ),
+          ],
         ),
       ],
     );

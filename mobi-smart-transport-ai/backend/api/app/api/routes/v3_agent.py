@@ -16,6 +16,7 @@ from app.schemas.v3 import (
     CueType,
     FallbackSource,
     GuidanceState,
+    RoutePlanReadiness,
     RoutePlanResponse,
     RoutePlanStatus,
     TtsMode,
@@ -39,6 +40,7 @@ from app.services.v3_gemini_service import (
     classify_intent,
     generate_dynamic_response,
     generate_optional_reply,
+    infer_cheongju_destination,
     synthesize_tts_wav,
 )
 from app.services.v3_gemini_live_audio_service import (
@@ -677,6 +679,66 @@ def _local_smalltalk_fallback(session: V3SessionRecord, utterance: str) -> str:
     return "어디로 갈지 장소나 정류장 이름을 말해주면 버스 경로를 찾아줄게."
 
 
+def _infer_destination_confirmation(
+    *,
+    heard_text: str,
+    origin_lat: float | None,
+    origin_lng: float | None,
+    live: bool,
+    mode: str | None,
+    trace: AgentTraceRecorder,
+) -> RoutePlanResponse | None:
+    """API에 없는 목적지를 Gemini로 청주 내 후보로 추론하고, 우리 API로 검증해서
+    실재가 확인되면 '혹시 X 맞을까?' NEEDS_CONFIRMATION RoutePlan을 만든다.
+
+    검증을 통과하지 못하면(추론 실패 또는 우리 API에 없음) None을 반환해 원래의
+    NOT_FOUND를 유지한다(임의 지명을 지어내 묻지 않는다).
+    """
+    try:
+        guess = infer_cheongju_destination(
+            heard_text=heard_text,
+            known_destinations=cheongju_route_catalog.DESTINATIONS,
+        )
+    except Exception:
+        guess = None
+    if not guess or _compact(guess) == _compact(heard_text):
+        return None
+
+    # 추론 결과를 우리 API(resolver/planner)로 검증한다.
+    verify = _plan_route(
+        heard_text=guess,
+        origin_lat=origin_lat,
+        origin_lng=origin_lng,
+        live=live,
+        mode=mode,
+        trace=trace,
+    )
+    if verify.status == RoutePlanStatus.NOT_FOUND or verify.destination is None:
+        return None
+    top = verify.destination.topCandidate
+    if top is None or top.latitude is None or top.longitude is None:
+        return None
+
+    question = f"혹시 {top.name} 맞을까?"
+    trace.record(
+        "DESTINATION_INFERENCE",
+        "목적지 추론·검증 완료",
+        "들린 목적지를 청주 내 후보로 추론하고 API로 검증한 뒤 확인 질문을 만들었어.",
+        safe_payload={"heardText": heard_text, "inferred": guess, "verified": top.name},
+    )
+    return verify.model_copy(
+        update={
+            "status": RoutePlanStatus.NEEDS_CONFIRMATION,
+            "readiness": RoutePlanReadiness.NEEDS_CONFIRMATION,
+            "recommendedPlan": None,
+            "plans": [],
+            "alternatives": [],
+            "agentMessage": question,
+            "question": question,
+        }
+    )
+
+
 def _handle_route_request(
     *,
     session: V3SessionRecord,
@@ -714,6 +776,19 @@ def _handle_route_request(
             mode=payload.mode,
             trace=trace,
         )
+        # 우리 API에 안 나오는 목적지면, Gemini가 청주 내 비슷한 곳을 추론하고
+        # 그 추론을 다시 우리 API로 검증한 뒤에만 "혹시 X 맞을까?"로 되묻는다.
+        if route_plan.status == RoutePlanStatus.NOT_FOUND:
+            inferred = _infer_destination_confirmation(
+                heard_text=heard_text,
+                origin_lat=payload.originLat,
+                origin_lng=payload.originLng,
+                live=live,
+                mode=payload.mode,
+                trace=trace,
+            )
+            if inferred is not None:
+                route_plan = inferred
         return _route_plan_response_tuple(
             session=session,
             route_plan=route_plan,

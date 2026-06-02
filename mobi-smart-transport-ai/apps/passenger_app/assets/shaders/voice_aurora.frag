@@ -117,6 +117,11 @@ void main() {
   // 위쪽 끝은 완전히 투명하게.
   alpha *= smoothstep(0.0, 0.12, fromBottom);
 
+  // speaking(주황) 모드는 하단부가 너무 진하지 않게 살짝 약하게 한다.
+  if (uMode > 2.5) {
+    alpha *= 0.8;
+  }
+
   vec3 color = grad * (0.9 + 0.7 * level);
   // premultiplied alpha 출력.
   fragColor = vec4(color * alpha, alpha);

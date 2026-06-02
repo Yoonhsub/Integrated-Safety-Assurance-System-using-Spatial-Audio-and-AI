@@ -277,6 +277,18 @@ class LiveVoiceController {
 
   // ---- 듣기 ----
 
+  /// 사용자가 마이크 버튼을 탭했을 때: 듣기를 강제로 (재)시작한다.
+  /// iOS Safari/인앱 브라우저는 음성 인식의 무제스처 자동 재시작을 막는 경우가 있어,
+  /// 탭(=사용자 제스처) 시점에 동기적으로 listen을 다시 연다. 이미 듣는 중이면 무시.
+  Future<void> handleMicTap() async {
+    if (_disposed || _ending) return;
+    if (muted.value) muted.value = false;
+    if (state.value != VoiceTurnState.listening) return;
+    _listenRetryTimer?.cancel();
+    _listenGeneration += 1;
+    await _startListening(_listenGeneration);
+  }
+
   Future<void> setMuted(bool value) async {
     muted.value = value;
     if (value) {
@@ -403,7 +415,7 @@ class LiveVoiceController {
     void showCaption() {
       if (shown) return;
       shown = true;
-      captions.commitFinal(speaker: Speaker.agent, text: _goodbye);
+      captions.streamAgent(_goodbye);
     }
 
     try {
@@ -448,7 +460,8 @@ class LiveVoiceController {
       void showAgentCaption() {
         if (captionShown || reply.isEmpty) return;
         captionShown = true;
-        captions.commitFinal(speaker: Speaker.agent, text: reply);
+        // GPT 답변처럼 한 글자씩 스트리밍으로 노출.
+        captions.streamAgent(reply);
       }
 
       _setState(VoiceTurnState.speaking);
