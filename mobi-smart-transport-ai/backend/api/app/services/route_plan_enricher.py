@@ -16,6 +16,7 @@ from app.schemas.v3 import (
     V3BusArrivalsResponse,
 )
 from app.services.route_direction_resolver import RouteDirectionResolver, sanitize_guidance_text
+from app.services.route_service_status import evaluate_route_service_status
 from app.services.route_stop_sequence_cache import RouteSequence, RouteStopNode, RouteStopSequenceCache
 
 
@@ -61,6 +62,7 @@ class RoutePlanEnricher:
                 route_no=sequence.route_no,
                 route_id=sequence.route_id,
             )
+            service_status = evaluate_route_service_status(route_no=sequence.route_no, arrivals=arrivals)
             if not arrivals:
                 warnings.append(f"{sequence.route_no}번 실시간 도착정보를 확인하지 못함")
             elif bus_index == 0:
@@ -84,6 +86,7 @@ class RoutePlanEnricher:
                         "arrivals": arrivals,
                         "arrivalSource": arrival_source,
                         "arrivalUnknown": not arrivals,
+                        "serviceStatus": service_status,
                     }
                 )
             )
@@ -117,6 +120,7 @@ class RoutePlanEnricher:
                     "matchedBusLegs": matched_count,
                     "totalBusLegs": len(candidate.segments),
                 },
+                "serviceStatus": enriched_segments[0].serviceStatus if enriched_segments else None,
             }
         )
 
@@ -210,6 +214,8 @@ def _boarding_instruction(segment: RoutePlanSegment) -> str:
     arrival_text = (
         f" 현재 약 {first_arrival}분 뒤 도착 예정이야."
         if first_arrival is not None
+        else f" {segment.serviceStatus.message}"
+        if segment.serviceStatus is not None
         else " 실시간 도착정보는 확인하지 못했어."
     )
     return f"{segment.boardStop.stopName}{direction_text}에서 {segment.routeNo}번을 타면 돼.{arrival_text}"

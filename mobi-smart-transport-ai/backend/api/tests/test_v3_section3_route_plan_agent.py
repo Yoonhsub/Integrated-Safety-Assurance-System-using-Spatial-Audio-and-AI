@@ -93,7 +93,7 @@ def test_agent_converse_choice_followup_reuses_saved_origin() -> None:
     second = _say("s-choice", "첫 번째")
     assert second.status_code == 200
     body = second.json()
-    assert body["routePlan"]["status"] in {"RESOLVED", "NO_ROUTE"}
+    assert body["routePlan"]["status"] in {"RESOLVED", "NO_ROUTE", "ALREADY_NEAR_DESTINATION"}
     assert body["routePlan"]["heardText"] == "청주고속버스터미널"
 
 
@@ -243,3 +243,24 @@ def test_agent_arrival_refresh_without_selected_plan_does_not_invent_default_rou
     assert body["intent"] == "QUERY_ARRIVAL"
     assert "먼저 목적지 경로를 선택" in body["message"]
     assert "502" not in body["message"]
+
+
+def test_agent_contextual_route_followup_uses_selected_route_plan() -> None:
+    first = _say(
+        "s-context-route",
+        "자비스, 상당산성 가고 싶어",
+        originLat=36.6359,
+        originLng=127.4596,
+    )
+    assert first.status_code == 200
+    assert first.json()["routePlan"]["status"] == "RESOLVED"
+
+    followup = _say("s-context-route", "무슨 경로?")
+
+    assert followup.status_code == 200
+    body = followup.json()
+    assert body["intent"] == "UNKNOWN"
+    assert body["state"] == "ROUTE_RECOMMENDED"
+    assert "862번" in body["message"]
+    assert "사창사거리" in body["message"]
+    assert "먼저 목적지" not in body["message"]

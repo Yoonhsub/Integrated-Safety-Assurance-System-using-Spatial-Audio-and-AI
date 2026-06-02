@@ -135,6 +135,22 @@ class AgentConverseRequest(StrictApiModel):
         return self
 
 
+class AgentTraceEvent(StrictApiModel):
+    id: str
+    step: int = Field(ge=1)
+    type: str
+    title: str
+    status: Literal["PENDING", "RUNNING", "DONE", "FAILED", "SKIPPED"]
+    summary: str
+    provider: str | None = None
+    operation: str | None = None
+    safePayload: dict[str, Any] = Field(default_factory=dict)
+    startedAt: datetime | None = None
+    finishedAt: datetime | None = None
+    durationMs: int | None = Field(default=None, ge=0)
+    warning: str | None = None
+
+
 class AgentConverseResponse(StrictApiModel):
     sessionId: str
     intent: AgentIntent
@@ -145,6 +161,8 @@ class AgentConverseResponse(StrictApiModel):
     usedGemini: bool = False
     fallbackSource: FallbackSource = FallbackSource.MOCK
     routePlan: "RoutePlanResponse | None" = None
+    trace: list[AgentTraceEvent] = Field(default_factory=list)
+    traceId: str | None = None
 
 
 class AgentTtsRequest(StrictApiModel):
@@ -212,6 +230,7 @@ class DestinationResolveResponse(StrictApiModel):
 
 class RoutePlanStatus(str, Enum):
     RESOLVED = "RESOLVED"
+    ALREADY_NEAR_DESTINATION = "ALREADY_NEAR_DESTINATION"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
     NEEDS_CHOICE = "NEEDS_CHOICE"
     NOT_FOUND = "NOT_FOUND"
@@ -221,6 +240,7 @@ class RoutePlanStatus(str, Enum):
 
 class RoutePlanReadiness(str, Enum):
     READY = "READY"
+    ALREADY_NEAR_DESTINATION = "ALREADY_NEAR_DESTINATION"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
     NEEDS_CHOICE = "NEEDS_CHOICE"
     NOT_FOUND = "NOT_FOUND"
@@ -266,6 +286,15 @@ class RoutePlanStop(StrictApiModel):
     crossStreetHint: str | None = None
 
 
+class RoutePlanServiceStatus(StrictApiModel):
+    operatingNow: bool
+    reason: str
+    message: str
+    nextServiceTime: str | None = None
+    nextServiceLabel: str | None = None
+    scheduleSource: str
+
+
 class RoutePlanSegment(StrictApiModel):
     routeNo: str
     routeId: str
@@ -281,6 +310,7 @@ class RoutePlanSegment(StrictApiModel):
     arrivalSource: FallbackSource = FallbackSource.MOCK
     arrivalUnknown: bool = False
     estimatedMinutes: int | None = Field(default=None, ge=0)
+    serviceStatus: RoutePlanServiceStatus | None = None
 
 
 class RoutePlanLeg(StrictApiModel):
@@ -330,6 +360,7 @@ class RoutePlanCandidate(StrictApiModel):
     legs: list[RoutePlanLeg] = Field(default_factory=list)
     arrival: RoutePlanArrivalSummary | None = None
     notRecommendedReason: str | None = None
+    serviceStatus: RoutePlanServiceStatus | None = None
 
 
 class RoutePlanResponse(StrictApiModel):
@@ -415,6 +446,40 @@ class V3BusArrivalsResponse(StrictApiModel):
     routeNo: str | None = None
     arrivals: list[V3BusArrival]
     fallbackSource: FallbackSource = FallbackSource.MOCK
+    serviceStatus: RoutePlanServiceStatus | None = None
+
+
+class V3LiveRouteMarker(StrictApiModel):
+    type: Literal["USER", "BOARD_STOP", "ALIGHT_STOP", "DESTINATION", "BUS"]
+    label: str
+    latitude: float
+    longitude: float
+    busId: str | None = None
+
+
+class V3BusPosition(StrictApiModel):
+    busId: str | None = None
+    routeNo: str
+    routeId: str
+    nodeId: str | None = None
+    nodeName: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    source: FallbackSource = FallbackSource.PUBLIC_API
+
+
+class V3LiveRouteStatusResponse(StrictApiModel):
+    routeNo: str
+    routeId: str
+    boardStopId: str
+    alightStopId: str
+    markers: list[V3LiveRouteMarker] = Field(default_factory=list)
+    arrivals: list[V3BusArrival] = Field(default_factory=list)
+    busPositions: list[V3BusPosition] = Field(default_factory=list)
+    serviceStatus: RoutePlanServiceStatus
+    warnings: list[str] = Field(default_factory=list)
+    updatedAt: datetime
+    fallbackSource: FallbackSource = FallbackSource.ERROR
 
 
 class MockGeofenceRequest(StrictApiModel):

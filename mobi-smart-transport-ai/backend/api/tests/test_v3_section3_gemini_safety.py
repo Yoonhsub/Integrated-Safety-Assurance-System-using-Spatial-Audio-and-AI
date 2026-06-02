@@ -1,3 +1,7 @@
+import base64
+
+import httpx
+
 from app.services import v3_gemini_service
 
 
@@ -106,3 +110,55 @@ def test_route_plan_reply_sends_compact_verified_payload_to_gemini(monkeypatch) 
     assert "alternatives" not in prompt
     assert '"arrivalMinutes": 3' in prompt
     assert '"arrivalMinutes": 8' not in prompt
+
+
+def test_gemini_reply_removes_mobi_user_address_but_keeps_self_introduction() -> None:
+    assert v3_gemini_service._without_vision_claims("그래, 모비야. 내가 안내해줄게.") == "내가 안내해줄게."
+    assert (
+        v3_gemini_service._without_vision_claims("안녕, 나는 모비야. 내 말 잘 들려?")
+        == "안녕, 나는 모비야. 내 말 잘 들려?"
+    )
+
+
+def test_tts_falls_back_from_pro_to_flash(monkeypatch) -> None:
+    models = []
+
+    class FakeResponse:
+        def __init__(self, *, ok: bool) -> None:
+            self.ok = ok
+
+        def raise_for_status(self) -> None:
+            if not self.ok:
+                raise httpx.HTTPError("quota exceeded")
+
+        def json(self) -> dict:
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "data": base64.b64encode(b"\x00\x00").decode("ascii"),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(endpoint, **_):
+        model = endpoint.split("/models/", 1)[1].split(":", 1)[0]
+        models.append(model)
+        return FakeResponse(ok=model == "gemini-3.1-flash-tts-preview")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("GEMINI_TTS_MODEL", raising=False)
+    monkeypatch.setattr(v3_gemini_service.httpx, "post", fake_post)
+
+    audio = v3_gemini_service.synthesize_tts_wav(text="안녕")
+
+    assert audio is not None
+    assert audio.startswith(b"RIFF")
+    assert models == ["gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview"]

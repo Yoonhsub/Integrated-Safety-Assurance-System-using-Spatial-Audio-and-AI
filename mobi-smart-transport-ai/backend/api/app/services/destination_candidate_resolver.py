@@ -367,7 +367,10 @@ class DestinationCandidateResolver:
             for item in candidates[:5]
             if item.name != top.name and top.confidence - item.confidence <= _CHOICE_DELTA
         ]
-        exact_top_name = _normalize(top.name) == normalized
+        exact_top_name = (
+            _normalize(top.name) == normalized
+            or _is_unambiguous_known_alias(normalized, top.name)
+        )
         if exact_top_name and top.confidence >= 0.90:
             status = DestinationResolveStatus.RESOLVED
         elif len(close_choices) >= 1 and top.confidence < 0.94:
@@ -519,11 +522,14 @@ def _known_place_candidates(normalized: str) -> list[DestinationCandidate]:
     out: list[DestinationCandidate] = []
     for place in _KNOWN_PLACES:
         name_norm = _normalize(place.name)
+        normalized_aliases = [_normalize(alias) for alias in place.aliases]
         alias_scores = [
             _alias_score(normalized, _normalize(alias), is_primary=False)
             for alias in place.aliases
         ]
         score = max([_alias_score(normalized, name_norm, is_primary=True), *alias_scores])
+        if normalized in normalized_aliases and normalized not in _STT_CONFIRMATION_ALIASES:
+            score = max(score, 0.95)
         if _STT_CONFIRMATION_ALIASES.get(normalized) == place.name:
             score = max(score, 0.94)
         if score < _CONFIRMATION_THRESHOLD:
@@ -541,6 +547,17 @@ def _known_place_candidates(normalized: str) -> list[DestinationCandidate]:
             )
         )
     return out
+
+
+def _is_unambiguous_known_alias(normalized: str, candidate_name: str) -> bool:
+    if normalized in _STT_CONFIRMATION_ALIASES:
+        return False
+    matches = [
+        place.name
+        for place in _KNOWN_PLACES
+        if normalized in {_normalize(alias) for alias in place.aliases}
+    ]
+    return matches == [candidate_name]
 
 
 def _seed_stop_name_candidates(normalized: str) -> list[DestinationCandidate]:

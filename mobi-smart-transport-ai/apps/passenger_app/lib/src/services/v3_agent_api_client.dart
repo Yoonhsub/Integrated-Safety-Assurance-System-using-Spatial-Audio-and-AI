@@ -46,9 +46,11 @@ class V3AgentApiClient {
         message: ok ? '백엔드 연결 성공' : '백엔드가 ${response.statusCode}를 반환했어.',
       );
     } on TimeoutException {
-      return const V3HealthStatus(isAvailable: false, message: '백엔드 연결 시간이 초과됐어.');
+      return const V3HealthStatus(
+          isAvailable: false, message: '백엔드 연결 시간이 초과됐어.');
     } catch (_) {
-      return const V3HealthStatus(isAvailable: false, message: '백엔드에 연결할 수 없어.');
+      return const V3HealthStatus(
+          isAvailable: false, message: '백엔드에 연결할 수 없어.');
     }
   }
 
@@ -176,7 +178,6 @@ class V3AgentApiClient {
     return V3RoutePlanResponse.fromJson(json);
   }
 
-
   Future<V3BusArrivalsResponse> arrivals({
     required String stopId,
     String? routeNo,
@@ -191,6 +192,35 @@ class V3AgentApiClient {
     }
     final json = await _getJson('/bus/arrivals', query);
     return V3BusArrivalsResponse.fromJson(json);
+  }
+
+  Future<V3LiveRouteStatusResponse> liveRouteStatus({
+    required String routeNo,
+    required String routeId,
+    required String boardStopId,
+    required String alightStopId,
+    double? userLat,
+    double? userLng,
+    double? boardLat,
+    double? boardLng,
+    double? alightLat,
+    double? alightLng,
+    String? mode,
+  }) async {
+    final query = <String, String>{
+      'routeNo': routeNo,
+      'routeId': routeId,
+      'boardStopId': boardStopId,
+      'alightStopId': alightStopId,
+    };
+    _addCoordinatePair(query, 'user', userLat, userLng);
+    _addCoordinatePair(query, 'board', boardLat, boardLng);
+    _addCoordinatePair(query, 'alight', alightLat, alightLng);
+    if (mode != null) {
+      query['mode'] = mode;
+    }
+    final json = await _getJson('/bus/live-route-status', query);
+    return V3LiveRouteStatusResponse.fromJson(json);
   }
 
   Future<V3MockGeofenceResponse> mockGeofence({
@@ -212,8 +242,10 @@ class V3AgentApiClient {
   }) async {
     final json = await _postJson('/mock/beacons', <String, Object?>{
       'sessionId': sessionId,
-      if (targetBusId != null && targetBusId.isNotEmpty) 'targetBusId': targetBusId,
-      if (targetRouteNo != null && targetRouteNo.isNotEmpty) 'targetRouteNo': targetRouteNo,
+      if (targetBusId != null && targetBusId.isNotEmpty)
+        'targetBusId': targetBusId,
+      if (targetRouteNo != null && targetRouteNo.isNotEmpty)
+        'targetRouteNo': targetRouteNo,
       'beacons': beacons.map((beacon) => beacon.toJson()).toList(),
     });
     return V3BeaconDecisionResponse.fromJson(json);
@@ -280,7 +312,8 @@ class V3AgentApiClient {
   }
 
   Map<String, dynamic> _decodeResponse(http.Response response) {
-    final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    final decoded =
+        response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
     final body = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -328,6 +361,17 @@ class V3AgentApiClient {
       return uri;
     }
     return uri.replace(queryParameters: queryParameters);
+  }
+
+  void _addCoordinatePair(
+    Map<String, String> query,
+    String prefix,
+    double? latitude,
+    double? longitude,
+  ) {
+    if (latitude == null || longitude == null) return;
+    query['${prefix}Lat'] = latitude.toString();
+    query['${prefix}Lng'] = longitude.toString();
   }
 
   http.Client get _client => _httpClient ?? http.Client();

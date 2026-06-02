@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 import os
-import re
-from typing import Callable
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-
-from services.public_data.public_data_client import (
-    BusLocationService,
-    BusRouteService,
-)
 
 from app.schemas.v3 import (
     AgentConverseRequest,
@@ -27,8 +20,20 @@ from app.schemas.v3 import (
     V3Cue,
 )
 from app.services import cheongju_route_catalog
-from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
-from app.services.destination_candidate_resolver import DestinationCandidateResolver
+from app.services.v3_agent_tools import (
+    build_grounded_agent_reply_tool,
+    classify_agent_intent,
+    get_arrivals_tool,
+    get_bus_locations_tool,
+    get_route_stops_tool,
+    get_service_status_tool,
+    match_pending_choice_tool,
+    normalize_user_utterance,
+    plan_transit_route_tool,
+    sanitize_agent_reply_tool,
+    verify_route_tool,
+)
+from app.services.v3_agent_trace import AgentTraceRecorder
 from app.services.v3_gemini_service import (
     classify_intent,
     generate_dynamic_response,
@@ -67,9 +72,6 @@ _DESTINATION_ALIASES: tuple[tuple[str, str], ...] = (
     ("터미널", "청주고속버스터미널"),
 )
 
-_destination_resolver = DestinationCandidateResolver()
-
-
 @router.post("/tts", response_class=Response)
 def tts(payload: AgentTtsRequest) -> Response:
     audio = synthesize_tts_wav(text=payload.text.strip())
@@ -93,18 +95,56 @@ def tts(payload: AgentTtsRequest) -> Response:
 
 @router.post("/converse", response_model=AgentConverseResponse)
 def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
+    trace = AgentTraceRecorder()
     session = v3_guidance_store.get(payload.sessionId, wake_word=payload.wakeWord)
-    utterance = payload.utterance.strip()
     wake_word = session.wake_word.strip()
+    normalize_event = trace.start(
+        "NORMALIZE_UTTERANCE",
+        "사용자 발화 정리",
+        operation="normalizeUserUtterance",
+    )
+    normalized = normalize_user_utterance(payload.utterance, wake_word=wake_word)
+    trace.done(
+        normalize_event,
+        "호출어를 제거하고 목적지 후보 문장을 정리했어.",
+        safe_payload={
+            "wakeWordDetected": normalized.wake_word_detected,
+            "cleanedUtterance": normalized.cleaned_utterance,
+            "destinationText": normalized.destination_candidate_text,
+        },
+    )
+    utterance = normalized.cleaned_utterance or payload.utterance.strip()
     live = _resolve_live(payload.mode)
 
     # 목적지 후보 확인/선택 질문이 걸린 상태에서는 "응 맞아", "두 번째" 같은 후속 발화를
     # 먼저 소비한다. Flash/Gemini가 이 짧은 답변을 잡담으로 오분류하는 것을 막기 위함이다.
-    pending_response = _try_answer_pending_destination(session, payload, live=live)
+    if session.pending_resolution_status and _is_explicit_new_route_request(utterance, wake_word):
+        _clear_pending(session)
+        trace.record(
+            "PENDING_CHOICE_MATCH",
+            "이전 후보 선택 상태 정리 완료",
+            "새 목적지 요청을 감지해 이전 후보 선택 상태를 정리했어.",
+        )
+    pending_response = _try_answer_pending_destination(session, payload, live=live, trace=trace)
     if pending_response is not None:
         return pending_response
+    if not session.pending_resolution_status:
+        trace.skip(
+            "PENDING_CHOICE_MATCH",
+            "후보 선택 확인",
+            "대기 중인 목적지 후보가 없어 선택 처리를 생략했어.",
+        )
 
-    keyword_intent = _detect_intent(utterance, wake_word)
+    intent_event = trace.start(
+        "CLASSIFY_INTENT",
+        "요청 의도 분류",
+        operation="classifyAgentIntent",
+    )
+    keyword_intent = classify_agent_intent(
+        payload.utterance,
+        session.to_response(),
+        wake_word=wake_word,
+    ).intent
     classification = (
         classify_intent(
             utterance=utterance,
@@ -119,6 +159,11 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
     if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
         intent = AgentIntent(classification["intent"])
         nlp_destination = classification["destination"]
+    trace.done(
+        intent_event,
+        "요청 의도를 분류했어.",
+        safe_payload={"intent": intent.value, "destinationText": nlp_destination},
+    )
 
     message = "요청을 이해하지 못했어. 버튼으로 다시 선택해줘."
     tts_mode = TtsMode.LOCAL_TTS
@@ -137,6 +182,7 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
             intent=intent,
             nlp_destination=nlp_destination,
             live=live,
+            trace=trace,
         )
 
     elif intent == AgentIntent.QUERY_ARRIVAL:
@@ -147,14 +193,13 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         else:
             route_no, route_id, stop_id, stop_name = selected
             try:
-                from app.api.routes import v3_bus
-
-                arrivals_res = v3_bus._route_plan_arrivals(
-                    stop_id,
+                arrivals_res = get_arrivals_tool(
+                    stop_id=stop_id,
                     route_no=route_no,
                     route_id=route_id,
-                    live=live,
                     mode=payload.mode,
+                    live=live,
+                    trace=trace,
                 )
                 route_arrivals = [
                     item
@@ -167,7 +212,12 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
                     source_label = "실시간" if arrivals_res.fallbackSource == FallbackSource.PUBLIC_API else arrivals_res.fallbackSource.value
                     message = f"{stop_name} 기준 {route_no}번 첫 번째 버스는 {source_label} 기준 약 {first}분 뒤 도착 예정이야."
                 else:
-                    message = f"{stop_name} 기준 {route_no}번 도착정보는 아직 확인되지 않았어."
+                    status = get_service_status_tool(
+                        route_no=route_no,
+                        arrivals=route_arrivals,
+                        trace=trace,
+                    )
+                    message = f"{stop_name} 기준 {route_no}번은 {status.message}"
             except Exception:
                 fallback_source = FallbackSource.ERROR
                 message = f"{stop_name} 기준 {route_no}번 도착정보를 가져오지 못했어."
@@ -190,7 +240,12 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
                 message = "먼저 목적지 경로를 선택해줘."
             else:
                 try:
-                    locations_res = BusLocationService().get_locations("33010", route_id)
+                    locations_res = get_bus_locations_tool(
+                        route_id=route_id,
+                        route_no=session.selected_route_no or "",
+                        mode=payload.mode,
+                        trace=trace,
+                    )
                     buses_at_stop = [l for l in locations_res.locations if l.nodeId == stop_id]
                     context_data = {
                         "beacon_status": session.last_decision or "NO_BEACON",
@@ -242,28 +297,236 @@ def converse(payload: AgentConverseRequest) -> AgentConverseResponse:
         message = "괜찮아. 다음 버스를 다시 안내할게."
 
     else:
-        gemini_reply = generate_optional_reply(utterance=utterance, wake_word=wake_word)
-        if gemini_reply:
-            message = gemini_reply
-            tts_mode = TtsMode.GEMINI_OPTIONAL
-            used_gemini = True
-            fallback_source = FallbackSource.GEMINI
+        contextual_reply = _contextual_followup_reply(session=session, utterance=utterance)
+        if contextual_reply:
+            message = contextual_reply
+            tts_mode = TtsMode.LOCAL_TTS
+            used_gemini = False
+            fallback_source = FallbackSource.CACHE if session.selected_plan or session.recommended_plan else FallbackSource.MOCK
         else:
-            message = "지금은 답하기 어려워. 잠시 후에 다시 말해줄래?"
+            gemini_reply = generate_optional_reply(utterance=utterance, wake_word=wake_word)
+            if gemini_reply:
+                message = gemini_reply
+                tts_mode = TtsMode.GEMINI_OPTIONAL
+                used_gemini = True
+                fallback_source = FallbackSource.GEMINI
+            else:
+                message = "지금은 답하기 어려워. 잠시 후에 다시 말해줄래?"
 
+    return _agent_response(
+        trace=trace,
+        session=session,
+        utterance=utterance,
+        intent=intent,
+        message=message,
+        tts_mode=tts_mode,
+        cue=cue,
+        used_gemini=used_gemini,
+        fallback_source=fallback_source,
+        route_plan=route_plan,
+    )
+
+
+def _agent_response(
+    *,
+    trace: AgentTraceRecorder,
+    session: V3SessionRecord,
+    utterance: str,
+    intent: AgentIntent,
+    message: str,
+    tts_mode: TtsMode,
+    cue: V3Cue,
+    used_gemini: bool,
+    fallback_source: FallbackSource,
+    route_plan: RoutePlanResponse | None,
+) -> AgentConverseResponse:
+    safety_event = trace.start(
+        "SAFETY_FILTER",
+        "안내 문장 안전 확인",
+        operation="sanitizeAgentReply",
+    )
+    safe_message = sanitize_agent_reply_tool(message, assistant_name=session.wake_word)
+    if safe_message:
+        trace.done(safety_event, "추측성 표현과 위험한 방향 안내가 없는지 확인했어.")
+    else:
+        trace.fail(safety_event, "안전하지 않은 표현을 제거하고 보수적인 안내로 바꿨어.")
+        safe_message = "검증된 정보만으로는 지금 안내하기 어려워."
+    trace.record(
+        "FINAL_RESPONSE",
+        "최종 안내 생성 완료",
+        "검증된 정보만 사용해 사용자 안내를 만들었어.",
+        safe_payload={
+            "intent": intent.value,
+            "state": session.state.value,
+            "usedGemini": used_gemini,
+            "fallbackSource": fallback_source.value,
+        },
+    )
+    _append_conversation_turn(
+        session,
+        utterance=utterance,
+        response=safe_message,
+        intent=intent.value,
+    )
     session.touch()
     return AgentConverseResponse(
         sessionId=session.session_id,
         intent=intent,
         state=session.state,
-        message=message,
+        message=safe_message,
         ttsMode=tts_mode,
         cue=cue,
         usedGemini=used_gemini,
         fallbackSource=fallback_source,
         routePlan=route_plan,
+        trace=trace.to_list(),
+        traceId=trace.trace_id,
     )
 
+
+
+def _append_conversation_turn(
+    session: V3SessionRecord,
+    *,
+    utterance: str,
+    response: str,
+    intent: str,
+) -> None:
+    history = session.conversation_history
+    history.append(
+        {
+            "utterance": utterance,
+            "response": response,
+            "intent": intent,
+            "state": session.state.value,
+        }
+    )
+    if len(history) > 12:
+        del history[:-12]
+
+
+def _contextual_followup_reply(*, session: V3SessionRecord, utterance: str) -> str | None:
+    compact = _compact(utterance)
+    if not compact:
+        return None
+
+    route_question_terms = (
+        "무슨경로",
+        "어떤경로",
+        "현재경로",
+        "선택한경로",
+        "그경로",
+        "경로뭐",
+        "경로가뭐",
+        "경로알려",
+        "어디서타",
+        "어디에서타",
+        "어디서내",
+        "어디에서내",
+        "몇번버스",
+        "몇번타",
+        "노선뭐",
+        "버스뭐",
+        "추천이유",
+        "왜이경로",
+        "왜추천",
+    )
+    destination_question_terms = ("목적지뭐", "어디가는", "어디로가", "어디까지")
+
+    if any(term in compact for term in route_question_terms):
+        return _selected_route_context_message(session, utterance=utterance)
+
+    if any(term in compact for term in destination_question_terms):
+        if session.selected_destination:
+            return f"현재 목적지는 {session.selected_destination}로 잡혀 있어."
+        if session.pending_question:
+            return session.pending_question
+        return "아직 목적지가 정해지지 않았어. 장소명이나 주소를 말해줘."
+
+    if compact in {"뭐", "뭔데", "무슨말", "다시", "다시말해줘", "자세히"}:
+        if session.pending_question:
+            return session.pending_question
+        if session.selected_plan or session.recommended_plan or session.last_route_plan:
+            return _selected_route_context_message(session, utterance=utterance)
+        if session.conversation_history:
+            last = session.conversation_history[-1].get("response")
+            if isinstance(last, str) and last:
+                return last
+    return None
+
+
+def _selected_route_context_message(session: V3SessionRecord, *, utterance: str) -> str:
+    plan = _selected_plan_dict(session)
+    if not plan:
+        if session.pending_question:
+            return session.pending_question
+        return "아직 선택된 경로가 없어. 먼저 목적지를 말해줘."
+
+    destination = _safe_str(plan.get("destinationName")) or session.selected_destination or "목적지"
+    summary = _safe_str(plan.get("summary"))
+    instruction = _safe_str(plan.get("boardingInstruction"))
+    reason = _safe_str(plan.get("recommendedReason"))
+    segments = plan.get("segments")
+    first_segment = segments[0] if isinstance(segments, list) and segments and isinstance(segments[0], dict) else None
+    if not first_segment:
+        return instruction or summary or f"{destination} 경로는 아직 세부 구간을 확인하지 못했어."
+
+    route_no = _safe_str(first_segment.get("routeNo")) or session.selected_route_no or "확인된 버스"
+    board_stop = first_segment.get("boardStop")
+    alight_stop = first_segment.get("alightStop")
+    board_name = _safe_str(board_stop.get("stopName")) if isinstance(board_stop, dict) else session.selected_stop_name
+    alight_name = _safe_str(alight_stop.get("stopName")) if isinstance(alight_stop, dict) else None
+    direction = _safe_str(first_segment.get("directionHint"))
+    arrival_text = _first_arrival_text(first_segment)
+
+    parts = [f"현재 선택된 경로는 {destination} 방향 {route_no}번이야."]
+    if board_name and alight_name:
+        parts.append(f"{board_name}에서 타고 {alight_name}에서 내리는 경로야.")
+    elif board_name:
+        parts.append(f"{board_name}에서 타면 돼.")
+    if direction:
+        parts.append(f"승차 방향은 {direction}로 확인됐어.")
+    if arrival_text:
+        parts.append(arrival_text)
+    elif first_segment.get("arrivalUnknown"):
+        service_status = first_segment.get("serviceStatus")
+        if isinstance(service_status, dict) and isinstance(service_status.get("message"), str):
+            parts.append(service_status["message"])
+        else:
+            parts.append("실시간 도착정보는 아직 확인되지 않았어.")
+    if reason and any(term in _compact(utterance) for term in {"왜", "추천", "이유"}):
+        parts.append(reason)
+    elif summary and len(" ".join(parts)) < 120:
+        parts.append(summary)
+    return " ".join(parts)
+
+
+def _selected_plan_dict(session: V3SessionRecord) -> dict | None:
+    for candidate in (session.selected_plan, session.recommended_plan):
+        if isinstance(candidate, dict):
+            return candidate
+    if isinstance(session.last_route_plan, dict):
+        recommended = session.last_route_plan.get("recommendedPlan")
+        if isinstance(recommended, dict):
+            return recommended
+    return None
+
+
+def _safe_str(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _first_arrival_text(segment: dict) -> str | None:
+    arrivals = segment.get("arrivals")
+    if not isinstance(arrivals, list) or not arrivals:
+        return None
+    first = arrivals[0]
+    if not isinstance(first, dict):
+        return None
+    minutes = first.get("arrivalMinutes")
+    if isinstance(minutes, int):
+        return f"첫 번째 버스는 약 {minutes}분 뒤 도착 예정이야."
+    return None
 
 def _handle_route_request(
     *,
@@ -272,8 +535,23 @@ def _handle_route_request(
     intent: AgentIntent,
     nlp_destination: str | None,
     live: bool,
+    trace: AgentTraceRecorder,
 ) -> tuple[RoutePlanResponse | None, str, TtsMode, bool, FallbackSource]:
-    destination = _extract_destination(payload.utterance) or nlp_destination or session.selected_destination
+    explicit_destination = _extract_destination(payload.utterance) or nlp_destination
+    if explicit_destination:
+        previous_destination = session.selected_destination
+        _clear_selected_route_context(session)
+        if previous_destination:
+            trace.record(
+                "SESSION_ROUTE_REPLACE",
+                "이전 경로 교체 완료",
+                "새 목적지가 감지되어 이전 경로를 교체했어.",
+                safe_payload={
+                    "previousDestination": previous_destination,
+                    "newDestination": explicit_destination,
+                },
+            )
+    destination = explicit_destination or session.selected_destination
 
     # 위치가 있으면 새 RoutePlan 기반으로 임의 장소/주소/정류장명을 처리한다.
     if payload.originLat is not None and payload.originLng is not None:
@@ -284,6 +562,7 @@ def _handle_route_request(
             origin_lng=payload.originLng,
             live=live,
             mode=payload.mode,
+            trace=trace,
         )
         return _route_plan_response_tuple(
             session=session,
@@ -292,6 +571,7 @@ def _handle_route_request(
             wake_word=payload.wakeWord,
             origin_lat=payload.originLat,
             origin_lng=payload.originLng,
+            trace=trace,
         )
 
     # 기존 테스트/버튼 플로우에 등록된 목적지만 위치 없는 고정 카탈로그 폴백을 유지한다.
@@ -306,6 +586,7 @@ def _handle_route_request(
             origin_lng=None,
             live=live,
             mode=payload.mode,
+            trace=trace,
         )
         return _route_plan_response_tuple(
             session=session,
@@ -314,6 +595,7 @@ def _handle_route_request(
             wake_word=payload.wakeWord,
             origin_lat=None,
             origin_lng=None,
+            trace=trace,
         )
 
     resolved = cheongju_route_catalog.resolve_or_mock(legacy_destination, live=live)
@@ -324,6 +606,7 @@ def _handle_route_request(
             origin_lng=None,
             live=live,
             mode=payload.mode,
+            trace=trace,
         )
         return _route_plan_response_tuple(
             session=session,
@@ -332,6 +615,7 @@ def _handle_route_request(
             wake_word=payload.wakeWord,
             origin_lat=None,
             origin_lng=None,
+            trace=trace,
         )
     _apply_legacy_route(session, resolved.destination, resolved.routeNo, resolved.routeId, resolved.stopId, resolved.stopName)
 
@@ -340,7 +624,7 @@ def _handle_route_request(
     fallback_source = FallbackSource(resolved.source)
     if live:
         try:
-            stops = BusRouteService().get_route_stops("33010", session.selected_route_id)
+            stops = get_route_stops_tool(session.selected_route_id, payload.mode)
             context_data = {
                 "destination": session.selected_destination,
                 "board_stop": session.selected_stop_name,
@@ -376,7 +660,9 @@ def _route_plan_response_tuple(
     wake_word: str,
     origin_lat: float | None,
     origin_lng: float | None,
+    trace: AgentTraceRecorder,
 ) -> tuple[RoutePlanResponse, str, TtsMode, bool, FallbackSource]:
+    route_plan = verify_route_tool(route_plan)
     session.origin_location = (
         {"latitude": origin_lat, "longitude": origin_lng}
         if origin_lat is not None and origin_lng is not None
@@ -390,10 +676,27 @@ def _route_plan_response_tuple(
     else:
         _clear_pending(session)
 
-    dumped = route_plan.model_dump(mode="json")
-    gemini_message = generate_route_plan_reply(route_plan=dumped, utterance=utterance, wake_word=wake_word)
+    gemini_event = trace.start(
+        "GEMINI_REPLY_GENERATION",
+        "자연어 안내 생성",
+        provider="Gemini",
+        operation="generateGroundedReply",
+    )
+    gemini_message = build_grounded_agent_reply_tool(
+        route_plan,
+        session.to_response(),
+        utterance=utterance,
+        wake_word=wake_word,
+        reply_builder=generate_route_plan_reply,
+    )
     if gemini_message:
+        trace.done(gemini_event, "검증된 경로 JSON을 바탕으로 안내 문장을 만들었어.")
         return route_plan, gemini_message, TtsMode.GEMINI_OPTIONAL, True, route_plan.fallbackSource
+    trace.done(
+        gemini_event,
+        "Gemini 안내를 사용하지 않고 검증된 규칙 기반 문장을 사용했어.",
+        warning="Gemini 응답은 선택 사항이라 deterministic fallback을 사용했어.",
+    )
     return route_plan, _deterministic_route_plan_message(route_plan), TtsMode.LOCAL_TTS, False, route_plan.fallbackSource
 
 
@@ -402,6 +705,7 @@ def _try_answer_pending_destination(
     payload: AgentConverseRequest,
     *,
     live: bool,
+    trace: AgentTraceRecorder,
 ) -> AgentConverseResponse | None:
     if not session.pending_resolution_status:
         return None
@@ -413,17 +717,22 @@ def _try_answer_pending_destination(
     if status == RoutePlanStatus.NEEDS_CONFIRMATION.value:
         if _is_negative(text):
             _clear_pending(session)
-            session.touch()
-            return AgentConverseResponse(
-                sessionId=session.session_id,
+            trace.record(
+                "PENDING_CHOICE_MATCH",
+                "목적지 확인 취소 완료",
+                "후보 확인을 취소하고 새 목적지를 기다리고 있어.",
+            )
+            return _agent_response(
+                trace=trace,
+                session=session,
+                utterance=text,
                 intent=AgentIntent.CORRECT_DESTINATION,
-                state=session.state,
                 message="알겠어. 목적지를 다시 말해줘.",
-                ttsMode=TtsMode.LOCAL_TTS,
+                tts_mode=TtsMode.LOCAL_TTS,
                 cue=V3Cue(),
-                usedGemini=False,
-                fallbackSource=FallbackSource.MOCK,
-                routePlan=None,
+                used_gemini=False,
+                fallback_source=FallbackSource.MOCK,
+                route_plan=None,
             )
         if _is_affirmative(text) and session.pending_top_candidate_name:
             query = session.pending_top_candidate_name
@@ -431,26 +740,36 @@ def _try_answer_pending_destination(
             query = session.pending_top_candidate_name
 
     elif status == RoutePlanStatus.NEEDS_CHOICE.value:
-        index = _choice_index(text)
-        if index is not None and 0 <= index < len(session.pending_choice_names):
-            query = session.pending_choice_names[index]
-        else:
-            query = _match_choice_name(text, session.pending_choice_names)
+        match = match_pending_choice_tool(text, session.pending_choice_names)
+        query = match.candidate if match.matched else None
 
     if query is None:
-        session.touch()
-        return AgentConverseResponse(
-            sessionId=session.session_id,
+        trace.record(
+            "PENDING_CHOICE_MATCH",
+            "목적지 후보 선택 대기",
+            "말한 내용에서 후보를 확정하지 못해 다시 물어봤어.",
+            status="FAILED",
+            safe_payload={"candidateCount": len(session.pending_choice_names)},
+        )
+        return _agent_response(
+            trace=trace,
+            session=session,
+            utterance=text,
             intent=AgentIntent.FIND_ROUTE,
-            state=session.state,
             message=session.pending_question or "어느 목적지인지 한 번만 더 말해줘.",
-            ttsMode=TtsMode.LOCAL_TTS,
+            tts_mode=TtsMode.LOCAL_TTS,
             cue=V3Cue(),
-            usedGemini=False,
-            fallbackSource=FallbackSource.MOCK,
-            routePlan=None,
+            used_gemini=False,
+            fallback_source=FallbackSource.MOCK,
+            route_plan=None,
         )
 
+    trace.record(
+        "PENDING_CHOICE_MATCH",
+        "목적지 후보 선택 완료",
+        f"{query} 후보를 선택했어.",
+        safe_payload={"selectedCandidate": query},
+    )
     origin_lat = payload.originLat if payload.originLat is not None else session.pending_origin_lat
     origin_lng = payload.originLng if payload.originLng is not None else session.pending_origin_lng
     route_plan = _plan_route(
@@ -459,6 +778,7 @@ def _try_answer_pending_destination(
         origin_lng=origin_lng,
         live=live,
         mode=payload.mode,
+        trace=trace,
     )
     route_plan, message, tts_mode, used_gemini, fallback_source = _route_plan_response_tuple(
         session=session,
@@ -467,18 +787,19 @@ def _try_answer_pending_destination(
         wake_word=payload.wakeWord,
         origin_lat=origin_lat,
         origin_lng=origin_lng,
+        trace=trace,
     )
-    session.touch()
-    return AgentConverseResponse(
-        sessionId=session.session_id,
+    return _agent_response(
+        trace=trace,
+        session=session,
+        utterance=text,
         intent=AgentIntent.FIND_ROUTE,
-        state=session.state,
         message=message,
-        ttsMode=tts_mode,
+        tts_mode=tts_mode,
         cue=V3Cue(),
-        usedGemini=used_gemini,
-        fallbackSource=fallback_source,
-        routePlan=route_plan,
+        used_gemini=used_gemini,
+        fallback_source=fallback_source,
+        route_plan=route_plan,
     )
 
 
@@ -489,27 +810,15 @@ def _plan_route(
     origin_lng: float | None,
     live: bool,
     mode: str | None,
+    trace: AgentTraceRecorder,
 ) -> RoutePlanResponse:
-    planner = TransitPlannerOrchestrator(
-        resolver=_destination_resolver,
-        arrival_fetcher=_arrival_fetcher(live=live, mode=mode),
-    )
-    return planner.plan(
-        heard_text=heard_text,
+    return plan_transit_route_tool(
+        destination_text=heard_text,
         origin_lat=origin_lat,
         origin_lng=origin_lng,
-        live=live,
+        mode=mode,
+        trace=trace,
     )
-
-
-def _arrival_fetcher(*, live: bool, mode: str | None) -> Callable:
-    def fetch(stop_id: str, route_no: str | None, route_id: str | None = None):
-        # v3_bus의 arrivals 변환 계약을 그대로 재사용한다. import를 지연시켜 라우터 간 순환 초기화를 피한다.
-        from app.api.routes import v3_bus
-
-        return v3_bus._route_plan_arrivals(stop_id, route_no=route_no, route_id=route_id, live=live, mode=mode)
-
-    return fetch
 
 
 def _apply_route_plan(session: V3SessionRecord, route_plan: RoutePlanResponse) -> None:
@@ -609,6 +918,28 @@ def _clear_pending(session: V3SessionRecord) -> None:
     session.pending_origin_lng = None
 
 
+def _clear_selected_route_context(session: V3SessionRecord) -> None:
+    session.selected_destination = None
+    session.selected_route_no = None
+    session.selected_route_id = None
+    session.selected_stop_id = None
+    session.selected_stop_name = None
+    session.target_bus_id = None
+    session.selected_plan_id = None
+    session.nearby_boarding_stops = []
+    session.nearby_alighting_stops = []
+    session.recommended_plan = None
+    session.alternative_plans = []
+    session.selected_plan = None
+    session.current_leg_index = 0
+    session.last_route_plan = None
+    session.last_decision = None
+    session.nearest_beacon = None
+    session.target_bus = None
+    session.state = GuidanceState.IDLE
+    _clear_pending(session)
+
+
 def _deterministic_route_plan_message(route_plan: RoutePlanResponse) -> str:
     if route_plan.status != RoutePlanStatus.RESOLVED or route_plan.recommendedPlan is None:
         return route_plan.question or route_plan.destination.question or "목적지를 다시 말해줘."
@@ -678,37 +1009,15 @@ def _selected_arrival_target(session: V3SessionRecord) -> tuple[str, str | None,
 
 
 def _detect_intent(utterance: str, wake_word: str) -> AgentIntent:
-    text = utterance.strip()
-    compact = _compact(text)
-    compact_wake_word = _compact(wake_word)
-    if compact in {compact_wake_word, f"{compact_wake_word}야", f"{compact_wake_word}아"}:
-        return AgentIntent.WAKE_ONLY
-    if "못 탔" in text or "못탔" in compact or "놓쳤" in text:
-        return AgentIntent.REPORT_MISSED_BUS
-    if "타도" in text or "타도돼" in compact or "앞에 온 버스" in text:
-        return AgentIntent.ASK_CAN_BOARD_CURRENT_BUS
-    if "아니라" in text:
-        return AgentIntent.CORRECT_DESTINATION
-    if "바꿔" in text or "변경" in text:
-        return AgentIntent.CHANGE_DESTINATION
-    if "언제" in text or "몇 분" in text or "몇분" in compact or "도착정보" in compact:
-        return AgentIntent.QUERY_ARRIVAL
-    if "안내해" in text or "오는 걸로" in text or "오는걸로" in compact:
-        return AgentIntent.SELECT_ARRIVAL
-    if (
-        "몇 번" in text
-        or "몇번" in compact
-        or "가야" in text
-        or "가고 싶" in text
-        or "가고싶" in compact
-        or "가자" in text
-        or "가는 법" in text
-        or "가는법" in compact
-        or "어떻게 가" in text
-        or "타야" in text
-    ):
-        return AgentIntent.FIND_ROUTE
-    return AgentIntent.UNKNOWN
+    return classify_agent_intent(utterance, wake_word=wake_word).intent
+
+
+def _is_explicit_new_route_request(utterance: str, wake_word: str) -> bool:
+    return _detect_intent(utterance, wake_word) in {
+        AgentIntent.FIND_ROUTE,
+        AgentIntent.CHANGE_DESTINATION,
+        AgentIntent.CORRECT_DESTINATION,
+    } and _generic_destination_text(utterance) is not None
 
 
 def _compact(text: str) -> str:
@@ -727,29 +1036,7 @@ def _extract_destination(utterance: str) -> str | None:
 
 
 def _generic_destination_text(utterance: str) -> str | None:
-    cleaned = utterance.strip()
-    cleaned = re.sub(r"^(자비스|모비|mobi|MOBI)[야아,\s]*", "", cleaned)
-    cleaned = re.sub(r"^(나|나는|난|저|저는|내가|제가)\s+", "", cleaned).strip()
-    if "아니라" in cleaned:
-        cleaned = cleaned.split("아니라", 1)[1].strip()
-    patterns = [
-        r"(으로|로)?\s*가고\s*싶어.*$",
-        r"(으로|로)?\s*가야\s*(하는데|돼|해)?.*$",
-        r"(으로|로)?\s*가자.*$",
-        r"(으로|로)?\s*가는\s*(법|길|버스|노선).*$",
-        r"(까지)?\s*어떻게\s*가.*$",
-        r"(까지)?\s*몇\s*번.*$",
-        r"(까지)?\s*몇번.*$",
-        r"(까지)?\s*안내해\s*줘.*$",
-        r"(으로|로)?\s*바꿔\s*줘.*$",
-    ]
-    for pattern in patterns:
-        cleaned = re.sub(pattern, "", cleaned).strip()
-    cleaned = re.sub(r"(이야|야|입니다|이에요|예요)$", "", cleaned).strip()
-    cleaned = re.sub(r"(으로|로|까지|에)$", "", cleaned).strip(" .,?!~…")
-    if len(cleaned) < 2 or _compact(cleaned) in {_compact("나"), _compact("저")}:
-        return None
-    return cleaned
+    return normalize_user_utterance(utterance).destination_candidate_text
 
 
 def _legacy_catalog_key(value: str | None) -> str | None:
@@ -775,37 +1062,13 @@ def _is_negative(text: str) -> bool:
 
 
 def _choice_index(text: str) -> int | None:
-    compact = _compact(text)
-    mapping = {
-        "1": 0,
-        "일번": 0,
-        "첫번째": 0,
-        "첫째": 0,
-        "하나": 0,
-        "2": 1,
-        "이번": 1,
-        "두번째": 1,
-        "둘째": 1,
-        "둘": 1,
-        "3": 2,
-        "삼번": 2,
-        "세번째": 2,
-        "셋째": 2,
-        "셋": 2,
-    }
-    for key, index in mapping.items():
-        if key in compact:
-            return index
-    return None
+    match = match_pending_choice_tool(text, ["0", "1", "2"])
+    return match.candidate_index if match.matched else None
 
 
 def _match_choice_name(text: str, names: list[str]) -> str | None:
-    compact_text = _compact(text)
-    for name in names:
-        compact_name = _compact(name)
-        if compact_name and (compact_name in compact_text or compact_text in compact_name):
-            return name
-    return None
+    match = match_pending_choice_tool(text, names)
+    return match.candidate if match.matched else None
 
 
 def _default_target_bus_id(route_no: str | None) -> str:

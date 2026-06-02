@@ -102,6 +102,8 @@ class V3AgentResponse {
     required this.usedGemini,
     required this.fallbackSource,
     this.routePlan,
+    this.trace = const <V3AgentTraceEvent>[],
+    this.traceId,
   });
 
   final String sessionId;
@@ -113,6 +115,8 @@ class V3AgentResponse {
   final bool usedGemini;
   final String fallbackSource;
   final V3RoutePlanResponse? routePlan;
+  final List<V3AgentTraceEvent> trace;
+  final String? traceId;
 
   factory V3AgentResponse.fromJson(Map<String, dynamic> json) {
     return V3AgentResponse(
@@ -124,9 +128,118 @@ class V3AgentResponse {
       cue: V3Cue.fromJson(_mapValue(json['cue'])),
       usedGemini: json['usedGemini'] == true,
       fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
-      routePlan: V3RoutePlanResponse.fromNullableJson(_mapValue(json['routePlan'])),
+      routePlan:
+          V3RoutePlanResponse.fromNullableJson(_mapValue(json['routePlan'])),
+      trace: _agentTraceEvents(json['trace']),
+      traceId: _nullableString(json['traceId']),
     );
   }
+}
+
+class V3AgentTraceEvent {
+  const V3AgentTraceEvent({
+    required this.id,
+    required this.step,
+    required this.type,
+    required this.title,
+    required this.status,
+    required this.summary,
+    required this.safePayload,
+    this.provider,
+    this.operation,
+    this.startedAt,
+    this.finishedAt,
+    this.durationMs,
+    this.warning,
+  });
+
+  final String id;
+  final int step;
+  final String type;
+  final String title;
+  final String status;
+  final String summary;
+  final String? provider;
+  final String? operation;
+  final Map<String, dynamic> safePayload;
+  final DateTime? startedAt;
+  final DateTime? finishedAt;
+  final int? durationMs;
+  final String? warning;
+
+  factory V3AgentTraceEvent.fromJson(Map<String, dynamic> json) {
+    return V3AgentTraceEvent(
+      id: _stringValue(json['id'], fallback: ''),
+      step: _intValue(json['step']),
+      type: _stringValue(json['type'], fallback: 'UNKNOWN'),
+      title: _stringValue(json['title'], fallback: '검증 단계'),
+      status: _stringValue(json['status'], fallback: 'SKIPPED'),
+      summary: _stringValue(json['summary'], fallback: ''),
+      provider: _nullableString(json['provider']),
+      operation: _nullableString(json['operation']),
+      safePayload: _mapValue(json['safePayload']) ?? const <String, dynamic>{},
+      startedAt: _dateTimeValue(json['startedAt']),
+      finishedAt: _dateTimeValue(json['finishedAt']),
+      durationMs: _nullableInt(json['durationMs']),
+      warning: _nullableString(json['warning']),
+    );
+  }
+}
+
+Map<String, dynamic> sanitizeAgentTracePayloadForDisplay(
+    Map<String, dynamic> payload) {
+  return Map<String, dynamic>.from(
+    _sanitizeAgentTraceValue(payload) as Map<dynamic, dynamic>,
+  );
+}
+
+final RegExp _agentTraceSecretKeyPattern = RegExp(
+  r'(^key$|api[_-]?key|service[_-]?key|authorization|token|password|secret|gemini[_-]?api[_-]?key|kakao[_-]?rest[_-]?api[_-]?key|odsay[_-]?api[_-]?key|public[_-]?data[_-]?api[_-]?key)',
+  caseSensitive: false,
+);
+final RegExp _agentTraceCoordinateKeyPattern =
+    RegExp(r'(lat|lng|latitude|longitude)$', caseSensitive: false);
+final RegExp _agentTraceTokenLikePattern = RegExp(r'[A-Za-z0-9_=-]{32,}');
+final RegExp _agentTraceUrlPattern = RegExp(r'https?://\S+');
+
+Object? _sanitizeAgentTraceValue(Object? value, {String? key}) {
+  if (key != null && _agentTraceSecretKeyPattern.hasMatch(key)) {
+    return '[REDACTED]';
+  }
+  if (value is Map) {
+    return <String, dynamic>{
+      for (final entry in value.entries)
+        entry.key.toString(): _sanitizeAgentTraceValue(
+          entry.value,
+          key: entry.key.toString(),
+        ),
+    };
+  }
+  if (value is List) {
+    return value.map((item) => _sanitizeAgentTraceValue(item)).toList();
+  }
+  if (value is num &&
+      key != null &&
+      _agentTraceCoordinateKeyPattern.hasMatch(key)) {
+    return double.parse(value.toDouble().toStringAsFixed(4));
+  }
+  if (value is String) {
+    if (_agentTraceTokenLikePattern.hasMatch(value)) {
+      return '[REDACTED]';
+    }
+    return value.replaceAll(_agentTraceUrlPattern, '[URL_REDACTED]');
+  }
+  return value;
+}
+
+List<V3AgentTraceEvent> _agentTraceEvents(Object? value) {
+  if (value is! List) return const <V3AgentTraceEvent>[];
+  return value
+      .whereType<Map>()
+      .map((item) => V3AgentTraceEvent.fromJson(
+            Map<String, dynamic>.from(item),
+          ))
+      .toList();
 }
 
 class V3RouteRecommendation {
@@ -204,7 +317,8 @@ class V3RouteRecommendResponse {
       planningDataSource: _nullableString(json['planningDataSource']),
       mapsGrounded: json['mapsGrounded'] == true,
       mapsEvidence: _mapsEvidenceList(json['mapsEvidence']),
-      stopEvidence: V3PublicBusStopEvidence.fromJson(_mapValue(json['stopEvidence'])),
+      stopEvidence:
+          V3PublicBusStopEvidence.fromJson(_mapValue(json['stopEvidence'])),
       evidence: V3RoutePlanningEvidence.fromJson(_mapValue(json['evidence'])),
     );
   }
@@ -244,7 +358,8 @@ class V3RoutePlanResponse {
       status: _stringValue(json['status'], fallback: 'NOT_FOUND'),
       readiness: _stringValue(json['readiness'], fallback: 'ERROR'),
       heardText: _stringValue(json['heardText'], fallback: ''),
-      destination: V3DestinationResolveResponse.fromNullableJson(_mapValue(json['destination'])),
+      destination: V3DestinationResolveResponse.fromNullableJson(
+          _mapValue(json['destination'])),
       plans: rawPlans is List
           ? rawPlans
               .whereType<Map>()
@@ -261,7 +376,8 @@ class V3RoutePlanResponse {
                   ))
               .toList()
           : const <V3RoutePlanCandidate>[],
-      recommendedPlan: V3RoutePlanCandidate.fromNullableJson(_mapValue(json['recommendedPlan'])),
+      recommendedPlan: V3RoutePlanCandidate.fromNullableJson(
+          _mapValue(json['recommendedPlan'])),
       agentMessage: _nullableString(json['agentMessage']),
       question: _nullableString(json['question']),
       fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
@@ -288,16 +404,19 @@ class V3DestinationResolveResponse {
   final List<V3DestinationCandidate> candidates;
   final String? question;
 
-  static V3DestinationResolveResponse? fromNullableJson(Map<String, dynamic>? json) {
+  static V3DestinationResolveResponse? fromNullableJson(
+      Map<String, dynamic>? json) {
     if (json == null) return null;
     final rawCandidates = json['candidates'];
     return V3DestinationResolveResponse(
       status: _stringValue(json['status'], fallback: 'NOT_FOUND'),
-      topCandidate: V3DestinationCandidate.fromNullableJson(_mapValue(json['topCandidate'])),
+      topCandidate: V3DestinationCandidate.fromNullableJson(
+          _mapValue(json['topCandidate'])),
       candidates: rawCandidates is List
           ? rawCandidates
               .whereType<Map>()
-              .map((item) => V3DestinationCandidate.fromJson(Map<String, dynamic>.from(item)))
+              .map((item) => V3DestinationCandidate.fromJson(
+                  Map<String, dynamic>.from(item)))
               .toList()
           : const <V3DestinationCandidate>[],
       question: _nullableString(json['question']),
@@ -352,6 +471,7 @@ class V3RoutePlanCandidate {
     this.totalEstimatedMinutes,
     this.recommendedReason,
     this.rankingEvidence = const <String>[],
+    this.serviceStatus,
   });
 
   final String planId;
@@ -374,6 +494,7 @@ class V3RoutePlanCandidate {
   final String provider;
   final String verificationStatus;
   final List<String> warnings;
+  final V3RouteServiceStatus? serviceStatus;
 
   factory V3RoutePlanCandidate.fromJson(Map<String, dynamic> json) {
     final rawSegments = json['segments'];
@@ -382,7 +503,8 @@ class V3RoutePlanCandidate {
       type: _stringValue(json['type'], fallback: 'DIRECT'),
       destinationName: _stringValue(json['destinationName'], fallback: ''),
       summary: _stringValue(json['summary'], fallback: ''),
-      boardingInstruction: _stringValue(json['boardingInstruction'], fallback: ''),
+      boardingInstruction:
+          _stringValue(json['boardingInstruction'], fallback: ''),
       transferCount: _intValue(json['transferCount']),
       totalBusStopCount: _intValue(json['totalBusStopCount']),
       estimatedWalkMeters: _doubleValue(json['estimatedWalkMeters']),
@@ -403,8 +525,11 @@ class V3RoutePlanCandidate {
       fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
       planSource: _stringValue(json['planSource'], fallback: 'LOCAL_FALLBACK'),
       provider: _stringValue(json['provider'], fallback: 'LOCAL'),
-      verificationStatus: _stringValue(json['verificationStatus'], fallback: 'LOCAL_ONLY'),
+      verificationStatus:
+          _stringValue(json['verificationStatus'], fallback: 'LOCAL_ONLY'),
       warnings: _stringList(json['warnings']),
+      serviceStatus: V3RouteServiceStatus.fromNullableJson(
+          _mapValue(json['serviceStatus'])),
     );
   }
 
@@ -430,6 +555,7 @@ class V3RoutePlanSegment {
     this.alightingStopNodeId,
     this.estimatedMinutes,
     this.directionHint,
+    this.serviceStatus,
   });
 
   final String routeNo;
@@ -446,20 +572,24 @@ class V3RoutePlanSegment {
   final String? boardingStopNodeId;
   final String? alightingStopNodeId;
   final int? estimatedMinutes;
+  final V3RouteServiceStatus? serviceStatus;
 
   factory V3RoutePlanSegment.fromJson(Map<String, dynamic> json) {
     final rawArrivals = json['arrivals'];
     return V3RoutePlanSegment(
       routeNo: _stringValue(json['routeNo'], fallback: ''),
       routeId: _stringValue(json['routeId'], fallback: ''),
-      boardStop: V3RoutePlanStop.fromJson(_mapValue(json['boardStop']) ?? const <String, dynamic>{}),
-      alightStop: V3RoutePlanStop.fromJson(_mapValue(json['alightStop']) ?? const <String, dynamic>{}),
+      boardStop: V3RoutePlanStop.fromJson(
+          _mapValue(json['boardStop']) ?? const <String, dynamic>{}),
+      alightStop: V3RoutePlanStop.fromJson(
+          _mapValue(json['alightStop']) ?? const <String, dynamic>{}),
       stopCount: _intValue(json['stopCount']),
       directionHint: _nullableString(json['directionHint']),
       arrivals: rawArrivals is List
           ? rawArrivals
               .whereType<Map>()
-              .map((item) => V3BusArrival.fromJson(Map<String, dynamic>.from(item)))
+              .map((item) =>
+                  V3BusArrival.fromJson(Map<String, dynamic>.from(item)))
               .toList()
           : const <V3BusArrival>[],
       arrivalSource: _stringValue(json['arrivalSource'], fallback: 'MOCK'),
@@ -469,6 +599,8 @@ class V3RoutePlanSegment {
       boardingStopNodeId: _nullableString(json['boardingStopNodeId']),
       alightingStopNodeId: _nullableString(json['alightingStopNodeId']),
       estimatedMinutes: _nullableInt(json['estimatedMinutes']),
+      serviceStatus: V3RouteServiceStatus.fromNullableJson(
+          _mapValue(json['serviceStatus'])),
     );
   }
 }
@@ -517,6 +649,39 @@ class V3RoutePlanStop {
   }
 }
 
+class V3RouteServiceStatus {
+  const V3RouteServiceStatus({
+    required this.operatingNow,
+    required this.reason,
+    required this.message,
+    required this.scheduleSource,
+    this.nextServiceTime,
+    this.nextServiceLabel,
+  });
+
+  final bool operatingNow;
+  final String reason;
+  final String message;
+  final String scheduleSource;
+  final String? nextServiceTime;
+  final String? nextServiceLabel;
+
+  factory V3RouteServiceStatus.fromJson(Map<String, dynamic> json) {
+    return V3RouteServiceStatus(
+      operatingNow: json['operatingNow'] == true,
+      reason: _stringValue(json['reason'], fallback: 'UNKNOWN'),
+      message: _stringValue(json['message'], fallback: '운행 상태를 확인하지 못했어.'),
+      scheduleSource: _stringValue(json['scheduleSource'], fallback: 'UNKNOWN'),
+      nextServiceTime: _nullableString(json['nextServiceTime']),
+      nextServiceLabel: _nullableString(json['nextServiceLabel']),
+    );
+  }
+
+  static V3RouteServiceStatus? fromNullableJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    return V3RouteServiceStatus.fromJson(json);
+  }
+}
 
 class V3MapsGroundingEvidence {
   const V3MapsGroundingEvidence({
@@ -673,12 +838,14 @@ class V3BusArrivalsResponse {
     required this.arrivals,
     required this.fallbackSource,
     this.routeNo,
+    this.serviceStatus,
   });
 
   final String stopId;
   final String? routeNo;
   final List<V3BusArrival> arrivals;
   final String fallbackSource;
+  final V3RouteServiceStatus? serviceStatus;
 
   factory V3BusArrivalsResponse.fromJson(Map<String, dynamic> json) {
     final rawArrivals = json['arrivals'];
@@ -688,10 +855,141 @@ class V3BusArrivalsResponse {
       arrivals: rawArrivals is List
           ? rawArrivals
               .whereType<Map>()
-              .map((item) => V3BusArrival.fromJson(Map<String, dynamic>.from(item)))
+              .map((item) =>
+                  V3BusArrival.fromJson(Map<String, dynamic>.from(item)))
               .toList()
           : const <V3BusArrival>[],
       fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
+      serviceStatus: V3RouteServiceStatus.fromNullableJson(
+          _mapValue(json['serviceStatus'])),
+    );
+  }
+}
+
+class V3LiveRouteMarker {
+  const V3LiveRouteMarker({
+    required this.type,
+    required this.label,
+    required this.latitude,
+    required this.longitude,
+    this.busId,
+  });
+
+  final String type;
+  final String label;
+  final double latitude;
+  final double longitude;
+  final String? busId;
+
+  factory V3LiveRouteMarker.fromJson(Map<String, dynamic> json) {
+    return V3LiveRouteMarker(
+      type: _stringValue(json['type'], fallback: 'DESTINATION'),
+      label: _stringValue(json['label'], fallback: '위치'),
+      latitude: _doubleValue(json['latitude']),
+      longitude: _doubleValue(json['longitude']),
+      busId: _nullableString(json['busId']),
+    );
+  }
+}
+
+class V3BusPosition {
+  const V3BusPosition({
+    required this.routeNo,
+    required this.routeId,
+    required this.source,
+    this.busId,
+    this.nodeId,
+    this.nodeName,
+    this.latitude,
+    this.longitude,
+  });
+
+  final String? busId;
+  final String routeNo;
+  final String routeId;
+  final String? nodeId;
+  final String? nodeName;
+  final double? latitude;
+  final double? longitude;
+  final String source;
+
+  factory V3BusPosition.fromJson(Map<String, dynamic> json) {
+    return V3BusPosition(
+      busId: _nullableString(json['busId']),
+      routeNo: _stringValue(json['routeNo'], fallback: ''),
+      routeId: _stringValue(json['routeId'], fallback: ''),
+      nodeId: _nullableString(json['nodeId']),
+      nodeName: _nullableString(json['nodeName']),
+      latitude: _nullableDouble(json['latitude']),
+      longitude: _nullableDouble(json['longitude']),
+      source: _stringValue(json['source'], fallback: 'PUBLIC_API'),
+    );
+  }
+}
+
+class V3LiveRouteStatusResponse {
+  const V3LiveRouteStatusResponse({
+    required this.routeNo,
+    required this.routeId,
+    required this.boardStopId,
+    required this.alightStopId,
+    required this.markers,
+    required this.arrivals,
+    required this.busPositions,
+    required this.serviceStatus,
+    required this.warnings,
+    required this.updatedAt,
+    required this.fallbackSource,
+  });
+
+  final String routeNo;
+  final String routeId;
+  final String boardStopId;
+  final String alightStopId;
+  final List<V3LiveRouteMarker> markers;
+  final List<V3BusArrival> arrivals;
+  final List<V3BusPosition> busPositions;
+  final V3RouteServiceStatus serviceStatus;
+  final List<String> warnings;
+  final DateTime? updatedAt;
+  final String fallbackSource;
+
+  factory V3LiveRouteStatusResponse.fromJson(Map<String, dynamic> json) {
+    final rawMarkers = json['markers'];
+    final rawArrivals = json['arrivals'];
+    final rawBusPositions = json['busPositions'];
+    return V3LiveRouteStatusResponse(
+      routeNo: _stringValue(json['routeNo'], fallback: ''),
+      routeId: _stringValue(json['routeId'], fallback: ''),
+      boardStopId: _stringValue(json['boardStopId'], fallback: ''),
+      alightStopId: _stringValue(json['alightStopId'], fallback: ''),
+      markers: rawMarkers is List
+          ? rawMarkers
+              .whereType<Map>()
+              .map((item) =>
+                  V3LiveRouteMarker.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : const <V3LiveRouteMarker>[],
+      arrivals: rawArrivals is List
+          ? rawArrivals
+              .whereType<Map>()
+              .map((item) =>
+                  V3BusArrival.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : const <V3BusArrival>[],
+      busPositions: rawBusPositions is List
+          ? rawBusPositions
+              .whereType<Map>()
+              .map((item) =>
+                  V3BusPosition.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : const <V3BusPosition>[],
+      serviceStatus: V3RouteServiceStatus.fromJson(
+        _mapValue(json['serviceStatus']) ?? const <String, dynamic>{},
+      ),
+      warnings: _stringList(json['warnings']),
+      updatedAt: _dateTimeValue(json['updatedAt']),
+      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'ERROR'),
     );
   }
 }

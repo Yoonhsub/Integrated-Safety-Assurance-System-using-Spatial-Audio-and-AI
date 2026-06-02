@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -38,7 +41,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   static const String _sessionId = 'demo-session';
   static const bool _webDemoOriginEnabled = bool.fromEnvironment(
     'MOBI_WEB_DEMO_ORIGIN_ENABLED',
-    defaultValue: false,
+    defaultValue: true,
   );
   static const double _webDemoOriginLat = 36.6359;
   static const double _webDemoOriginLng = 127.4596;
@@ -61,7 +64,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   bool _isRoutePlanning = false;
   bool _usingWebDemoOrigin = false;
   bool _useMockHeadTracking = false;
-  HeadTrackingDebugSnapshot _headTracking = HeadTrackingDebugSnapshot.disabled();
+  HeadTrackingDebugSnapshot _headTracking =
+      HeadTrackingDebugSnapshot.disabled();
+  Timer? _liveRouteTimer;
+  V3LiveRouteStatusResponse? _liveRouteStatus;
+  Position? _lastRoutePosition;
+  String? _liveRouteError;
+  bool _liveRoutePanelVisible = false;
+  bool _isLiveRouteLoading = false;
+  bool _isAgentTraceExpanded = false;
 
   // 실시간 채팅 상태
   final List<ChatMessage> _chatMessages = [];
@@ -82,6 +93,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   @override
   void dispose() {
+    _liveRouteTimer?.cancel();
     _utteranceController.dispose();
     _cueService.dispose();
     super.dispose();
@@ -121,7 +133,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       setState(() {
         _errorMessage = error.toString();
       });
-      await _cueService.speakLocal('API 연결에 실패했어. 버튼 fallback을 다시 시도해줘.');
+      await _cueService.playDing();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -168,7 +180,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     if (text.isEmpty) return;
 
     final shouldPlanRoute = _looksLikeRouteRequest(text);
-    final planningPreparation = shouldPlanRoute ? await _beginRoutePlanning() : null;
+    final planningPreparation =
+        shouldPlanRoute ? await _beginRoutePlanning() : null;
 
     try {
       await _runGuarded(() async {
@@ -203,6 +216,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         }
         setState(() {
           _lastAgentResponse = response;
+          _isAgentTraceExpanded = false;
           _sessionState = state;
           if (routePlan != null) {
             _lastRoutePlan = routePlan;
@@ -222,7 +236,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             ));
           }
         });
-        await _cueService.playCue(response.cue, fallbackMessage: response.message);
+        if (routePlan?.recommendedPlan != null) {
+          await _activateLiveRoutePanel(
+              routePlan!, planningPreparation?.position);
+        } else if (shouldPlanRoute) {
+          _stopLiveRoutePolling(clearStatus: true);
+        }
+        await _cueService.playCue(response.cue,
+            fallbackMessage: response.message);
         if (response.cue.isNone && response.ttsMode != 'NONE') {
           await _speakAgentMessage(
             response.message,
@@ -239,17 +260,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
   }
 
-  Future<void> _speakAgentMessage(String message, {bool forceLocal = false}) async {
-    if (!forceLocal) {
-      try {
-        final audioBytes = await _client.synthesizeSpeech(text: message);
-        await _cueService.playGeneratedSpeech(audioBytes);
-        return;
-      } on V3ApiException {
-        // The local voice keeps guidance available when preview TTS is unavailable.
-      }
+  Future<void> _speakAgentMessage(String message,
+      {bool forceLocal = false}) async {
+    if (forceLocal) {
+      await _cueService.speakLocal(message);
+      return;
     }
-    await _cueService.speakLocal(message);
+
+    try {
+      final audioBytes = await _client.synthesizeSpeech(text: message);
+      await _cueService.playGeneratedSpeech(audioBytes);
+      return;
+    } on V3ApiException {
+      await _cueService.playDing();
+    }
   }
 
   Future<void> _routeRecommend(String destination) async {
@@ -284,11 +308,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             routePlan: routePlan,
           );
         });
+        if (routePlan.recommendedPlan != null) {
+          await _activateLiveRoutePanel(routePlan, preparation.position);
+        } else {
+          _stopLiveRoutePolling(clearStatus: true);
+        }
         final spokenGuidance = routePlan.agentMessage ??
             routePlan.recommendedPlan?.boardingInstruction ??
             routePlan.question;
         if (spokenGuidance != null && spokenGuidance.isNotEmpty) {
-          await _cueService.speakLocal(spokenGuidance);
+          await _speakAgentMessage(spokenGuidance);
         }
       });
     } finally {
@@ -301,11 +330,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<_RoutePlanningPreparation> _beginRoutePlanning() async {
+    _liveRouteTimer?.cancel();
+    _liveRouteTimer = null;
     setState(() {
       _isRoutePlanning = true;
       _routePlanningStatus = _routePlanningMessage;
+      _liveRoutePanelVisible = false;
+      _liveRouteStatus = null;
+      _liveRouteError = null;
     });
-    await _cueService.speakLocal(_routePlanningMessage);
+    await _cueService.playDing();
 
     try {
       final position = await _currentPosition();
@@ -329,6 +363,88 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       }
       return const _RoutePlanningPreparation();
     }
+  }
+
+  Future<void> _activateLiveRoutePanel(
+    V3RoutePlanResponse routePlan,
+    Position? position,
+  ) async {
+    final plan = routePlan.recommendedPlan;
+    if (plan == null || plan.segments.isEmpty) {
+      _stopLiveRoutePolling(clearStatus: true);
+      return;
+    }
+    _liveRouteTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _liveRoutePanelVisible = true;
+      _liveRouteStatus = null;
+      _liveRouteError = null;
+      _lastRoutePosition = position;
+    });
+    await _refreshLiveRouteStatus();
+    if (!mounted || !_liveRoutePanelVisible) return;
+    _liveRouteTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!_isLiveRouteLoading) {
+        unawaited(_refreshLiveRouteStatus());
+      }
+    });
+  }
+
+  Future<void> _refreshLiveRouteStatus() async {
+    if (_isLiveRouteLoading) return;
+    final plan = _lastRoutePlan?.recommendedPlan;
+    if (plan == null || plan.segments.isEmpty) return;
+    final segment = plan.segments.first;
+    setState(() {
+      _isLiveRouteLoading = true;
+    });
+    try {
+      final status = await _client.liveRouteStatus(
+        routeNo: segment.routeNo,
+        routeId: segment.routeId,
+        boardStopId: segment.boardStop.stopId,
+        alightStopId: segment.alightStop.stopId,
+        userLat: _lastRoutePosition?.latitude,
+        userLng: _lastRoutePosition?.longitude,
+        boardLat: segment.boardStop.latitude,
+        boardLng: segment.boardStop.longitude,
+        alightLat: segment.alightStop.latitude,
+        alightLng: segment.alightStop.longitude,
+        mode: widget.dataMode,
+      );
+      if (!mounted || !_liveRoutePanelVisible) return;
+      setState(() {
+        _liveRouteStatus = status;
+        _liveRouteError = null;
+      });
+    } on V3ApiException catch (error) {
+      if (!mounted || !_liveRoutePanelVisible) return;
+      setState(() {
+        _liveRouteError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLiveRouteLoading = false;
+        });
+      }
+    }
+  }
+
+  void _stopLiveRoutePolling({bool clearStatus = false}) {
+    _liveRouteTimer?.cancel();
+    _liveRouteTimer = null;
+    if (!mounted) return;
+    setState(() {
+      _liveRoutePanelVisible = false;
+      _isLiveRouteLoading = false;
+      if (clearStatus) {
+        _liveRouteStatus = null;
+        _liveRouteError = null;
+        _lastRoutePosition = null;
+      }
+    });
   }
 
   String _completedRoutePlanStatus({
@@ -425,13 +541,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _runGuarded(() async {
       final state = _sessionState;
       final segments = _lastRoutePlan?.recommendedPlan?.segments;
-      final firstSegment = segments == null || segments.isEmpty ? null : segments.first;
+      final firstSegment =
+          segments == null || segments.isEmpty ? null : segments.first;
       final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
       final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
       if (stopId == null || routeNo == null) {
         throw const V3ApiException('먼저 목적지 경로를 선택해줘.');
       }
-      final arrivals = await _client.arrivals(stopId: stopId, routeNo: routeNo, mode: widget.dataMode);
+      final arrivals = await _client.arrivals(
+          stopId: stopId, routeNo: routeNo, mode: widget.dataMode);
       setState(() {
         _lastArrivals = arrivals;
       });
@@ -444,13 +562,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   Future<void> _mockGeofence(String event) async {
     await _runGuarded(() async {
-      final response = await _client.mockGeofence(sessionId: _sessionId, event: event);
+      final response =
+          await _client.mockGeofence(sessionId: _sessionId, event: event);
       final state = await _client.fetchState(sessionId: _sessionId);
       setState(() {
         _latestGeofenceMessage = response.message;
         _sessionState = state;
       });
-      await _cueService.playCue(response.cue, fallbackMessage: response.message);
+      await _cueService.playCue(response.cue,
+          fallbackMessage: response.message);
     });
   }
 
@@ -468,19 +588,22 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _lastBeaconDecision = response;
         _sessionState = refreshedState;
       });
-      await _cueService.playCue(response.cue, fallbackMessage: response.message);
+      await _cueService.playCue(response.cue,
+          fallbackMessage: response.message);
     });
   }
 
   Future<void> _mockBusPassed() async {
     await _runGuarded(() async {
-      final response = await _client.mockBusEvent(sessionId: _sessionId, event: 'BUS_PASSED');
+      final response = await _client.mockBusEvent(
+          sessionId: _sessionId, event: 'BUS_PASSED');
       final state = await _client.fetchState(sessionId: _sessionId);
       setState(() {
         _latestGeofenceMessage = response.message;
         _sessionState = state;
       });
-      await _cueService.playCue(response.cue, fallbackMessage: response.message);
+      await _cueService.playCue(response.cue,
+          fallbackMessage: response.message);
     });
   }
 
@@ -488,6 +611,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _runGuarded(() async {
       await _cueService.stopCue();
       final state = await _client.resetSession(sessionId: _sessionId);
+      _liveRouteTimer?.cancel();
+      _liveRouteTimer = null;
       setState(() {
         _sessionState = state;
         _lastAgentResponse = null;
@@ -497,6 +622,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _latestGeofenceMessage = null;
         _routePlanningStatus = null;
         _usingWebDemoOrigin = false;
+        _liveRoutePanelVisible = false;
+        _liveRouteStatus = null;
+        _liveRouteError = null;
+        _lastRoutePosition = null;
+        _isAgentTraceExpanded = false;
       });
     });
   }
@@ -559,92 +689,135 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-              _HeroStatusCard(
-                isBusy: _isBusy,
-                stateLabel: state?.state ?? 'LOADING',
-                destination: state?.selectedDestination,
-                routeNo: state?.selectedRouteNo,
-                stopName: state?.selectedStopName,
-                targetBusId: state?.targetBusId,
-                message: lastMessage,
-                errorMessage: _errorMessage,
-              ),
-              if (_usingWebDemoOrigin) ...[
-                const SizedBox(height: 12),
-                const _WebDemoOriginBanner(),
-              ],
-              const SizedBox(height: 12),
-              _UtteranceCard(
-                controller: _utteranceController,
-                isBusy: _isBusy,
-                onSend: _sendUtterance,
-              ),
-              const SizedBox(height: 12),
-              V3QuickActionPanel(
-                isBusy: _isBusy,
-                wakeWord: _wakeWord,
-                onWakeOnly: () => _sendUtterance(_wakeWord),
-                onFindRoute: () => _sendUtterance('$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?'),
-                onQueryArrival: () => _sendUtterance('$_wakeWord, 그 버스 언제 와?'),
-                onSelectArrival: () => _sendUtterance('응, 6분 뒤 오는 걸로 안내해줘.'),
-                onAskCanBoard: () => _sendUtterance('$_wakeWord, 지금 앞에 온 버스 타도 돼?'),
-                onMissedBus: () => _sendUtterance('$_wakeWord, 나 못 탔어.'),
-                onChangeDestination: () => _sendUtterance('목적지 충북대병원으로 바꿔줘'),
-              ),
-              const SizedBox(height: 12),
-              _ArrivalCard(
-                routeRecommendation: _lastRouteRecommendation,
-                routePlan: _lastRoutePlan,
-                routePlanningStatus: _routePlanningStatus,
-                arrivals: _lastArrivals,
-                onRecommendSachang: () => _routeRecommend('사창사거리'),
-                onRecommendHospital: () => _routeRecommend('충북대병원'),
-                onRecommendSangdang: () => _routeRecommend('상당산성'),
-                onRefreshArrivals: _refreshArrivals,
-                onChooseDestination: (candidate) => _sendUtterance(candidate),
-                onStartGuidance: _startGuidance,
-                isBusy: _isBusy,
-              ),
-              const SizedBox(height: 12),
-              V3MockControlPanel(
-                isBusy: _isBusy,
-                onArrivedAtStop: () => _mockGeofence('ARRIVED_AT_STOP'),
-                onLeftWaitingArea: () => _mockGeofence('LEFT_WAITING_AREA'),
-                onDangerZone: () => _mockGeofence('DANGER_ZONE'),
-                onReturnedToStop: () => _mockGeofence('RETURNED_TO_STOP'),
-                onWrongBusNear: () => _mockBeacons(const <V3BeaconSignal>[
-                  V3BeaconSignal(busId: 'BUS_1', routeNo: '511', rssi: -50, distanceMeters: 1.8),
-                  V3BeaconSignal(busId: 'BUS_2', routeNo: '502', rssi: -70, distanceMeters: 6.0),
-                ]),
-                onTargetBusMid: () => _mockBeacons(const <V3BeaconSignal>[
-                  V3BeaconSignal(busId: 'BUS_2', routeNo: '502', rssi: -70, distanceMeters: 6.0),
-                ]),
-                onTargetBusNear: () => _mockBeacons(const <V3BeaconSignal>[
-                  V3BeaconSignal(busId: 'BUS_2', routeNo: '502', rssi: -52, distanceMeters: 1.4),
-                ]),
-                onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
-                onBusPassed: _mockBusPassed,
-                onRefreshArrivals: _refreshArrivals,
-                latestBeaconDecision: _lastBeaconDecision,
-                latestGeofenceMessage: _latestGeofenceMessage,
-              ),
-              const SizedBox(height: 12),
-              _HeadTrackingCard(
-                snapshot: _headTracking,
-                enabled: _useMockHeadTracking,
-                onChanged: _toggleMockHeadTracking,
-              ),
-              const SizedBox(height: 12),
-              V3DebugPanel(
-                baseUrl: _apiBaseUrl,
-                healthMessage: _healthStatus?.message ?? '확인 전',
-                sessionState: _sessionState,
-                lastAgentResponse: _lastAgentResponse,
-                lastArrivals: _lastArrivals,
-                lastBeaconDecision: _lastBeaconDecision,
-                headTracking: _headTracking,
-                activeCueType: _cueService.activeCueType,
-              ),
+                  _HeroStatusCard(
+                    isBusy: _isBusy,
+                    stateLabel: state?.state ?? 'LOADING',
+                    destination: state?.selectedDestination,
+                    routeNo: state?.selectedRouteNo,
+                    stopName: state?.selectedStopName,
+                    targetBusId: state?.targetBusId,
+                    message: lastMessage,
+                    errorMessage: _errorMessage,
+                  ),
+                  if (_lastAgentResponse?.trace.isNotEmpty == true) ...[
+                    const SizedBox(height: 12),
+                    _AgentTraceCard(
+                      traceId: _lastAgentResponse?.traceId,
+                      events: _lastAgentResponse!.trace,
+                      expanded: _isAgentTraceExpanded,
+                      onToggle: () => setState(() {
+                        _isAgentTraceExpanded = !_isAgentTraceExpanded;
+                      }),
+                    ),
+                  ],
+                  if (_usingWebDemoOrigin) ...[
+                    const SizedBox(height: 12),
+                    const _WebDemoOriginBanner(),
+                  ],
+                  if (_liveRoutePanelVisible) ...[
+                    const SizedBox(height: 12),
+                    _LiveRouteStatusCard(
+                      status: _liveRouteStatus,
+                      routePlan: _lastRoutePlan,
+                      isLoading: _isLiveRouteLoading,
+                      errorMessage: _liveRouteError,
+                      onClose: () => _stopLiveRoutePolling(clearStatus: true),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  _UtteranceCard(
+                    controller: _utteranceController,
+                    isBusy: _isBusy,
+                    onSend: _sendUtterance,
+                  ),
+                  const SizedBox(height: 12),
+                  V3QuickActionPanel(
+                    isBusy: _isBusy,
+                    wakeWord: _wakeWord,
+                    onWakeOnly: () => _sendUtterance(_wakeWord),
+                    onFindRoute: () => _sendUtterance(
+                        '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?'),
+                    onQueryArrival: () =>
+                        _sendUtterance('$_wakeWord, 그 버스 언제 와?'),
+                    onSelectArrival: () =>
+                        _sendUtterance('응, 6분 뒤 오는 걸로 안내해줘.'),
+                    onAskCanBoard: () =>
+                        _sendUtterance('$_wakeWord, 지금 앞에 온 버스 타도 돼?'),
+                    onMissedBus: () => _sendUtterance('$_wakeWord, 나 못 탔어.'),
+                    onChangeDestination: () =>
+                        _sendUtterance('목적지 충북대병원으로 바꿔줘'),
+                  ),
+                  const SizedBox(height: 12),
+                  _ArrivalCard(
+                    routeRecommendation: _lastRouteRecommendation,
+                    routePlan: _lastRoutePlan,
+                    routePlanningStatus: _routePlanningStatus,
+                    arrivals: _lastArrivals,
+                    onRecommendSachang: () => _routeRecommend('사창사거리'),
+                    onRecommendHospital: () => _routeRecommend('충북대병원'),
+                    onRecommendSangdang: () => _routeRecommend('상당산성'),
+                    onRefreshArrivals: _refreshArrivals,
+                    onChooseDestination: (candidate) =>
+                        _sendUtterance(candidate),
+                    onStartGuidance: _startGuidance,
+                    isBusy: _isBusy,
+                  ),
+                  const SizedBox(height: 12),
+                  V3MockControlPanel(
+                    isBusy: _isBusy,
+                    onArrivedAtStop: () => _mockGeofence('ARRIVED_AT_STOP'),
+                    onLeftWaitingArea: () => _mockGeofence('LEFT_WAITING_AREA'),
+                    onDangerZone: () => _mockGeofence('DANGER_ZONE'),
+                    onReturnedToStop: () => _mockGeofence('RETURNED_TO_STOP'),
+                    onWrongBusNear: () => _mockBeacons(const <V3BeaconSignal>[
+                      V3BeaconSignal(
+                          busId: 'BUS_1',
+                          routeNo: '511',
+                          rssi: -50,
+                          distanceMeters: 1.8),
+                      V3BeaconSignal(
+                          busId: 'BUS_2',
+                          routeNo: '502',
+                          rssi: -70,
+                          distanceMeters: 6.0),
+                    ]),
+                    onTargetBusMid: () => _mockBeacons(const <V3BeaconSignal>[
+                      V3BeaconSignal(
+                          busId: 'BUS_2',
+                          routeNo: '502',
+                          rssi: -70,
+                          distanceMeters: 6.0),
+                    ]),
+                    onTargetBusNear: () => _mockBeacons(const <V3BeaconSignal>[
+                      V3BeaconSignal(
+                          busId: 'BUS_2',
+                          routeNo: '502',
+                          rssi: -52,
+                          distanceMeters: 1.4),
+                    ]),
+                    onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
+                    onBusPassed: _mockBusPassed,
+                    onRefreshArrivals: _refreshArrivals,
+                    latestBeaconDecision: _lastBeaconDecision,
+                    latestGeofenceMessage: _latestGeofenceMessage,
+                  ),
+                  const SizedBox(height: 12),
+                  _HeadTrackingCard(
+                    snapshot: _headTracking,
+                    enabled: _useMockHeadTracking,
+                    onChanged: _toggleMockHeadTracking,
+                  ),
+                  const SizedBox(height: 12),
+                  V3DebugPanel(
+                    baseUrl: _apiBaseUrl,
+                    healthMessage: _healthStatus?.message ?? '확인 전',
+                    sessionState: _sessionState,
+                    lastAgentResponse: _lastAgentResponse,
+                    lastArrivals: _lastArrivals,
+                    lastBeaconDecision: _lastBeaconDecision,
+                    headTracking: _headTracking,
+                    activeCueType: _cueService.activeCueType,
+                  ),
                 ],
               ),
             ),
@@ -667,6 +840,173 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       ),
     );
   }
+}
+
+class _AgentTraceCard extends StatelessWidget {
+  const _AgentTraceCard({
+    required this.traceId,
+    required this.events,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String? traceId;
+  final List<V3AgentTraceEvent> events;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context)
+          .colorScheme
+          .primaryContainer
+          .withValues(alpha: 0.35),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.fact_check_outlined),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '모비가 실제 데이터를 확인했어',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onToggle,
+                  icon: Icon(
+                    expanded ? Icons.expand_less : Icons.expand_more,
+                  ),
+                  label: Text(expanded ? '검증 과정 접기' : '검증 과정 보기'),
+                ),
+              ],
+            ),
+            Text('${events.length}개 단계의 확인 기록이 있어.'),
+            if (expanded) ...[
+              if (traceId != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'traceId: $traceId',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              const SizedBox(height: 10),
+              for (final event in events) _AgentTraceTimelineItem(event: event),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentTraceTimelineItem extends StatelessWidget {
+  const _AgentTraceTimelineItem({required this.event});
+
+  final V3AgentTraceEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = sanitizeAgentTracePayloadForDisplay(event.safePayload);
+    final providerOperation = <String>[
+      if (event.provider != null) event.provider!,
+      if (event.operation != null) event.operation!,
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(
+              _agentTraceIcon(event.status),
+              size: 20,
+              color: _agentTraceColor(context, event.status),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${event.step}. ${event.title}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(event.summary),
+                if (providerOperation.isNotEmpty)
+                  Text(
+                    providerOperation,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (event.durationMs != null)
+                  Text(
+                    '${event.durationMs}ms',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (payload.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: SelectableText(
+                        const JsonEncoder.withIndent('  ').convert(payload),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (event.warning != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '주의: ${event.warning}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _agentTraceIcon(String status) {
+  return switch (status) {
+    'DONE' => Icons.check_circle,
+    'FAILED' => Icons.error,
+    'SKIPPED' => Icons.remove_circle_outline,
+    'RUNNING' => Icons.pending,
+    _ => Icons.schedule,
+  };
+}
+
+Color _agentTraceColor(BuildContext context, String status) {
+  return switch (status) {
+    'DONE' => Colors.green,
+    'FAILED' => Theme.of(context).colorScheme.error,
+    'SKIPPED' => Colors.grey,
+    'RUNNING' => Colors.orange,
+    _ => Colors.blueGrey,
+  };
 }
 
 class _HeroStatusCard extends StatelessWidget {
@@ -759,12 +1099,287 @@ class _WebDemoOriginBanner extends StatelessWidget {
       child: const Padding(
         padding: EdgeInsets.all(16),
         child: Text(
-          '웹 시연 기준 위치 사용 중: 현재 HTTP 테스트 페이지에서는 브라우저 위치 권한을 사용할 수 없어 '
-          '사창사거리 좌표를 기준으로 경로를 계산합니다. 실제 사용자 위치는 HTTPS 적용 후 사용됩니다.',
+          '웹 시연 기준 위치 사용 중: 브라우저 위치 권한을 사용할 수 없어 '
+          '사창사거리 좌표를 기준으로 경로를 계산합니다. 위치 권한을 허용하면 실제 사용자 위치를 사용합니다.',
         ),
       ),
     );
   }
+}
+
+class _LiveRouteStatusCard extends StatelessWidget {
+  const _LiveRouteStatusCard({
+    required this.status,
+    required this.routePlan,
+    required this.isLoading,
+    required this.onClose,
+    this.errorMessage,
+  });
+
+  final V3LiveRouteStatusResponse? status;
+  final V3RoutePlanResponse? routePlan;
+  final bool isLoading;
+  final VoidCallback onClose;
+  final String? errorMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = routePlan?.recommendedPlan;
+    final segment =
+        plan?.segments.isNotEmpty == true ? plan!.segments.first : null;
+    final firstArrival =
+        status?.arrivals.isNotEmpty == true ? status!.arrivals.first : null;
+    final serviceStatus = status?.serviceStatus ?? segment?.serviceStatus;
+    final eta =
+        firstArrival == null ? '미확인' : '${firstArrival.arrivalMinutes}분 뒤';
+    final remainingStops = firstArrival?.remainingStops == null
+        ? '미확인'
+        : '${firstArrival!.remainingStops}정류장 전';
+    final congestion = firstArrival?.congestion ?? '미제공';
+    final markers = status?.markers ?? const <V3LiveRouteMarker>[];
+    final busPositionMessage = status?.busPositions.isEmpty != false
+        ? '현재 버스 위치는 아직 조회되지 않았어.'
+        : '현재 ${status!.busPositions.length}대의 버스 위치를 조회했어.';
+
+    return Semantics(
+      container: true,
+      label: '실시간 경로 상태 패널',
+      child: Card(
+        color: Theme.of(context)
+            .colorScheme
+            .secondaryContainer
+            .withValues(alpha: 0.35),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.route_outlined),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '실시간 경로 상태',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ),
+                  if (isLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: '실시간 경로 패널 닫기',
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              if (segment == null)
+                const Text('확정된 경로가 없어.')
+              else ...[
+                Text(
+                  '${segment.routeNo}번 · ${plan!.destinationName}',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                _LiveMetric(label: '승차', value: segment.boardStop.stopName),
+                _LiveMetric(label: '하차', value: segment.alightStop.stopName),
+                _LiveMetric(label: '목적지', value: plan.destinationName),
+                _LiveMetric(label: '도착 예정', value: eta),
+                _LiveMetric(label: '남은 정류장', value: remainingStops),
+                _LiveMetric(label: '혼잡도', value: congestion),
+                if (serviceStatus != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    serviceStatus.message,
+                    style: TextStyle(
+                      color: serviceStatus.operatingNow
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.error,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Text(busPositionMessage),
+                const SizedBox(height: 10),
+                const Text(
+                  '실제 지도 타일이 아닌 간이 위치도',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 170,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant),
+                    ),
+                    child: markers.isEmpty
+                        ? const Center(child: Text('표시할 위치 좌표가 없어.'))
+                        : CustomPaint(
+                            painter: _LiveRouteSketchPainter(markers),
+                            child: const SizedBox.expand(),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  children: [
+                    for (final type
+                        in markers.map((marker) => marker.type).toSet())
+                      _LiveRouteLegend(type: type),
+                  ],
+                ),
+              ],
+              if (status != null) ...[
+                const SizedBox(height: 8),
+                Text('데이터 source: ${status!.fallbackSource}'),
+                if (status!.warnings.isNotEmpty)
+                  for (final warning in status!.warnings)
+                    Text(
+                      '주의: $warning',
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+              ],
+              if (errorMessage != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  errorMessage!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveMetric extends StatelessWidget {
+  const _LiveMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Text('$label: $value'),
+    );
+  }
+}
+
+class _LiveRouteLegend extends StatelessWidget {
+  const _LiveRouteLegend({required this.type});
+
+  final String type;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.circle, color: _liveRouteColor(type), size: 12),
+        const SizedBox(width: 4),
+        Text(_liveRouteLabel(type)),
+      ],
+    );
+  }
+}
+
+class _LiveRouteSketchPainter extends CustomPainter {
+  const _LiveRouteSketchPainter(this.markers);
+
+  final List<V3LiveRouteMarker> markers;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const padding = 20.0;
+    final latitudes = markers.map((marker) => marker.latitude);
+    final longitudes = markers.map((marker) => marker.longitude);
+    final minLat = latitudes.reduce((a, b) => a < b ? a : b);
+    final maxLat = latitudes.reduce((a, b) => a > b ? a : b);
+    final minLng = longitudes.reduce((a, b) => a < b ? a : b);
+    final maxLng = longitudes.reduce((a, b) => a > b ? a : b);
+
+    Offset offsetFor(V3LiveRouteMarker marker) {
+      final lngSpan = maxLng - minLng;
+      final latSpan = maxLat - minLat;
+      final xRatio = lngSpan == 0 ? 0.5 : (marker.longitude - minLng) / lngSpan;
+      final yRatio = latSpan == 0 ? 0.5 : (marker.latitude - minLat) / latSpan;
+      return Offset(
+        padding + xRatio * (size.width - padding * 2),
+        size.height - padding - yRatio * (size.height - padding * 2),
+      );
+    }
+
+    final routeMarkers =
+        markers.where((marker) => marker.type != 'BUS').toList();
+    if (routeMarkers.length >= 2) {
+      final path = Path()
+        ..moveTo(
+            offsetFor(routeMarkers.first).dx, offsetFor(routeMarkers.first).dy);
+      for (final marker in routeMarkers.skip(1)) {
+        final point = offsetFor(marker);
+        path.lineTo(point.dx, point.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = Colors.blueGrey
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke,
+      );
+    }
+
+    for (final marker in markers) {
+      final point = offsetFor(marker);
+      canvas.drawCircle(point, marker.type == 'BUS' ? 8 : 7,
+          Paint()..color = _liveRouteColor(marker.type));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LiveRouteSketchPainter oldDelegate) {
+    return oldDelegate.markers != markers;
+  }
+}
+
+Color _liveRouteColor(String type) {
+  return switch (type) {
+    'USER' => Colors.indigo,
+    'BOARD_STOP' => Colors.green,
+    'ALIGHT_STOP' => Colors.orange,
+    'BUS' => Colors.red,
+    _ => Colors.purple,
+  };
+}
+
+String _liveRouteLabel(String type) {
+  return switch (type) {
+    'USER' => '내 위치',
+    'BOARD_STOP' => '승차',
+    'ALIGHT_STOP' => '하차',
+    'BUS' => '버스',
+    _ => '목적지',
+  };
 }
 
 class _UtteranceCard extends StatelessWidget {
@@ -845,9 +1460,10 @@ class _ArrivalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final firstRecommendation = routeRecommendation?.recommendations.isNotEmpty == true
-        ? routeRecommendation!.recommendations.first
-        : null;
+    final firstRecommendation =
+        routeRecommendation?.recommendations.isNotEmpty == true
+            ? routeRecommendation!.recommendations.first
+            : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -861,7 +1477,8 @@ class _ArrivalCard extends StatelessWidget {
                   ),
             ),
             const SizedBox(height: 8),
-            if (firstRecommendation == null && routePlan?.recommendedPlan == null)
+            if (firstRecommendation == null &&
+                routePlan?.recommendedPlan == null)
               const Text('추천 결과 없음')
             else if (firstRecommendation != null)
               Text(
@@ -879,7 +1496,8 @@ class _ArrivalCard extends StatelessWidget {
               ),
             ],
             if (routePlan?.destination?.candidates.isNotEmpty == true &&
-                (routePlan!.status == 'NEEDS_CHOICE' || routePlan!.status == 'NEEDS_CONFIRMATION')) ...[
+                (routePlan!.status == 'NEEDS_CHOICE' ||
+                    routePlan!.status == 'NEEDS_CONFIRMATION')) ...[
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -887,7 +1505,9 @@ class _ArrivalCard extends StatelessWidget {
                 children: [
                   for (final candidate in routePlan!.destination!.candidates)
                     OutlinedButton(
-                      onPressed: isBusy ? null : () => onChooseDestination(candidate.name),
+                      onPressed: isBusy
+                          ? null
+                          : () => onChooseDestination(candidate.name),
                       child: Text('${candidate.name} 선택'),
                     ),
                 ],
@@ -907,7 +1527,10 @@ class _ArrivalCard extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 '대안 경로',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               for (final alternative in routePlan!.alternatives)
@@ -921,7 +1544,8 @@ class _ArrivalCard extends StatelessWidget {
             ],
             if (routeRecommendation?.planningDataSource != null) ...[
               const SizedBox(height: 4),
-              Text('경로 계산 데이터 source: ${routeRecommendation!.planningDataSource}'),
+              Text(
+                  '경로 계산 데이터 source: ${routeRecommendation!.planningDataSource}'),
             ],
             if (routeRecommendation?.mapsGrounded == true) ...[
               const SizedBox(height: 4),
@@ -949,7 +1573,8 @@ class _ArrivalCard extends StatelessWidget {
             Text('도착정보 source: ${arrivals?.fallbackSource ?? '-'}'),
             const SizedBox(height: 4),
             for (final arrival in arrivals?.arrivals ?? const <V3BusArrival>[])
-              Text('• ${arrival.displayLabel} · congestion=${arrival.congestion ?? '없음'}'),
+              Text(
+                  '• ${arrival.displayLabel} · congestion=${arrival.congestion ?? '없음'}'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -980,7 +1605,6 @@ class _ArrivalCard extends StatelessWidget {
   }
 }
 
-
 class _RoutePlanCard extends StatelessWidget {
   const _RoutePlanCard({required this.plan});
 
@@ -992,7 +1616,8 @@ class _RoutePlanCard extends StatelessWidget {
     final typeLabel = plan.type == 'DIRECT' ? '직통 추천' : '1회 환승 추천';
     final firstSegment = plan.segments.isEmpty ? null : plan.segments.first;
     final arrivals = firstSegment?.arrivals;
-    final firstArrival = arrivals == null || arrivals.isEmpty ? null : arrivals.first;
+    final firstArrival =
+        arrivals == null || arrivals.isEmpty ? null : arrivals.first;
     return Semantics(
       container: true,
       label: '구조화된 버스 경로 계획, $typeLabel',
@@ -1018,7 +1643,8 @@ class _RoutePlanCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text('출처: ${_routePlanSourceLabel(plan)}'),
               const SizedBox(height: 4),
-              Text('검증 상태: ${_verificationStatusLabel(plan.verificationStatus)}'),
+              Text(
+                  '검증 상태: ${_verificationStatusLabel(plan.verificationStatus)}'),
               if (plan.warnings.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 for (final warning in plan.warnings)
@@ -1037,11 +1663,14 @@ class _RoutePlanCard extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   '승차 방향: ${firstSegment.directionHint ?? '방향 미확인'}',
-                  style: TextStyle(color: colorScheme.primary, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      color: colorScheme.primary, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  firstArrival == null ? '첫 도착정보: 미확인' : '첫 도착정보: ${firstArrival.displayLabel}',
+                  firstArrival == null
+                      ? '첫 도착정보: 미확인'
+                      : '첫 도착정보: ${firstArrival.displayLabel}',
                 ),
               ],
               const SizedBox(height: 8),
@@ -1092,7 +1721,8 @@ class _AlternativeRouteCard extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          border:
+              Border.all(color: Theme.of(context).colorScheme.outlineVariant),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Padding(
@@ -1229,7 +1859,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPublicData = evidence.isPublicData;
     final colorScheme = Theme.of(context).colorScheme;
-    final accentColor = isPublicData ? colorScheme.primary : colorScheme.tertiary;
+    final accentColor =
+        isPublicData ? colorScheme.primary : colorScheme.tertiary;
     final sourceLabel = switch (evidence.source) {
       'PUBLIC_API' => '실시간 공공 API',
       'CACHE' => '공공 API 정규화 캐시',
@@ -1330,7 +1961,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                           ),
                     ),
                     const SizedBox(height: 4),
-                    Text('$remainingStops · $lowFloorLabel · 혼잡도 ${arrival.congestion ?? '미확인'}'),
+                    Text(
+                        '$remainingStops · $lowFloorLabel · 혼잡도 ${arrival.congestion ?? '미확인'}'),
                   ],
                 ),
               ),
@@ -1419,5 +2051,6 @@ class _HeadTrackingCard extends StatelessWidget {
     );
   }
 
-  String _angle(double? value) => value == null ? '-' : '${value.toStringAsFixed(1)}°';
+  String _angle(double? value) =>
+      value == null ? '-' : '${value.toStringAsFixed(1)}°';
 }

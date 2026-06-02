@@ -34,6 +34,7 @@ class V3SessionRecord:
     pending_origin_lat: float | None = None
     pending_origin_lng: float | None = None
     last_route_plan: dict[str, Any] | None = None
+    conversation_history: list[dict[str, Any]] = field(default_factory=list)
     geofence_armed: bool = False
     last_decision: BeaconDecision | None = None
     nearest_beacon: dict | None = None

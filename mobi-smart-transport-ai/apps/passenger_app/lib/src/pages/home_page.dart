@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+
+import '../services/audio_haptic_cue_service.dart';
 import '../services/backend_api_client.dart';
+import '../services/v3_agent_api_client.dart';
 import '../services/voice_guide_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -29,6 +32,9 @@ class _HomePageState extends State<HomePage> {
   static const String _defaultBusStopId = 'mock-stop-001';
   static const String _passengerUserId = 'passenger-demo-001';
   static const String _defaultTargetDriverId = 'ride-driver-001';
+  static const String _v3VoiceSessionId = 'home-voice-session';
+  static const double _webDemoOriginLat = 36.6359;
+  static const double _webDemoOriginLng = 127.4596;
 
   BusArrivalSummary? _busArrivalSummary;
   bool _isLoadingBusArrivals = true;
@@ -38,10 +44,15 @@ class _HomePageState extends State<HomePage> {
   final String _targetDriverId = _defaultTargetDriverId;
 
   final VoiceGuideService _voiceGuideService = VoiceGuideService();
+  final AudioHapticCueService _cueService = AudioHapticCueService();
 
   final BackendApiClient _backendApiClient = const BackendApiClient(
     baseUrl: _apiBaseUrl,
     useMockData: false,
+  );
+
+  final V3AgentApiClient _v3AgentApiClient = const V3AgentApiClient(
+    baseUrl: _apiBaseUrl,
   );
 
   BackendHealthStatus? _backendHealthStatus;
@@ -58,6 +69,13 @@ class _HomePageState extends State<HomePage> {
   bool _isInitializingFirebase = false;
   bool _firebaseReset = false;
   FirebaseInitializeResult? _firebaseInitResult;
+
+  @override
+  void dispose() {
+    _voiceGuideService.cancelListening();
+    _cueService.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -244,10 +262,12 @@ class _HomePageState extends State<HomePage> {
   bool _isLoadingHomeSnapshot = true;
 
   bool _isListening = false;
+  bool _isSubmittingVoiceDestination = false;
   String _voiceStatusMessage = '아직 음성 안내가 시작되지 않았습니다.';
 
   Future<void> _toggleVoiceInput() async {
     if (_isListening) {
+      final recognizedWords = _voiceGuideService.lastRecognizedWords.trim();
       final message = await _voiceGuideService.stopListening();
 
       if (!mounted) return;
@@ -257,13 +277,16 @@ class _HomePageState extends State<HomePage> {
         _voiceStatusMessage = message;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+
+      if (recognizedWords.isNotEmpty) {
+        await _submitRecognizedDestination(recognizedWords);
+      }
 
       return;
     }
 
+    await _cueService.playDing();
     final message = await _voiceGuideService.startListening(
       onResult: (recognizedWords) {
         if (!mounted) return;
@@ -283,52 +306,79 @@ class _HomePageState extends State<HomePage> {
       _voiceStatusMessage = message;
     });
 
-    final guideMessage = await _voiceGuideService.speakGuide('목적지를 말씀해주세요.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('띠링. 목적지를 말해줘.')),
+    );
+  }
 
-    if (!mounted) return;
+  Future<void> _submitRecognizedDestination(String recognizedWords) async {
+    if (_isSubmittingVoiceDestination) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(guideMessage)));
+    setState(() {
+      _isSubmittingVoiceDestination = true;
+      _voiceStatusMessage = '인식된 목적지로 경로를 계산하고 있습니다: $recognizedWords';
+    });
+
+    try {
+      final utterance = recognizedWords.contains(widget.agentName)
+          ? recognizedWords
+          : '${widget.agentName}, $recognizedWords';
+      final response = await _v3AgentApiClient.converse(
+        sessionId: _v3VoiceSessionId,
+        wakeWord: widget.agentName,
+        utterance: utterance,
+        mode: widget.dataMode,
+        originLat: _webDemoOriginLat,
+        originLng: _webDemoOriginLng,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _voiceStatusMessage = response.message;
+      });
+
+      await _speakWithGeminiOrDing(response.message);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(response.message)));
+    } on V3ApiException catch (error) {
+      if (!mounted) return;
+      final message = '음성 목적지 처리 실패: $error';
+      setState(() {
+        _voiceStatusMessage = message;
+      });
+      await _cueService.playDing();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingVoiceDestination = false;
+        });
+      }
+    }
   }
 
   Future<void> _speakCurrentStatusGuide() async {
-    final backendStatus = _isLoadingBackendHealth
-        ? '확인 중'
-        : (_backendHealthStatus?.isAvailable ?? false)
-            ? '연결 성공'
-            : '연결 실패';
-
-    final busArrivalStatus = _isLoadingBusArrivals
-        ? '불러오는 중'
-        : _busArrivalSummary?.statusLabel ?? '도착 정보 없음';
-
-    final rideRequestStatus = _isCreatingRideRequest
-        ? '요청 중'
-        : _isLoadingRideRequestStatus
-            ? '조회 중'
-            : _rideRequestStatusResult?.statusLabel ??
-                _rideRequestCreateResult?.statusLabel ??
-                _homeSnapshot?.rideRequestStatus.statusLabel ??
-                '요청 전';
-
-    final message = await _voiceGuideService.speakStatusGuide(
-      backendStatus: backendStatus,
-      busArrivalStatus: busArrivalStatus,
-      rideRequestStatus: rideRequestStatus,
-    );
-
-    if (!mounted) return;
+    final message = '안녕, 나는 ${widget.agentName}야. 내 말 잘 들려?';
 
     setState(() {
       _voiceStatusMessage = message;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-      ),
-    );
+    await _speakWithGeminiOrDing(message);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _speakWithGeminiOrDing(String message) async {
+    try {
+      final audioBytes = await _v3AgentApiClient.synthesizeSpeech(text: message);
+      await _cueService.playGeneratedSpeech(audioBytes);
+    } on V3ApiException {
+      await _cueService.playDing();
+    }
   }
 
   Future<void> _loadRideRequestStatus() async {
@@ -510,12 +560,18 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 24),
               _StatusCard(
                 title: '음성 안내 상태',
-                statusLabel: _isListening ? '입력 중' : '대기 중',
+                statusLabel: _isSubmittingVoiceDestination
+                    ? '경로 계산 중'
+                    : _isListening
+                        ? '입력 중'
+                        : '대기 중',
                 description: _voiceStatusMessage,
                 icon: Icons.volume_up_outlined,
                 semanticHint: _isListening
                     ? '현재 음성 입력을 기다리는 중입니다.'
-                    : '음성 입력이 시작되지 않았거나 종료된 상태입니다.',
+                    : _isSubmittingVoiceDestination
+                        ? '인식된 목적지를 에이전트에게 보내는 중입니다.'
+                        : '음성 입력이 시작되지 않았거나 종료된 상태입니다.',
               ),
               const SizedBox(height: 16),
               _StatusCard(

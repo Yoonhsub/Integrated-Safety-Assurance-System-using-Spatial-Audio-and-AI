@@ -1,14 +1,11 @@
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 class VoiceGuideService {
-  VoiceGuideService({SpeechToText? speechToText, FlutterTts? flutterTts})
-      : _speechToText = speechToText ?? SpeechToText(),
-        _flutterTts = flutterTts ?? FlutterTts();
+  VoiceGuideService({SpeechToText? speechToText})
+      : _speechToText = speechToText ?? SpeechToText();
 
   final SpeechToText _speechToText;
-  final FlutterTts _flutterTts;
 
   bool _isInitialized = false;
   String _lastRecognizedWords = '';
@@ -21,9 +18,6 @@ class VoiceGuideService {
     }
 
     _isInitialized = await _speechToText.initialize();
-    await _flutterTts.setLanguage('ko-KR');
-    await _flutterTts.setSpeechRate(0.5);
-    await _flutterTts.setPitch(1.0);
 
     return _isInitialized;
   }
@@ -60,25 +54,7 @@ class VoiceGuideService {
     return '인식된 목적지: $_lastRecognizedWords';
   }
 
-  Future<String> speakGuide(String message) async {
-    await _flutterTts.speak(message);
-    return message;
-  }
-
-    Future<String> speakStatusGuide({
-    required String backendStatus,
-    required String busArrivalStatus,
-    required String rideRequestStatus,
-  }) async {
-    final message =
-        '현재 백엔드 연결 상태는 $backendStatus 입니다. '
-        '버스 도착 정보는 $busArrivalStatus 상태입니다. '
-        '탑승 요청 상태는 $rideRequestStatus 입니다.';
-
-    return speakGuide(message);
-  }
-
-  Future<void> stopSpeaking() async {
-    await _flutterTts.stop();
+  Future<void> cancelListening() async {
+    await _speechToText.cancel();
   }
 }

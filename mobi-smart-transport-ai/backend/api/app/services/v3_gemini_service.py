@@ -5,6 +5,7 @@ import binascii
 import io
 import json
 import os
+import re
 import wave
 
 import httpx
@@ -12,9 +13,15 @@ import httpx
 
 _DEFAULT_FLASH_MODEL = "gemini-2.5-flash"
 _DEFAULT_PRO_MODEL = "gemini-2.5-pro"
-_DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
+_DEFAULT_PRO_TTS_MODEL = "gemini-2.5-pro-preview-tts"
+_DEFAULT_FLASH_TTS_MODEL = "gemini-3.1-flash-tts-preview"
+_LEGACY_FLASH_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 _DEFAULT_TTS_VOICE = "Sulafat"
 _MAX_REPLY_LENGTH = 500
+_GROUNDED_TRANSIT_RULE = (
+    "너는 교통 정보를 추측하지 않는다. 제공된 routePlan, arrivals, busLocations, "
+    "serviceStatus, destination resolution JSON에 있는 정보만 설명한다. 값이 없으면 없다고 말한다. "
+)
 _VISION_REQUIRED_TERMS = (
     "건너편",
     "오른쪽 정류장",
@@ -250,6 +257,7 @@ def generate_route_plan_reply(
     )
     instruction = (
         f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
+        f"{_GROUNDED_TRANSIT_RULE}"
         "You must not invent bus route numbers, stop names, arrival times, route IDs, node IDs, or directions. "
         "Only explain the provided RoutePlan JSON. If a field is missing or unknown, say it is unknown. "
         "입력으로 제공된 RoutePlan JSON에 있는 정보만 자연어로 설명해. "
@@ -312,6 +320,7 @@ def _route_plan_explanation_payload(route_plan: dict) -> dict:
                     "directionHint": raw_segment.get("directionHint"),
                     "arrivals": raw_segment.get("arrivals") if index == 0 else [],
                     "arrivalUnknown": raw_segment.get("arrivalUnknown"),
+                    "serviceStatus": raw_segment.get("serviceStatus"),
                 }
             )
     return {
@@ -340,6 +349,7 @@ def generate_dynamic_response(
     
     system_instruction = (
         f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
+        f"{_GROUNDED_TRANSIT_RULE}"
         "한국어 반말로 짧고 명확하게 답해. 절대 구구절절 설명하지 말고 2문장 이내로 말해. "
         "제공된 실시간 공공 API 데이터(context_data)에 기반해서만 대답하고, 정보가 부족하면 "
         "솔직하게 정보가 없다고 말해."
@@ -368,7 +378,16 @@ def generate_dynamic_response(
 def _without_vision_claims(reply: str | None) -> str | None:
     if not reply or any(term in reply for term in _VISION_REQUIRED_TERMS):
         return None
-    return reply
+    cleaned = _remove_mobi_user_address(reply)
+    return cleaned or None
+
+
+def _remove_mobi_user_address(reply: str) -> str:
+    if "모비야" not in reply:
+        return reply
+    cleaned = re.sub(r"^(?:그래|네|응)?[\s,，]*모비야[.!?]?\s*", "", reply).strip()
+    cleaned = re.sub(r"(?<!나는 )모비야\s*[,，]\s*", "", cleaned).strip()
+    return cleaned
 
 
 def synthesize_tts_wav(*, text: str) -> bytes | None:
@@ -378,9 +397,17 @@ def synthesize_tts_wav(*, text: str) -> bytes | None:
     if not api_key:
         return None
 
-    model = _model_from_env("GEMINI_TTS_MODEL", _DEFAULT_TTS_MODEL)
+    configured_model = os.getenv("GEMINI_TTS_MODEL", "").strip().removeprefix("models/")
+    candidate_models = _dedupe(
+        [
+            configured_model,
+            _DEFAULT_PRO_TTS_MODEL,
+            _DEFAULT_FLASH_TTS_MODEL,
+            _LEGACY_FLASH_TTS_MODEL,
+        ]
+    )
+
     voice = os.getenv("GEMINI_TTS_VOICE", _DEFAULT_TTS_VOICE).strip() or _DEFAULT_TTS_VOICE
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "contents": [
             {
@@ -407,23 +434,31 @@ def synthesize_tts_wav(*, text: str) -> bytes | None:
         },
     }
 
-    try:
-        response = httpx.post(
-            endpoint,
-            headers={"x-goog-api-key": api_key},
-            json=payload,
-            timeout=12.0,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError:
-        return None
+    for model in candidate_models:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            response = httpx.post(
+                endpoint,
+                headers={"x-goog-api-key": api_key},
+                json=payload,
+                timeout=12.0,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            continue
 
-    pcm = _extract_pcm(response.json())
-    return _pcm_to_wav(pcm) if pcm else None
+        pcm = _extract_pcm(response.json())
+        if pcm:
+            return _pcm_to_wav(pcm)
+    return None
 
 
 def _model_from_env(name: str, default: str) -> str:
     return (os.getenv(name, default).strip() or default).removeprefix("models/")
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _generate(
@@ -523,7 +558,7 @@ def _extract_pcm(payload: dict) -> bytes | None:
     parts = content.get("parts")
     if not isinstance(parts, list) or not parts:
         return None
-    inline_data = parts[0].get("inlineData")
+    inline_data = parts[0].get("inlineData") or parts[0].get("inline_data")
     if not isinstance(inline_data, dict):
         return None
     encoded_data = inline_data.get("data")

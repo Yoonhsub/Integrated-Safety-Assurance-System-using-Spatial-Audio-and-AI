@@ -60,6 +60,19 @@ class AudioHapticCueService {
     }
   }
 
+
+  Future<void> playDing({bool vibrate = true}) async {
+    await stopCue();
+    if (vibrate) {
+      await HapticFeedback.selectionClick();
+    }
+    try {
+      await SystemSound.play(SystemSoundType.alert);
+    } catch (_) {
+      await SystemSound.play(SystemSoundType.click);
+    }
+  }
+
   Future<void> speakLocal(String message) async {
     if (message.trim().isEmpty) return;
     await _configureTts();

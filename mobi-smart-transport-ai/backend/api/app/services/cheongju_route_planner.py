@@ -4,6 +4,7 @@ import os
 from typing import Callable, Iterable
 
 from app.schemas.v3 import (
+    DestinationCandidateType,
     DestinationResolveResponse,
     DestinationResolveStatus,
     FallbackSource,
@@ -28,6 +29,7 @@ from app.services.direct_bus_planner import (
 from app.services.direct_bus_planner import DirectBusPlanner
 from app.services.route_direction_resolver import RouteDirectionResolver, sanitize_guidance_text
 from app.services.route_ranker import RouteRanker
+from app.services.route_service_status import evaluate_route_service_status
 from app.services.route_stop_sequence_cache import RouteSequence, RouteStopNode, RouteStopSequenceCache
 from app.services.transfer_bus_planner import TransferBusPlanner
 from services.public_data.public_data_client import BusRouteService
@@ -85,6 +87,18 @@ class CheongjuRoutePlanner:
                 destination=destination,
                 heard_text=heard_text,
                 question=destination.question,
+            )
+        near_message = _near_destination_message(
+            destination,
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+        )
+        if near_message is not None:
+            return self._empty_response(
+                status=RoutePlanStatus.ALREADY_NEAR_DESTINATION,
+                destination=destination,
+                heard_text=heard_text,
+                question=near_message,
             )
         if not destination.originStops:
             return self._empty_response(
@@ -198,6 +212,7 @@ class CheongjuRoutePlanner:
             score=0,
             segments=segments,
             fallbackSource=raw.fallback_source,
+            serviceStatus=segments[0].serviceStatus if segments else None,
         )
 
     def _to_segment(
@@ -208,6 +223,7 @@ class CheongjuRoutePlanner:
     ) -> RoutePlanSegment:
         direction_hint = self._direction_resolver.direction_hint(sequence, board.node, alight.node)
         arrivals, arrival_source = self._arrivals_for(board.node.stop_id, sequence.route_no, sequence.route_id)
+        service_status = evaluate_route_service_status(route_no=sequence.route_no, arrivals=arrivals)
         return RoutePlanSegment(
             routeNo=sequence.route_no,
             routeId=sequence.route_id,
@@ -219,6 +235,7 @@ class CheongjuRoutePlanner:
             arrivalSource=arrival_source,
             arrivalUnknown=not arrivals,
             estimatedMinutes=min((arrival.arrivalMinutes for arrival in arrivals), default=None),
+            serviceStatus=service_status,
         )
 
     def _arrivals_for(
@@ -361,9 +378,57 @@ def _boarding_instruction(segment: RoutePlanSegment) -> str:
     arrival_text = (
         f" 지금 기준 첫 차는 약 {first_arrival}분 뒤로 조회됐어."
         if first_arrival is not None
+        else f" {segment.serviceStatus.message}"
+        if segment.serviceStatus is not None
         else " 첫 차 도착정보는 아직 확인되지 않았어."
     )
     return f"{segment.boardStop.stopName}, {direction} 정류장에서 {segment.routeNo}번을 타면 돼.{arrival_text}"
+
+
+def _near_destination_message(
+    destination: DestinationResolveResponse,
+    *,
+    origin_lat: float | None,
+    origin_lng: float | None,
+) -> str | None:
+    candidate = destination.topCandidate
+    if (
+        candidate is None
+        or candidate.latitude is None
+        or candidate.longitude is None
+        or origin_lat is None
+        or origin_lng is None
+    ):
+        return None
+
+    threshold = _near_destination_threshold(candidate.type)
+    distance = _distance_meters(origin_lat, origin_lng, candidate.latitude, candidate.longitude)
+    if distance > threshold:
+        return None
+    rounded_distance = max(0, int(round(distance / 10.0) * 10))
+    return f"이미 {candidate.name} 근처야. 도보로 약 {rounded_distance}m 이동하면 돼. 따로 버스를 탈 필요는 없어."
+
+
+def _near_destination_threshold(candidate_type: DestinationCandidateType) -> float:
+    env_name = (
+        "CHEONGJU_NEAR_DESTINATION_STOP_METERS"
+        if candidate_type == DestinationCandidateType.STOP
+        else "CHEONGJU_NEAR_DESTINATION_PLACE_METERS"
+    )
+    default = 80.0 if candidate_type == DestinationCandidateType.STOP else 120.0
+    try:
+        return max(0.0, float(os.getenv(env_name, str(default))))
+    except ValueError:
+        return default
+
+
+def _distance_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    d_lat = radians(lat2 - lat1)
+    d_lng = radians(lng2 - lng1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lng / 2) ** 2
+    return 2 * 6371000.0 * asin(sqrt(a))
 
 
 def _strongest_source(sources: Iterable[FallbackSource]) -> FallbackSource:

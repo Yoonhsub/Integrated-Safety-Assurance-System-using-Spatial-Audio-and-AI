@@ -14,17 +14,24 @@ from app.schemas.v3 import (
     RouteRecommendResponse,
     RoutePlanningEvidence,
     RoutePlanResponse,
+    V3BusPosition,
     V3BusArrival,
     V3BusArrivalsResponse,
+    V3LiveRouteMarker,
+    V3LiveRouteStatusResponse,
+    utc_now,
 )
 import os
 
-from services.public_data.public_data_client import BusArrivalsService
+from services.public_data.public_data_client import BusArrivalsService, BusLocationService
 
 from app.services import cheongju_route_catalog
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
 from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
+from app.services.cheongju_route_planner import _mock_route_sequences
 from app.services.destination_candidate_resolver import DestinationCandidateResolver
+from app.services.route_service_status import evaluate_route_service_status
+from app.services.route_stop_sequence_cache import RouteStopNode
 from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
 from app.services.v3_gemini_service import generate_route_plan_summary
 
@@ -329,7 +336,7 @@ def arrivals(
         mock = _mock_response(normalized_stop_id, route_no=routeNo)
         if mock is not None:
             return mock
-        return V3BusArrivalsResponse(
+        return _arrivals_response(
             stopId=normalized_stop_id,
             routeNo=routeNo,
             arrivals=[],
@@ -353,6 +360,127 @@ def arrivals(
     return _from_gateway_response(gateway_result.response, route_no=routeNo, fallback_source=FallbackSource.MOCK)
 
 
+@router.get("/live-route-status", response_model=V3LiveRouteStatusResponse)
+def live_route_status(
+    routeNo: str = Query(min_length=1, pattern=r"\S"),
+    routeId: str = Query(min_length=1, pattern=r"\S"),
+    boardStopId: str = Query(min_length=1, pattern=r"\S"),
+    alightStopId: str = Query(min_length=1, pattern=r"\S"),
+    userLat: float | None = Query(default=None, ge=-90, le=90),
+    userLng: float | None = Query(default=None, ge=-180, le=180),
+    boardLat: float | None = Query(default=None, ge=-90, le=90),
+    boardLng: float | None = Query(default=None, ge=-180, le=180),
+    alightLat: float | None = Query(default=None, ge=-90, le=90),
+    alightLng: float | None = Query(default=None, ge=-180, le=180),
+    mode: DataMode | None = Query(default=None),
+) -> V3LiveRouteStatusResponse:
+    """Return panel-ready route data without fabricating unavailable positions."""
+
+    _validate_origin_pair(userLat, userLng)
+    _validate_origin_pair(boardLat, boardLng)
+    _validate_origin_pair(alightLat, alightLng)
+    live = _resolve_live(mode)
+    arrivals_response = _route_plan_arrivals(
+        boardStopId,
+        route_no=routeNo,
+        route_id=routeId,
+        live=live,
+        mode=mode,
+    )
+    service_status = arrivals_response.serviceStatus or evaluate_route_service_status(
+        route_no=routeNo,
+        arrivals=arrivals_response.arrivals,
+    )
+    route_nodes = _route_nodes(route_no=routeNo, route_id=routeId)
+    board_node = route_nodes.get(boardStopId)
+    alight_node = route_nodes.get(alightStopId)
+    resolved_board = _coordinate_pair(boardLat, boardLng) or _node_coordinate(board_node)
+    resolved_alight = _coordinate_pair(alightLat, alightLng) or _node_coordinate(alight_node)
+
+    markers: list[V3LiveRouteMarker] = []
+    if userLat is not None and userLng is not None:
+        markers.append(V3LiveRouteMarker(type="USER", label="내 현재 위치", latitude=userLat, longitude=userLng))
+    if resolved_board is not None:
+        markers.append(V3LiveRouteMarker(type="BOARD_STOP", label="승차 정류장", latitude=resolved_board[0], longitude=resolved_board[1]))
+    if resolved_alight is not None:
+        markers.append(V3LiveRouteMarker(type="ALIGHT_STOP", label="하차 정류장", latitude=resolved_alight[0], longitude=resolved_alight[1]))
+        markers.append(V3LiveRouteMarker(type="DESTINATION", label="목적지 근처", latitude=resolved_alight[0], longitude=resolved_alight[1]))
+
+    warnings: list[str] = []
+    bus_positions: list[V3BusPosition] = []
+    if live:
+        try:
+            locations = BusLocationService().get_locations("33010", routeId).locations
+        except Exception:
+            locations = []
+        for location in locations:
+            node = route_nodes.get(location.nodeId)
+            coordinate = _node_coordinate(node)
+            position = V3BusPosition(
+                busId=location.vehicleno or None,
+                routeNo=routeNo,
+                routeId=routeId,
+                nodeId=location.nodeId or None,
+                nodeName=location.nodeNm or None,
+                latitude=coordinate[0] if coordinate else None,
+                longitude=coordinate[1] if coordinate else None,
+            )
+            bus_positions.append(position)
+            if coordinate is not None:
+                markers.append(
+                    V3LiveRouteMarker(
+                        type="BUS",
+                        label=f"{routeNo}번 버스",
+                        latitude=coordinate[0],
+                        longitude=coordinate[1],
+                        busId=position.busId,
+                    )
+                )
+    if not bus_positions:
+        warnings.append("현재 버스 위치는 아직 조회되지 않았어.")
+    if resolved_board is None or resolved_alight is None:
+        warnings.append("일부 정류장 좌표를 확인하지 못했어.")
+
+    return V3LiveRouteStatusResponse(
+        routeNo=routeNo,
+        routeId=routeId,
+        boardStopId=boardStopId,
+        alightStopId=alightStopId,
+        markers=markers,
+        arrivals=arrivals_response.arrivals,
+        busPositions=bus_positions,
+        serviceStatus=service_status,
+        warnings=list(dict.fromkeys(warnings)),
+        updatedAt=utc_now(),
+        fallbackSource=arrivals_response.fallbackSource,
+    )
+
+
+def _route_nodes(*, route_no: str, route_id: str) -> dict[str, RouteStopNode]:
+    sequences = _mock_route_sequences()
+    selected = next((sequence for sequence in sequences if sequence.route_id == route_id), None)
+    if selected is None:
+        selected = next((sequence for sequence in sequences if sequence.route_no == route_no), None)
+    if selected is None:
+        return {}
+    return {node.stop_id: node for node in selected.nodes}
+
+
+def _coordinate_pair(
+    latitude: float | None,
+    longitude: float | None,
+) -> tuple[float, float] | None:
+    if latitude is None or longitude is None:
+        return None
+    return latitude, longitude
+
+
+def _node_coordinate(node: RouteStopNode | None) -> tuple[float, float] | None:
+    if node is None or node.latitude is None or node.longitude is None:
+        return None
+    return node.latitude, node.longitude
+
+
 def _route_plan_arrivals(
     stop_id: str,
     *,
@@ -368,7 +496,7 @@ def _route_plan_arrivals(
         mock = _mock_response(normalized_stop_id, route_no=route_no, route_id=route_id)
         if mock is not None:
             return mock
-        return V3BusArrivalsResponse(
+        return _arrivals_response(
             stopId=normalized_stop_id,
             routeNo=route_no,
             arrivals=[],
@@ -396,7 +524,7 @@ def _mock_response(
     if catalog is None:
         return None
     arrivals = _filter_by_route(catalog, route_no, route_id=route_id)
-    return V3BusArrivalsResponse(
+    return _arrivals_response(
         stopId=stop_id,
         routeNo=route_no,
         arrivals=arrivals,
@@ -560,9 +688,25 @@ def _from_gateway_response(
                 congestion=item.congestion.value if item.congestion else None,
             )
         )
-    return V3BusArrivalsResponse(
+    return _arrivals_response(
         stopId=response.stopId,
         routeNo=route_no,
         arrivals=arrivals,
         fallbackSource=fallback_source,
+    )
+
+
+def _arrivals_response(
+    *,
+    stopId: str,
+    routeNo: str | None,
+    arrivals: list[V3BusArrival],
+    fallbackSource: FallbackSource,
+) -> V3BusArrivalsResponse:
+    return V3BusArrivalsResponse(
+        stopId=stopId,
+        routeNo=routeNo,
+        arrivals=arrivals,
+        fallbackSource=fallbackSource,
+        serviceStatus=evaluate_route_service_status(route_no=routeNo, arrivals=arrivals),
     )
