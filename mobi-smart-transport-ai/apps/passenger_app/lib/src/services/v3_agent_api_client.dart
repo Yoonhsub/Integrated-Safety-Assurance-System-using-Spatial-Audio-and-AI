@@ -223,6 +223,41 @@ class V3AgentApiClient {
     return V3LiveRouteStatusResponse.fromJson(json);
   }
 
+  /// 실시간 지도 패널용 통합 상태(/navigation/live-status).
+  /// 도착·버스위치·보행경로·근처정류장·운행상태를 한 번에 받는다.
+  Future<V3LiveStatus> liveStatus({
+    required String routeNo,
+    required String boardStopId,
+    String? routeId,
+    String? alightStopId,
+    String? sessionId,
+    double? userLat,
+    double? userLng,
+    double? boardLat,
+    double? boardLng,
+    double? alightLat,
+    double? alightLng,
+    String? destName,
+    String? mode,
+  }) async {
+    final query = <String, String>{
+      'routeNo': routeNo,
+      'boardStopId': boardStopId,
+    };
+    if (routeId != null && routeId.isNotEmpty) query['routeId'] = routeId;
+    if (alightStopId != null && alightStopId.isNotEmpty) {
+      query['alightStopId'] = alightStopId;
+    }
+    if (sessionId != null && sessionId.isNotEmpty) query['sessionId'] = sessionId;
+    _addCoordinatePair(query, 'user', userLat, userLng);
+    _addCoordinatePair(query, 'board', boardLat, boardLng);
+    _addCoordinatePair(query, 'alight', alightLat, alightLng);
+    if (destName != null && destName.isNotEmpty) query['destName'] = destName;
+    if (mode != null) query['mode'] = mode;
+    final json = await _getJson('/navigation/live-status', query);
+    return V3LiveStatus.fromJson(json);
+  }
+
   Future<V3MockGeofenceResponse> mockGeofence({
     required String sessionId,
     required String event,

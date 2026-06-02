@@ -1172,3 +1172,169 @@ Map<String, dynamic>? _mapValue(Object? value) {
   }
   return null;
 }
+
+// ---- 실시간 지도/내비게이션 모델 (/navigation/live-status, /map/*) ----
+
+class V3GeoPoint {
+  const V3GeoPoint({required this.latitude, required this.longitude});
+  final double latitude;
+  final double longitude;
+  factory V3GeoPoint.fromJson(Map<String, dynamic> json) => V3GeoPoint(
+        latitude: _doubleValue(json['latitude']),
+        longitude: _doubleValue(json['longitude']),
+      );
+}
+
+class V3WalkingInstruction {
+  const V3WalkingInstruction(
+      {required this.text, this.distanceMeters, this.durationSeconds});
+  final String text;
+  final double? distanceMeters;
+  final int? durationSeconds;
+  factory V3WalkingInstruction.fromJson(Map<String, dynamic> json) =>
+      V3WalkingInstruction(
+        text: _stringValue(json['text'], fallback: ''),
+        distanceMeters: _nullableDouble(json['distanceMeters']),
+        durationSeconds: _nullableInt(json['durationSeconds']),
+      );
+}
+
+class V3WalkingRoute {
+  const V3WalkingRoute({
+    required this.status,
+    required this.provider,
+    required this.polyline,
+    required this.instructions,
+    required this.fallbackUsed,
+    this.totalDistanceMeters,
+    this.totalDurationSeconds,
+    this.message,
+  });
+  final String status;
+  final String provider;
+  final List<V3GeoPoint> polyline;
+  final List<V3WalkingInstruction> instructions;
+  final bool fallbackUsed;
+  final double? totalDistanceMeters;
+  final int? totalDurationSeconds;
+  final String? message;
+
+  factory V3WalkingRoute.fromJson(Map<String, dynamic> json) {
+    final rawPoly = json['polyline'];
+    final rawInstr = json['instructions'];
+    return V3WalkingRoute(
+      status: _stringValue(json['status'], fallback: 'ERROR'),
+      provider: _stringValue(json['provider'], fallback: ''),
+      polyline: rawPoly is List
+          ? rawPoly
+              .whereType<Map>()
+              .map((e) => V3GeoPoint.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+          : const <V3GeoPoint>[],
+      instructions: rawInstr is List
+          ? rawInstr
+              .whereType<Map>()
+              .map((e) =>
+                  V3WalkingInstruction.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+          : const <V3WalkingInstruction>[],
+      fallbackUsed: json['fallbackUsed'] == true,
+      totalDistanceMeters: _nullableDouble(json['totalDistanceMeters']),
+      totalDurationSeconds: _nullableInt(json['totalDurationSeconds']),
+      message: _nullableString(json['message']),
+    );
+  }
+}
+
+class V3NearbyStop {
+  const V3NearbyStop({
+    required this.stopId,
+    required this.stopName,
+    required this.latitude,
+    required this.longitude,
+    required this.distanceMeters,
+    required this.source,
+  });
+  final String stopId;
+  final String stopName;
+  final double latitude;
+  final double longitude;
+  final double distanceMeters;
+  final String source;
+  factory V3NearbyStop.fromJson(Map<String, dynamic> json) => V3NearbyStop(
+        stopId: _stringValue(json['stopId'], fallback: ''),
+        stopName: _stringValue(json['stopName'], fallback: ''),
+        latitude: _doubleValue(json['latitude']),
+        longitude: _doubleValue(json['longitude']),
+        distanceMeters: _doubleValue(json['distanceMeters']),
+        source: _stringValue(json['source'], fallback: 'PUBLIC_API'),
+      );
+}
+
+class V3LiveStatus {
+  const V3LiveStatus({
+    required this.routeNo,
+    required this.nearbyStops,
+    required this.arrivals,
+    required this.busPositions,
+    required this.congestion,
+    required this.nextRefreshSeconds,
+    required this.warnings,
+    required this.fallbackSource,
+    this.routeId,
+    this.userLocation,
+    this.selectedBoardStop,
+    this.selectedAlightStop,
+    this.walkingRouteToBoardStop,
+    this.serviceStatus,
+    this.lastUpdatedAt,
+  });
+  final String routeNo;
+  final String? routeId;
+  final V3GeoPoint? userLocation;
+  final List<V3NearbyStop> nearbyStops;
+  final V3NearbyStop? selectedBoardStop;
+  final V3NearbyStop? selectedAlightStop;
+  final V3WalkingRoute? walkingRouteToBoardStop;
+  final List<V3BusArrival> arrivals;
+  final List<V3BusPosition> busPositions;
+  final V3RouteServiceStatus? serviceStatus;
+  final String congestion;
+  final DateTime? lastUpdatedAt;
+  final int nextRefreshSeconds;
+  final List<String> warnings;
+  final String fallbackSource;
+
+  factory V3LiveStatus.fromJson(Map<String, dynamic> json) {
+    List<T> parseList<T>(Object? raw, T Function(Map<String, dynamic>) f) =>
+        raw is List
+            ? raw
+                .whereType<Map>()
+                .map((e) => f(Map<String, dynamic>.from(e)))
+                .toList()
+            : <T>[];
+    final board = _mapValue(json['selectedBoardStop']);
+    final alight = _mapValue(json['selectedAlightStop']);
+    final walking = _mapValue(json['walkingRouteToBoardStop']);
+    final user = _mapValue(json['userLocation']);
+    return V3LiveStatus(
+      routeNo: _stringValue(json['routeNo'], fallback: ''),
+      routeId: _nullableString(json['routeId']),
+      userLocation: user == null ? null : V3GeoPoint.fromJson(user),
+      nearbyStops: parseList(json['nearbyStops'], V3NearbyStop.fromJson),
+      selectedBoardStop: board == null ? null : V3NearbyStop.fromJson(board),
+      selectedAlightStop: alight == null ? null : V3NearbyStop.fromJson(alight),
+      walkingRouteToBoardStop:
+          walking == null ? null : V3WalkingRoute.fromJson(walking),
+      arrivals: parseList(json['arrivals'], V3BusArrival.fromJson),
+      busPositions: parseList(json['busPositions'], V3BusPosition.fromJson),
+      serviceStatus:
+          V3RouteServiceStatus.fromNullableJson(_mapValue(json['serviceStatus'])),
+      congestion: _stringValue(json['congestion'], fallback: '미제공'),
+      lastUpdatedAt: _dateTimeValue(json['lastUpdatedAt']),
+      nextRefreshSeconds: _nullableInt(json['nextRefreshSeconds']) ?? 60,
+      warnings: _stringList(json['warnings']),
+      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'ERROR'),
+    );
+  }
+}

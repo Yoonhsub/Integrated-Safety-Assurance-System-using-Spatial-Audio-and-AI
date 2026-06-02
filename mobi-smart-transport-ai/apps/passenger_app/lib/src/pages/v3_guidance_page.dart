@@ -60,11 +60,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   HeadTrackingDebugSnapshot _headTracking =
       HeadTrackingDebugSnapshot.disabled();
   Timer? _liveRouteTimer;
-  V3LiveRouteStatusResponse? _liveRouteStatus;
+  V3LiveStatus? _liveStatus;
   Position? _lastRoutePosition;
   String? _liveRouteError;
   bool _liveRoutePanelVisible = false;
   bool _isLiveRouteLoading = false;
+  // 사용자가 '길찾기 중지'를 누르면 지도/경로 UI를 끄고 폴링을 멈춘 상태로 표시한다.
+  // 새 목적지 탐색이 시작되면 다시 false로 풀린다.
+  bool _navStopped = false;
   // 앱 진입 시 1회 확보해 두는 실제 사용자 위치. 경로 탐색마다 새로 받지 않고 재사용한다.
   Position? _cachedPosition;
   // 위치 권한이 거부/불가해 실제 위치를 쓸 수 없는 상태.
@@ -362,8 +365,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _isRoutePlanning = true;
       _routePlanningStatus = _routePlanningMessage;
       _liveRoutePanelVisible = false;
-      _liveRouteStatus = null;
+      _liveStatus = null;
       _liveRouteError = null;
+      // 새 목적지 탐색이 시작되면 '길찾기 중지' 상태를 해제한다.
+      _navStopped = false;
     });
     await _cueService.playDing();
 
@@ -388,52 +393,60 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _stopLiveRoutePolling(clearStatus: true);
       return;
     }
+    // 새 경로가 확정되면 '길찾기 중지' 상태를 해제하고 실시간 추적을 시작한다.
     _liveRouteTimer?.cancel();
     if (!mounted) return;
     setState(() {
+      _navStopped = false;
       _liveRoutePanelVisible = true;
-      _liveRouteStatus = null;
+      _liveStatus = null;
       _liveRouteError = null;
-      _lastRoutePosition = position;
+      _lastRoutePosition = position ?? _cachedPosition;
     });
-    await _refreshLiveRouteStatus();
-    if (!mounted || !_liveRoutePanelVisible) return;
-    _liveRouteTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (!_isLiveRouteLoading) {
-        unawaited(_refreshLiveRouteStatus());
+    await _refreshNavStatus();
+    if (!mounted || !_liveRoutePanelVisible || _navStopped) return;
+    // 1분(60초) 단위 최신화. 서버에도 30초 캐시가 있어 과호출을 막는다.
+    _liveRouteTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!_isLiveRouteLoading && _liveRoutePanelVisible && !_navStopped) {
+        unawaited(_refreshNavStatus());
       }
     });
   }
 
-  Future<void> _refreshLiveRouteStatus() async {
-    if (_isLiveRouteLoading) return;
+  Future<void> _refreshNavStatus() async {
+    if (_isLiveRouteLoading || _navStopped) return;
     final plan = _lastRoutePlan?.recommendedPlan;
     if (plan == null || plan.segments.isEmpty) return;
     final segment = plan.segments.first;
+    // 사용자 위치는 폴링마다 가능한 한 최신값을 사용한다(서버 호출은 60초로 제한).
+    final userPos = _cachedPosition ?? _lastRoutePosition;
     setState(() {
       _isLiveRouteLoading = true;
     });
     try {
-      final status = await _client.liveRouteStatus(
+      final status = await _client.liveStatus(
         routeNo: segment.routeNo,
         routeId: segment.routeId,
         boardStopId: segment.boardStop.stopId,
         alightStopId: segment.alightStop.stopId,
-        userLat: _lastRoutePosition?.latitude,
-        userLng: _lastRoutePosition?.longitude,
+        sessionId: _sessionId,
+        userLat: userPos?.latitude,
+        userLng: userPos?.longitude,
         boardLat: segment.boardStop.latitude,
         boardLng: segment.boardStop.longitude,
         alightLat: segment.alightStop.latitude,
         alightLng: segment.alightStop.longitude,
+        destName: segment.alightStop.stopName,
         mode: widget.dataMode,
       );
-      if (!mounted || !_liveRoutePanelVisible) return;
+      if (!mounted || !_liveRoutePanelVisible || _navStopped) return;
       setState(() {
-        _liveRouteStatus = status;
+        _liveStatus = status;
         _liveRouteError = null;
       });
     } on V3ApiException catch (error) {
-      if (!mounted || !_liveRoutePanelVisible) return;
+      if (!mounted || !_liveRoutePanelVisible || _navStopped) return;
+      // 실패해도 마지막 갱신 결과는 유지하고 경고만 표시한다.
       setState(() {
         _liveRouteError = error.toString();
       });
@@ -446,6 +459,22 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
   }
 
+  /// '길찾기 중지': 지도/실시간 패널을 끄고 1분 폴링을 멈춘다.
+  /// 새 목적지를 말하면 _activateLiveRoutePanel에서 다시 시작된다.
+  void _stopNavigation() {
+    _liveRouteTimer?.cancel();
+    _liveRouteTimer = null;
+    if (!mounted) return;
+    setState(() {
+      _navStopped = true;
+      _liveRoutePanelVisible = false;
+      _isLiveRouteLoading = false;
+      _liveStatus = null;
+      _liveRouteError = null;
+      _routePlanningStatus = null;
+    });
+  }
+
   void _stopLiveRoutePolling({bool clearStatus = false}) {
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
@@ -454,7 +483,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _liveRoutePanelVisible = false;
       _isLiveRouteLoading = false;
       if (clearStatus) {
-        _liveRouteStatus = null;
+        _liveStatus = null;
         _liveRouteError = null;
         _lastRoutePosition = null;
       }
@@ -619,7 +648,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _latestGeofenceMessage = null;
         _routePlanningStatus = null;
         _liveRoutePanelVisible = false;
-        _liveRouteStatus = null;
+        _navStopped = false;
+        _liveStatus = null;
         _liveRouteError = null;
         _lastRoutePosition = null;
         _isAgentTraceExpanded = false;
@@ -714,15 +744,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                           : () => _ensureLocation(forceRequest: true),
                     ),
                   ],
-                  if (_liveRoutePanelVisible) ...[
+                  if (_liveRoutePanelVisible && !_navStopped) ...[
                     const SizedBox(height: 12),
-                    _LiveRouteStatusCard(
-                      status: _liveRouteStatus,
+                    _RealtimeNavCard(
+                      status: _liveStatus,
                       routePlan: _lastRoutePlan,
+                      userPosition: _cachedPosition ?? _lastRoutePosition,
                       isLoading: _isLiveRouteLoading,
                       errorMessage: _liveRouteError,
-                      onClose: () => _stopLiveRoutePolling(clearStatus: true),
+                      onStop: _stopNavigation,
                     ),
+                  ],
+                  if (_navStopped) ...[
+                    const SizedBox(height: 12),
+                    _NavStoppedNotice(),
                   ],
                   const SizedBox(height: 12),
                   _UtteranceCard(
@@ -1123,19 +1158,36 @@ class _LocationNeededBanner extends StatelessWidget {
   }
 }
 
-class _LiveRouteStatusCard extends StatelessWidget {
-  const _LiveRouteStatusCard({
+class _NavStoppedNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text(
+          '길찾기를 중지했어. 지도 갱신을 멈췄어. 새 목적지를 말하면 다시 시작할게.',
+        ),
+      ),
+    );
+  }
+}
+
+class _RealtimeNavCard extends StatelessWidget {
+  const _RealtimeNavCard({
     required this.status,
     required this.routePlan,
+    required this.userPosition,
     required this.isLoading,
-    required this.onClose,
+    required this.onStop,
     this.errorMessage,
   });
 
-  final V3LiveRouteStatusResponse? status;
+  final V3LiveStatus? status;
   final V3RoutePlanResponse? routePlan;
+  final Position? userPosition;
   final bool isLoading;
-  final VoidCallback onClose;
+  final VoidCallback onStop;
   final String? errorMessage;
 
   @override
@@ -1143,23 +1195,43 @@ class _LiveRouteStatusCard extends StatelessWidget {
     final plan = routePlan?.recommendedPlan;
     final segment =
         plan?.segments.isNotEmpty == true ? plan!.segments.first : null;
+    final s = status;
     final firstArrival =
-        status?.arrivals.isNotEmpty == true ? status!.arrivals.first : null;
-    final serviceStatus = status?.serviceStatus ?? segment?.serviceStatus;
+        (s != null && s.arrivals.isNotEmpty) ? s.arrivals.first : null;
+    final serviceStatus = s?.serviceStatus ?? segment?.serviceStatus;
+    final walking = s?.walkingRouteToBoardStop;
+
+    final destName =
+        plan?.destinationName ?? segment?.alightStop.stopName ?? '목적지';
+    final routeNo = segment?.routeNo ?? s?.routeNo ?? '미확인';
+    final boardName = s?.selectedBoardStop?.stopName ??
+        segment?.boardStop.stopName ??
+        '미확인';
+    final alightName = s?.selectedAlightStop?.stopName ??
+        segment?.alightStop.stopName ??
+        '미확인';
     final eta =
         firstArrival == null ? '미확인' : '${firstArrival.arrivalMinutes}분 뒤';
-    final remainingStops = firstArrival?.remainingStops == null
+    final remaining = firstArrival?.remainingStops == null
         ? '미확인'
         : '${firstArrival!.remainingStops}정류장 전';
-    final congestion = firstArrival?.congestion ?? '미제공';
-    final markers = status?.markers ?? const <V3LiveRouteMarker>[];
-    final busPositionMessage = status?.busPositions.isEmpty != false
+    final congestion = s?.congestion ?? '미제공';
+    final walkText = (walking == null || walking.totalDistanceMeters == null)
+        ? '미확인'
+        : '약 ${walking.totalDistanceMeters!.round()}m · 약 ${(((walking.totalDurationSeconds ?? 0) / 60).ceil()).clamp(1, 999)}분'
+            '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
+    final busMsg = (s == null || s.busPositions.isEmpty)
         ? '현재 버스 위치는 아직 조회되지 않았어.'
-        : '현재 ${status!.busPositions.length}대의 버스 위치를 조회했어.';
+        : '현재 ${s.busPositions.length}대의 버스 위치를 조회했어.';
+    final updated = s?.lastUpdatedAt;
+    final updatedText = updated == null ? '미확인' : _hhmm(updated.toLocal());
+
+    final markers = _buildNavMarkers(s, userPosition, segment);
+    final walkPolyline = walking?.polyline ?? const <V3GeoPoint>[];
 
     return Semantics(
       container: true,
-      label: '실시간 경로 상태 패널',
+      label: '실시간 길찾기 패널',
       child: Card(
         color: Theme.of(context)
             .colorScheme
@@ -1172,11 +1244,11 @@ class _LiveRouteStatusCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.route_outlined),
+                  const Icon(Icons.navigation_outlined),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '실시간 경로 상태',
+                      '실시간 길찾기',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
@@ -1184,88 +1256,98 @@ class _LiveRouteStatusCard extends StatelessWidget {
                   ),
                   if (isLoading)
                     const Padding(
-                      padding: EdgeInsets.only(right: 8),
+                      padding: EdgeInsets.only(right: 4),
                       child: SizedBox.square(
                         dimension: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                     ),
-                  IconButton(
-                    tooltip: '실시간 경로 패널 닫기',
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close),
-                  ),
                 ],
               ),
-              if (segment == null)
-                const Text('확정된 경로가 없어.')
-              else ...[
-                Text(
-                  '${segment.routeNo}번 · ${plan!.destinationName}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+              const SizedBox(height: 8),
+              // 길찾기 중지: 지도/경로 UI를 끄고 1분 폴링을 멈춘다.
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onStop,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('길찾기 중지'),
                 ),
-                const SizedBox(height: 8),
-                _LiveMetric(label: '승차', value: segment.boardStop.stopName),
-                _LiveMetric(label: '하차', value: segment.alightStop.stopName),
-                _LiveMetric(label: '목적지', value: plan.destinationName),
-                _LiveMetric(label: '도착 예정', value: eta),
-                _LiveMetric(label: '남은 정류장', value: remainingStops),
-                _LiveMetric(label: '혼잡도', value: congestion),
-                if (serviceStatus != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    serviceStatus.message,
-                    style: TextStyle(
-                      color: serviceStatus.operatingNow
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.error,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '실제 지도 타일이 아닌 간이 위치도',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 180,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant),
+                  ),
+                  child: markers.isEmpty
+                      ? const Center(child: Text('표시할 위치 좌표가 없어.'))
+                      : CustomPaint(
+                          painter: _NavMapPainter(markers, walkPolyline),
+                          child: const SizedBox.expand(),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                children: [
+                  for (final type in markers.map((m) => m.type).toSet())
+                    _LiveRouteLegend(type: type),
+                ],
+              ),
+              const Divider(height: 20),
+              Text(
+                '$routeNo번 · $destName',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                Text(busPositionMessage),
-                const SizedBox(height: 10),
-                const Text(
-                  '실제 지도 타일이 아닌 간이 위치도',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+              ),
+              const SizedBox(height: 6),
+              _LiveMetric(label: '승차 정류장', value: boardName),
+              _LiveMetric(label: '하차 정류장', value: alightName),
+              _LiveMetric(label: '탑승 버스', value: '$routeNo번'),
+              _LiveMetric(label: '정류장까지 도보', value: walkText),
+              _LiveMetric(label: '버스 도착 예정', value: eta),
+              _LiveMetric(label: '남은 정류장', value: remaining),
+              _LiveMetric(label: '혼잡도', value: congestion),
+              const SizedBox(height: 6),
+              Text(busMsg),
+              if (serviceStatus != null) ...[
                 const SizedBox(height: 6),
-                SizedBox(
-                  height: 170,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant),
-                    ),
-                    child: markers.isEmpty
-                        ? const Center(child: Text('표시할 위치 좌표가 없어.'))
-                        : CustomPaint(
-                            painter: _LiveRouteSketchPainter(markers),
-                            child: const SizedBox.expand(),
-                          ),
+                Text(
+                  serviceStatus.message,
+                  style: TextStyle(
+                    color: serviceStatus.operatingNow
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.error,
+                    fontWeight: FontWeight.bold,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 6,
-                  children: [
-                    for (final type
-                        in markers.map((marker) => marker.type).toSet())
-                      _LiveRouteLegend(type: type),
-                  ],
                 ),
               ],
-              if (status != null) ...[
-                const SizedBox(height: 8),
-                Text('데이터 source: ${status!.fallbackSource}'),
-                if (status!.warnings.isNotEmpty)
-                  for (final warning in status!.warnings)
+              const SizedBox(height: 8),
+              Text(
+                '마지막 갱신: $updatedText · 1분마다 자동 갱신 중',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (s != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '데이터 source: ${s.fallbackSource}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (s.warnings.isNotEmpty)
+                  for (final warning in s.warnings)
                     Text(
                       '주의: $warning',
                       style:
@@ -1275,7 +1357,7 @@ class _LiveRouteStatusCard extends StatelessWidget {
               if (errorMessage != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  errorMessage!,
+                  '갱신 실패(마지막 갱신 기준 표시 중): $errorMessage',
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
@@ -1285,6 +1367,63 @@ class _LiveRouteStatusCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _hhmm(DateTime dt) {
+  final h = dt.hour.toString().padLeft(2, '0');
+  final m = dt.minute.toString().padLeft(2, '0');
+  return '$h:$m';
+}
+
+/// V3LiveStatus + 선택 경로에서 간이 위치도 마커 목록을 만든다.
+List<V3LiveRouteMarker> _buildNavMarkers(
+  V3LiveStatus? s,
+  Position? userPosition,
+  V3RoutePlanSegment? segment,
+) {
+  final markers = <V3LiveRouteMarker>[];
+  final user = s?.userLocation;
+  if (user != null) {
+    markers.add(V3LiveRouteMarker(
+        type: 'USER', label: '내 위치', latitude: user.latitude, longitude: user.longitude));
+  } else if (userPosition != null) {
+    markers.add(V3LiveRouteMarker(
+        type: 'USER',
+        label: '내 위치',
+        latitude: userPosition.latitude,
+        longitude: userPosition.longitude));
+  }
+  for (final stop in s?.nearbyStops ?? const <V3NearbyStop>[]) {
+    markers.add(V3LiveRouteMarker(
+        type: 'NEARBY',
+        label: stop.stopName,
+        latitude: stop.latitude,
+        longitude: stop.longitude));
+  }
+  final board = s?.selectedBoardStop;
+  final boardLat = board?.latitude ?? segment?.boardStop.latitude;
+  final boardLng = board?.longitude ?? segment?.boardStop.longitude;
+  if (boardLat != null && boardLng != null) {
+    markers.add(V3LiveRouteMarker(
+        type: 'BOARD_STOP', label: '승차', latitude: boardLat, longitude: boardLng));
+  }
+  final alight = s?.selectedAlightStop;
+  final alightLat = alight?.latitude ?? segment?.alightStop.latitude;
+  final alightLng = alight?.longitude ?? segment?.alightStop.longitude;
+  if (alightLat != null && alightLng != null) {
+    markers.add(V3LiveRouteMarker(
+        type: 'ALIGHT_STOP', label: '하차', latitude: alightLat, longitude: alightLng));
+  }
+  for (final bus in s?.busPositions ?? const <V3BusPosition>[]) {
+    if (bus.latitude != null && bus.longitude != null) {
+      markers.add(V3LiveRouteMarker(
+          type: 'BUS',
+          label: '${bus.routeNo}번',
+          latitude: bus.latitude!,
+          longitude: bus.longitude!));
+    }
+  }
+  return markers;
 }
 
 class _LiveMetric extends StatelessWidget {
@@ -1320,61 +1459,91 @@ class _LiveRouteLegend extends StatelessWidget {
   }
 }
 
-class _LiveRouteSketchPainter extends CustomPainter {
-  const _LiveRouteSketchPainter(this.markers);
+class _NavMapPainter extends CustomPainter {
+  const _NavMapPainter(this.markers, this.walkPolyline);
 
   final List<V3LiveRouteMarker> markers;
+  final List<V3GeoPoint> walkPolyline;
 
   @override
   void paint(Canvas canvas, Size size) {
-    const padding = 20.0;
-    final latitudes = markers.map((marker) => marker.latitude);
-    final longitudes = markers.map((marker) => marker.longitude);
-    final minLat = latitudes.reduce((a, b) => a < b ? a : b);
-    final maxLat = latitudes.reduce((a, b) => a > b ? a : b);
-    final minLng = longitudes.reduce((a, b) => a < b ? a : b);
-    final maxLng = longitudes.reduce((a, b) => a > b ? a : b);
+    const padding = 22.0;
+    // 마커 + 보행 polyline 전체를 포함하는 bounding box로 정규화한다.
+    final lats = <double>[
+      ...markers.map((m) => m.latitude),
+      ...walkPolyline.map((p) => p.latitude),
+    ];
+    final lngs = <double>[
+      ...markers.map((m) => m.longitude),
+      ...walkPolyline.map((p) => p.longitude),
+    ];
+    if (lats.isEmpty) return;
+    final minLat = lats.reduce((a, b) => a < b ? a : b);
+    final maxLat = lats.reduce((a, b) => a > b ? a : b);
+    final minLng = lngs.reduce((a, b) => a < b ? a : b);
+    final maxLng = lngs.reduce((a, b) => a > b ? a : b);
 
-    Offset offsetFor(V3LiveRouteMarker marker) {
+    Offset project(double lat, double lng) {
       final lngSpan = maxLng - minLng;
       final latSpan = maxLat - minLat;
-      final xRatio = lngSpan == 0 ? 0.5 : (marker.longitude - minLng) / lngSpan;
-      final yRatio = latSpan == 0 ? 0.5 : (marker.latitude - minLat) / latSpan;
+      final xRatio = lngSpan == 0 ? 0.5 : (lng - minLng) / lngSpan;
+      final yRatio = latSpan == 0 ? 0.5 : (lat - minLat) / latSpan;
       return Offset(
         padding + xRatio * (size.width - padding * 2),
         size.height - padding - yRatio * (size.height - padding * 2),
       );
     }
 
-    final routeMarkers =
-        markers.where((marker) => marker.type != 'BUS').toList();
-    if (routeMarkers.length >= 2) {
+    // 1) 보행 경로 polyline(현재 위치 -> 승차 정류장)
+    if (walkPolyline.length >= 2) {
       final path = Path()
-        ..moveTo(
-            offsetFor(routeMarkers.first).dx, offsetFor(routeMarkers.first).dy);
-      for (final marker in routeMarkers.skip(1)) {
-        final point = offsetFor(marker);
-        path.lineTo(point.dx, point.dy);
+        ..moveTo(project(walkPolyline.first.latitude, walkPolyline.first.longitude).dx,
+            project(walkPolyline.first.latitude, walkPolyline.first.longitude).dy);
+      for (final p in walkPolyline.skip(1)) {
+        final pt = project(p.latitude, p.longitude);
+        path.lineTo(pt.dx, pt.dy);
       }
       canvas.drawPath(
         path,
         Paint()
-          ..color = Colors.blueGrey
-          ..strokeWidth = 3
+          ..color = Colors.green
+          ..strokeWidth = 3.5
           ..style = PaintingStyle.stroke,
       );
     }
 
+    // 2) 승차 -> 하차 방향 보조선
+    final board = markers.where((m) => m.type == 'BOARD_STOP').toList();
+    final alight = markers.where((m) => m.type == 'ALIGHT_STOP').toList();
+    if (board.isNotEmpty && alight.isNotEmpty) {
+      final a = project(board.first.latitude, board.first.longitude);
+      final b = project(alight.first.latitude, alight.first.longitude);
+      canvas.drawLine(
+        a,
+        b,
+        Paint()
+          ..color = Colors.blueGrey.withValues(alpha: 0.6)
+          ..strokeWidth = 2
+          ..style = PaintingStyle.stroke,
+      );
+    }
+
+    // 3) 마커
     for (final marker in markers) {
-      final point = offsetFor(marker);
-      canvas.drawCircle(point, marker.type == 'BUS' ? 8 : 7,
-          Paint()..color = _liveRouteColor(marker.type));
+      final point = project(marker.latitude, marker.longitude);
+      final radius = marker.type == 'BUS'
+          ? 8.0
+          : marker.type == 'NEARBY'
+              ? 4.0
+              : 7.0;
+      canvas.drawCircle(point, radius, Paint()..color = _liveRouteColor(marker.type));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _LiveRouteSketchPainter oldDelegate) {
-    return oldDelegate.markers != markers;
+  bool shouldRepaint(covariant _NavMapPainter oldDelegate) {
+    return oldDelegate.markers != markers ||
+        oldDelegate.walkPolyline != walkPolyline;
   }
 }
 
@@ -1384,6 +1553,7 @@ Color _liveRouteColor(String type) {
     'BOARD_STOP' => Colors.green,
     'ALIGHT_STOP' => Colors.orange,
     'BUS' => Colors.red,
+    'NEARBY' => Colors.blueGrey,
     _ => Colors.purple,
   };
 }
@@ -1394,6 +1564,7 @@ String _liveRouteLabel(String type) {
     'BOARD_STOP' => '승차',
     'ALIGHT_STOP' => '하차',
     'BUS' => '버스',
+    'NEARBY' => '근처정류장',
     _ => '목적지',
   };
 }
