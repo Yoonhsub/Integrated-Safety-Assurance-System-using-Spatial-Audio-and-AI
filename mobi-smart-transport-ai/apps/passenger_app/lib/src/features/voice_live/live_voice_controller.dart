@@ -232,6 +232,13 @@ class LiveVoiceController {
     try {
       await stopAudio();
     } catch (_) {}
+    if (_disposed || _ending) return;
+    _partial = '';
+    _setState(VoiceTurnState.listening);
+    _listeningSince = DateTime.now();
+    if (!_recognizer.resume()) unawaited(_startRecognition());
+    _resetInactivityTimer();
+    _bargingIn = false;
   }
 
   // ---- 인식 콜백 ----

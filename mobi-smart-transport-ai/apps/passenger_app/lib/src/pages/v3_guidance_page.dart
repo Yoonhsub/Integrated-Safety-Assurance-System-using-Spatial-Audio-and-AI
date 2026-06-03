@@ -78,8 +78,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Position? _cachedPosition;
   // 위치 권한이 거부/불가해 실제 위치를 쓸 수 없는 상태.
   bool _locationDenied = false;
-  // 위치 권한 확인이 진행 중인지(중복 요청 방지).
-  bool _resolvingLocation = false;
+  Future<void>? _locationRequest;
   bool _isAgentTraceExpanded = false;
   bool _isListening = false;
   String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말해줘.';
@@ -780,9 +779,24 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// 첫 접속 시(혹은 사용자가 다시 시도할 때) 위치 권한을 요청하고 실제 위치를 캐시한다.
   /// 경로 탐색 시점이 아니라 진입 시점에 호출해 사용자 위치를 미리 확보한다.
   Future<void> _ensureLocation({bool forceRequest = false}) async {
-    if (_resolvingLocation) return;
     if (_cachedPosition != null && !forceRequest) return;
-    _resolvingLocation = true;
+    final inFlight = _locationRequest;
+    if (inFlight != null) {
+      await inFlight;
+      if (_cachedPosition != null || !forceRequest) return;
+    }
+    final request = _resolveLocation();
+    _locationRequest = request;
+    try {
+      await request;
+    } finally {
+      if (identical(_locationRequest, request)) {
+        _locationRequest = null;
+      }
+    }
+  }
+
+  Future<void> _resolveLocation() async {
     try {
       final position = await _currentPosition();
       if (!mounted) return;
@@ -797,8 +811,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       setState(() {
         _locationDenied = true;
       });
-    } finally {
-      _resolvingLocation = false;
     }
   }
 

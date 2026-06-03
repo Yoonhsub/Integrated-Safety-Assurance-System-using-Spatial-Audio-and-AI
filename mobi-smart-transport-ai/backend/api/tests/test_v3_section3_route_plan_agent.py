@@ -147,6 +147,20 @@ def test_agent_converse_without_origin_does_not_invent_route_for_new_destination
     assert state["selectedRouteNo"] is None
 
 
+def test_agent_converse_without_origin_does_not_use_destination_stop_as_boarding() -> None:
+    response = _say("s-no-origin-hospital", "자비스, 충북대병원 어떻게 가?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["routePlan"]["status"] == "NOT_FOUND"
+    assert body["routePlan"]["recommendedPlan"] is None
+    assert "위치 권한" in body["message"]
+    assert "충북대학교병원 정류장에서 823번" not in body["message"]
+    state = client.get("/guidance/state", params={"sessionId": "s-no-origin-hospital"}).json()
+    assert state["selectedDestination"] is None
+    assert state["selectedRouteNo"] is None
+
+
 def test_agent_converse_rejects_unknown_mode() -> None:
     response = client.post(
         "/agent/converse",

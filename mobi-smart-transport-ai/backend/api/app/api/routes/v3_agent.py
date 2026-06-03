@@ -28,7 +28,6 @@ from app.services.v3_agent_tools import (
     classify_agent_intent,
     get_arrivals_tool,
     get_bus_locations_tool,
-    get_route_stops_tool,
     get_service_status_tool,
     match_pending_choice_tool,
     normalize_user_utterance,
@@ -1066,84 +1065,27 @@ def _handle_route_request(
             history=history,
         )
 
-    # 기존 테스트/버튼 플로우에 등록된 목적지만 위치 없는 고정 카탈로그 폴백을 유지한다.
-    # 임의 장소를 사창사거리로 바꾸면 계산되지 않은 경로를 안내하게 되므로, 새 목적지는
-    # RoutePlan의 위치 필요 응답으로 보낸다.
-    legacy_destination = _legacy_catalog_key(destination or payload.utterance)
-    if legacy_destination is None:
-        heard_text = nlp_destination or _generic_destination_text(payload.utterance) or destination or payload.utterance
-        route_plan = _plan_route(
-            heard_text=heard_text,
-            origin_lat=None,
-            origin_lng=None,
-            live=live,
-            mode=payload.mode,
-            trace=trace,
-        )
-        return _route_plan_response_tuple(
-            session=session,
-            route_plan=route_plan,
-            utterance=payload.utterance,
-            wake_word=payload.wakeWord,
-            origin_lat=None,
-            origin_lng=None,
-            trace=trace,
-            history=history,
-        )
-
-    resolved = cheongju_route_catalog.resolve_or_mock(legacy_destination, live=live)
-    if resolved is None:
-        route_plan = _plan_route(
-            heard_text=destination or payload.utterance,
-            origin_lat=None,
-            origin_lng=None,
-            live=live,
-            mode=payload.mode,
-            trace=trace,
-        )
-        return _route_plan_response_tuple(
-            session=session,
-            route_plan=route_plan,
-            utterance=payload.utterance,
-            wake_word=payload.wakeWord,
-            origin_lat=None,
-            origin_lng=None,
-            trace=trace,
-            history=history,
-        )
-    _apply_legacy_route(session, resolved.destination, resolved.routeNo, resolved.routeId, resolved.stopId, resolved.stopName)
-
-    used_gemini = False
-    tts_mode = TtsMode.LOCAL_TTS
-    fallback_source = FallbackSource(resolved.source)
-    if live:
-        try:
-            stops = get_route_stops_tool(session.selected_route_id, payload.mode)
-            context_data = {
-                "destination": session.selected_destination,
-                "board_stop": session.selected_stop_name,
-                "route_no": session.selected_route_no,
-                "route_path_sample": [n.nodeNm for n in stops.nodes[:10]] + ["..."],
-            }
-            dynamic_msg = generate_dynamic_response(
-                intent=intent,
-                utterance=payload.utterance,
-                wake_word=payload.wakeWord,
-                context_data=context_data,
-                history=history,
-            )
-            if dynamic_msg:
-                used_gemini = True
-                tts_mode = TtsMode.GEMINI_OPTIONAL
-                return None, dynamic_msg, tts_mode, used_gemini, fallback_source
-        except Exception:
-            pass
-    return (
-        None,
-        f"{resolved.destination} 방향은 {resolved.stopName}에서 {resolved.routeNo}번을 타면 돼.",
-        tts_mode,
-        used_gemini,
-        fallback_source,
+    # 위치가 없으면 예전 고정 카탈로그 문장으로 승차 정류장을 꾸며내지 않는다.
+    # 특히 "충북대병원" 같은 목적지 alias가 destination stop을 boarding stop처럼
+    # 말하는 회귀를 만들 수 있으므로, RoutePlan의 위치 필요 응답만 사용한다.
+    heard_text = nlp_destination or _generic_destination_text(payload.utterance) or destination or payload.utterance
+    route_plan = _plan_route(
+        heard_text=heard_text,
+        origin_lat=None,
+        origin_lng=None,
+        live=live,
+        mode=payload.mode,
+        trace=trace,
+    )
+    return _route_plan_response_tuple(
+        session=session,
+        route_plan=route_plan,
+        utterance=payload.utterance,
+        wake_word=payload.wakeWord,
+        origin_lat=None,
+        origin_lng=None,
+        trace=trace,
+        history=history,
     )
 
 
@@ -1331,35 +1273,6 @@ def _apply_route_plan(session: V3SessionRecord, route_plan: RoutePlanResponse) -
     session.target_bus = None
     session.last_route_plan = route_plan.model_dump(mode="json")
     session.state = GuidanceState.ROUTE_RECOMMENDED
-
-
-def _apply_legacy_route(
-    session: V3SessionRecord,
-    destination: str,
-    route_no: str,
-    route_id: str,
-    stop_id: str,
-    stop_name: str,
-) -> None:
-    session.selected_destination = destination
-    session.selected_route_no = route_no
-    session.selected_route_id = route_id
-    session.selected_stop_id = stop_id
-    session.selected_stop_name = stop_name
-    session.selected_plan_id = None
-    session.nearby_boarding_stops = []
-    session.nearby_alighting_stops = []
-    session.recommended_plan = None
-    session.alternative_plans = []
-    session.selected_plan = None
-    session.current_leg_index = 0
-    session.target_bus_id = None
-    session.last_decision = None
-    session.nearest_beacon = None
-    session.target_bus = None
-    session.last_route_plan = None
-    session.state = GuidanceState.ROUTE_RECOMMENDED
-    _clear_pending(session)
 
 
 def _store_pending(
@@ -1562,18 +1475,6 @@ def _extract_destination(utterance: str) -> str | None:
 
 def _generic_destination_text(utterance: str) -> str | None:
     return normalize_user_utterance(utterance).destination_candidate_text
-
-
-def _legacy_catalog_key(value: str | None) -> str | None:
-    if not value:
-        return None
-    compact = value.replace(" ", "")
-    for alias, canonical in _DESTINATION_ALIASES:
-        if alias.replace(" ", "") in compact:
-            if canonical == "충북대학교병원":
-                return "충북대병원"
-            return canonical
-    return value if cheongju_route_catalog.is_known_destination(value) else None
 
 
 def _is_affirmative(text: str) -> bool:

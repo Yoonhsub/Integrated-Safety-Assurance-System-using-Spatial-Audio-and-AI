@@ -188,11 +188,21 @@ def test_mobi_wake_word_is_not_used_as_user_name() -> None:
 
 
 def test_new_destination_replaces_selected_route_context() -> None:
-    first = _say("s-replace", "사창사거리 어떻게 가?")
+    first = _say(
+        "s-replace",
+        "사창사거리 어떻게 가?",
+        originLat=36.6262,
+        originLng=127.4312,
+    )
     assert first.status_code == 200
     assert client.get("/guidance/state", params={"sessionId": "s-replace"}).json()["selectedDestination"] == "사창사거리"
 
-    second = _say("s-replace", "충북대병원 어떻게 가?")
+    second = _say(
+        "s-replace",
+        "충북대병원 어떻게 가?",
+        originLat=36.6359,
+        originLng=127.4596,
+    )
 
     assert second.status_code == 200
     body = second.json()
