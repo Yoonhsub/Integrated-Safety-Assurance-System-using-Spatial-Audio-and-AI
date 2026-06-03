@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'aurora_voice_shader.dart';
@@ -50,8 +52,9 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
       onNavigate: () => _exit(navigated: true),
       onEnd: () => _exit(navigated: false),
     );
-    // 첫 프레임 이후 시작(마이크 권한/오디오 컨텍스트는 사용자 제스처 직후라 OK).
-    WidgetsBinding.instance.addPostFrameCallback((_) => _controller.start());
+    // iOS/인앱 브라우저는 AudioContext 시작이 사용자 제스처에서 멀어질수록
+    // 조용히 suspend될 수 있어, route build 직후 곧바로 시작한다.
+    unawaited(_controller.start());
   }
 
   Future<void> _exit({required bool navigated}) async {

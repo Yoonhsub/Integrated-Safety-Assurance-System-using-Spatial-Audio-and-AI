@@ -110,6 +110,18 @@
     recoveryTimer = null;
   }
 
+  async function _resumeContext() {
+    if (!ctx) return false;
+    if (ctx.state === "suspended") {
+      try { await ctx.resume(); } catch (_) {}
+    }
+    if (ctx.state === "suspended") {
+      _emitState("resumeBlocked");
+      return false;
+    }
+    return true;
+  }
+
   function _attachProcessor() {
     if (!ctx || !stream) return;
     if (!source) source = ctx.createMediaStreamSource(stream);
@@ -146,12 +158,12 @@
       }
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!ctx) ctx = new AudioContext();
-      if (ctx.state === "suspended") await ctx.resume();
-      _attachProcessor();
       paused = false;
       running = true;
-      _openSocket();
       _startWatchdog();
+      if (!(await _resumeContext())) return false;
+      _attachProcessor();
+      _openSocket();
       return true;
     } catch (_) {
       await stop();
@@ -164,7 +176,7 @@
     paused = false;
     try {
       if (!stream || !ctx) return await start(lastUrl);
-      if (ctx.state === "suspended") await ctx.resume();
+      if (!(await _resumeContext())) return false;
       _attachProcessor();
       _openSocket();
       // 이전 턴 잔여 전사가 다음 턴에 섞이지 않도록 서버 버퍼 리셋.
