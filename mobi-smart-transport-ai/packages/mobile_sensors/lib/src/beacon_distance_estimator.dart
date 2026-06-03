@@ -230,10 +230,12 @@ class BeaconDistanceEstimator {
     );
     if (distance == null) return candidateZone;
 
-    if (_isNearMediumBoundary(distance) && _isNearMediumPair(previousZone, candidateZone)) {
+    if (_isNearMediumBoundary(distance) &&
+        _isNearMediumPair(previousZone, candidateZone)) {
       return previousZone;
     }
-    if (_isMediumFarBoundary(distance) && _isMediumFarPair(previousZone, candidateZone)) {
+    if (_isMediumFarBoundary(distance) &&
+        _isMediumFarPair(previousZone, candidateZone)) {
       return previousZone;
     }
     return candidateZone;
@@ -249,7 +251,8 @@ class BeaconDistanceEstimator {
     required DateTime lastDetectedAt,
     double? estimatedDistanceMeters,
   }) {
-    final normalizedBeaconId = SensorModelValidation.normalizeBeaconId(beaconId);
+    final normalizedBeaconId =
+        SensorModelValidation.normalizeBeaconId(beaconId);
     final safeRssi = SensorModelValidation.isValidRssi(rssi)
         ? rssi
         : SensorModelValidation.minValidRssi;
@@ -269,21 +272,29 @@ class BeaconDistanceEstimator {
   }
 
   bool _isNearMediumBoundary(double distance) {
-    return (distance - nearDistanceThresholdMeters).abs() <= zoneHysteresisMeters;
+    return (distance - nearDistanceThresholdMeters).abs() <=
+        zoneHysteresisMeters;
   }
 
   bool _isMediumFarBoundary(double distance) {
-    return (distance - mediumDistanceThresholdMeters).abs() <= zoneHysteresisMeters;
+    return (distance - mediumDistanceThresholdMeters).abs() <=
+        zoneHysteresisMeters;
   }
 
-  bool _isNearMediumPair(BeaconDistanceZone previous, BeaconDistanceZone candidate) {
-    return (previous == BeaconDistanceZone.near && candidate == BeaconDistanceZone.medium) ||
-        (previous == BeaconDistanceZone.medium && candidate == BeaconDistanceZone.near);
+  bool _isNearMediumPair(
+      BeaconDistanceZone previous, BeaconDistanceZone candidate) {
+    return (previous == BeaconDistanceZone.near &&
+            candidate == BeaconDistanceZone.medium) ||
+        (previous == BeaconDistanceZone.medium &&
+            candidate == BeaconDistanceZone.near);
   }
 
-  bool _isMediumFarPair(BeaconDistanceZone previous, BeaconDistanceZone candidate) {
-    return (previous == BeaconDistanceZone.medium && candidate == BeaconDistanceZone.far) ||
-        (previous == BeaconDistanceZone.far && candidate == BeaconDistanceZone.medium);
+  bool _isMediumFarPair(
+      BeaconDistanceZone previous, BeaconDistanceZone candidate) {
+    return (previous == BeaconDistanceZone.medium &&
+            candidate == BeaconDistanceZone.far) ||
+        (previous == BeaconDistanceZone.far &&
+            candidate == BeaconDistanceZone.medium);
   }
 }
 
@@ -388,7 +399,109 @@ class RssiMovingAverageSmoother {
   /// BLE 신호로 보기 어려운 0을 반환하여 추정 불가/LOST 처리와 연결한다.
   int get smoothedRssi {
     if (_samples.isEmpty) return 0;
-    final sum = _samples.fold<int>(0, (previous, current) => previous + current);
+    final sum =
+        _samples.fold<int>(0, (previous, current) => previous + current);
     return (sum / _samples.length).round();
   }
+}
+
+class BeaconRssiCalibrationSample {
+  const BeaconRssiCalibrationSample({
+    required this.distanceMeters,
+    required this.rssi,
+  })  : assert(distanceMeters > 0, 'distanceMeters must be greater than 0'),
+        assert(
+          rssi >= SensorModelValidation.minValidRssi &&
+              rssi <= SensorModelValidation.maxValidRssi,
+          'rssi must be between -127 and -1',
+        );
+
+  final double distanceMeters;
+  final int rssi;
+}
+
+class BeaconRssiCalibration {
+  const BeaconRssiCalibration({
+    required this.txPower,
+    required this.pathLossExponent,
+    required this.samples,
+  });
+
+  final int txPower;
+  final double pathLossExponent;
+  final List<BeaconRssiCalibrationSample> samples;
+
+  factory BeaconRssiCalibration.fromSamples(
+    Iterable<BeaconRssiCalibrationSample> samples, {
+    double fallbackPathLossExponent = 2.0,
+  }) {
+    final values = samples.toList(growable: false);
+    if (values.isEmpty) {
+      throw ArgumentError('At least one calibration sample is required.');
+    }
+    if (fallbackPathLossExponent <= 0) {
+      throw ArgumentError('fallbackPathLossExponent must be greater than 0.');
+    }
+
+    if (values.length == 1) {
+      final sample = values.single;
+      return BeaconRssiCalibration(
+        txPower: _txPowerFor(sample, fallbackPathLossExponent).round(),
+        pathLossExponent: fallbackPathLossExponent,
+        samples: values,
+      );
+    }
+
+    final xs = values.map((sample) => _log10(sample.distanceMeters)).toList();
+    final ys = values.map((sample) => sample.rssi.toDouble()).toList();
+    final meanX = xs.reduce((a, b) => a + b) / xs.length;
+    final meanY = ys.reduce((a, b) => a + b) / ys.length;
+
+    var covariance = 0.0;
+    var variance = 0.0;
+    for (var index = 0; index < values.length; index += 1) {
+      final dx = xs[index] - meanX;
+      covariance += dx * (ys[index] - meanY);
+      variance += dx * dx;
+    }
+
+    if (variance == 0) {
+      final averageTxPower = values
+              .map((sample) => _txPowerFor(sample, fallbackPathLossExponent))
+              .reduce((a, b) => a + b) /
+          values.length;
+      return BeaconRssiCalibration(
+        txPower: averageTxPower.round(),
+        pathLossExponent: fallbackPathLossExponent,
+        samples: values,
+      );
+    }
+
+    final slope = covariance / variance;
+    final pathLossExponent = (-slope / 10).clamp(1.2, 4.5).toDouble();
+    final intercept = meanY - (slope * meanX);
+
+    return BeaconRssiCalibration(
+      txPower: intercept.round(),
+      pathLossExponent: pathLossExponent,
+      samples: values,
+    );
+  }
+
+  BeaconDistanceEstimator toEstimator() {
+    return BeaconDistanceEstimator(
+      txPower: txPower,
+      pathLossExponent: pathLossExponent,
+    );
+  }
+
+  static double _txPowerFor(
+    BeaconRssiCalibrationSample sample,
+    double pathLossExponent,
+  ) {
+    return sample.rssi +
+        (10 * pathLossExponent * _log10(sample.distanceMeters));
+  }
+
+  static double _log10(double value) => log(value) / ln10;
 }

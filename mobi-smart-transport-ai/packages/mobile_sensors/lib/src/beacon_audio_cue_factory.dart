@@ -1,6 +1,8 @@
 import 'beacon_proximity_tracker.dart';
 import 'beacon_signal.dart';
 import 'bone_conduction_audio_cue.dart';
+import 'direction_sensor.dart';
+import 'spatial_beacon_audio_renderer.dart';
 
 /// 비콘 신호와 접근 추세를 골전도 이어폰 안내 cue로 변환하는 factory이다.
 ///
@@ -10,11 +12,12 @@ import 'bone_conduction_audio_cue.dart';
 class BeaconAudioCueFactory {
   const BeaconAudioCueFactory({
     this.defaultLostRssi = -127,
+    this.spatialRenderer = const SpatialBeaconAudioRenderer(),
   });
 
   /// 비콘 신호를 잃었을 때 사용할 RSSI placeholder 값이다.
   final int defaultLostRssi;
-
+  final SpatialBeaconAudioRenderer spatialRenderer;
 
   /// 단일 [ProximityEvent]를 안내 cue로 변환한다.
   ///
@@ -26,6 +29,34 @@ class BeaconAudioCueFactory {
   }) {
     return BoneConductionAudioCue.fromProximityEvent(
       event,
+      createdAt: createdAt,
+    );
+  }
+
+  BoneConductionAudioCue createDoorGuidanceCue(
+    BeaconSignal signal, {
+    DirectionReading? direction,
+    double beaconBearingDegrees = 0,
+    DateTime? createdAt,
+  }) {
+    return spatialRenderer.createDoorGuidanceCue(
+      signal: signal,
+      direction: direction,
+      beaconBearingDegrees: beaconBearingDegrees,
+      createdAt: createdAt,
+    );
+  }
+
+  BoneConductionAudioCue createDangerCue(
+    BeaconSignal signal, {
+    DirectionReading? direction,
+    double beaconBearingDegrees = 0,
+    DateTime? createdAt,
+  }) {
+    return spatialRenderer.createDangerCue(
+      signal: signal,
+      direction: direction,
+      beaconBearingDegrees: beaconBearingDegrees,
       createdAt: createdAt,
     );
   }
@@ -46,7 +77,8 @@ class BeaconAudioCueFactory {
         : eventTypeName.trim().toUpperCase();
 
     return BoneConductionAudioCue(
-      cueId: 'event-${normalizedEventName.toLowerCase()}-${beaconId}-${timestamp.millisecondsSinceEpoch}',
+      cueId:
+          'event-${normalizedEventName.toLowerCase()}-${beaconId}-${timestamp.millisecondsSinceEpoch}',
       beaconId: beaconId,
       message: '확인되지 않은 센서 이벤트입니다. 주변을 확인하세요.',
       signalLevel: BeaconSignalLevel.lost,

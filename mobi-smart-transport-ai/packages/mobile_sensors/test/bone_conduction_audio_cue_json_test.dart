@@ -49,6 +49,23 @@ void main() {
       expect(cue.sourceEventType, isNull);
     });
 
+    test('decodes spatial pan and stereo gain fields', () {
+      final cue = decodeCue({
+        'gain': 0.8,
+        'leftGain': 0.2,
+        'rightGain': 0.8,
+        'pan': 0.75,
+        'relativeBearingDegrees': 67.5,
+      });
+
+      expect(cue.gain, 0.8);
+      expect(cue.leftGain, 0.2);
+      expect(cue.rightGain, 0.8);
+      expect(cue.pan, 0.75);
+      expect(cue.relativeBearingDegrees, 67.5);
+      expect(cue.toJson()['pan'], 0.75);
+    });
+
     test('rejects missing or empty required string fields', () {
       expect(() => decodeCue({'cueId': ''}), throwsA(isA<ArgumentError>()));
       expect(
@@ -120,6 +137,18 @@ void main() {
       );
       expect(
         () => decodeCue({'shouldRepeat': 'true'}),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decodeCue({'gain': 1.2}),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decodeCue({'pan': -1.5}),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decodeCue({'relativeBearingDegrees': 181}),
         throwsA(isA<ArgumentError>()),
       );
     });

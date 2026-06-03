@@ -32,7 +32,8 @@ extension BoneConductionCueUrgencyJson on BoneConductionCueUrgency {
       case 'CRITICAL':
         return BoneConductionCueUrgency.critical;
       default:
-        throw ArgumentError('Unknown BoneConductionCueUrgency JSON value: $value');
+        throw ArgumentError(
+            'Unknown BoneConductionCueUrgency JSON value: $value');
     }
   }
 }
@@ -53,11 +54,32 @@ class BoneConductionAudioCue {
     this.estimatedDistanceMeters,
     this.proximityTrend,
     this.sourceEventType,
+    this.gain,
+    this.leftGain,
+    this.rightGain,
+    this.pan,
+    this.relativeBearingDegrees,
     this.shouldRepeat = true,
   })  : assert(cueId.length > 0, 'cueId must not be empty'),
         assert(beaconId.length > 0, 'beaconId must not be empty'),
         assert(message.length > 0, 'message must not be empty'),
-        assert(repeatIntervalMs >= 0, 'repeatIntervalMs must be zero or greater');
+        assert(
+            repeatIntervalMs >= 0, 'repeatIntervalMs must be zero or greater'),
+        assert(gain == null || (gain >= 0 && gain <= 1), 'gain must be 0..1'),
+        assert(
+          leftGain == null || (leftGain >= 0 && leftGain <= 1),
+          'leftGain must be 0..1',
+        ),
+        assert(
+          rightGain == null || (rightGain >= 0 && rightGain <= 1),
+          'rightGain must be 0..1',
+        ),
+        assert(pan == null || (pan >= -1 && pan <= 1), 'pan must be -1..1'),
+        assert(
+          relativeBearingDegrees == null ||
+              (relativeBearingDegrees >= -180 && relativeBearingDegrees <= 180),
+          'relativeBearingDegrees must be -180..180',
+        );
 
   /// 앱 또는 로그에서 cue를 구분하기 위한 ID이다.
   final String cueId;
@@ -84,6 +106,21 @@ class BoneConductionAudioCue {
   /// 로그와 TTS 분기에서 확인할 수 있다.
   final ProximityEventType? sourceEventType;
 
+  /// Spatial beep master gain in the normalized 0..1 range.
+  final double? gain;
+
+  /// Left stereo gain for bone-conduction or stereo earphone playback.
+  final double? leftGain;
+
+  /// Right stereo gain for bone-conduction or stereo earphone playback.
+  final double? rightGain;
+
+  /// Stereo pan in the normalized -1(left)..1(right) range.
+  final double? pan;
+
+  /// Beacon bearing relative to the user's heading, normalized to -180..180.
+  final double? relativeBearingDegrees;
+
   /// 안내 우선순위 또는 위험도 힌트이다.
   final BoneConductionCueUrgency urgency;
 
@@ -109,6 +146,16 @@ class BoneConductionAudioCue {
     bool clearProximityTrend = false,
     ProximityEventType? sourceEventType,
     bool clearSourceEventType = false,
+    double? gain,
+    bool clearGain = false,
+    double? leftGain,
+    bool clearLeftGain = false,
+    double? rightGain,
+    bool clearRightGain = false,
+    double? pan,
+    bool clearPan = false,
+    double? relativeBearingDegrees,
+    bool clearRelativeBearingDegrees = false,
     BoneConductionCueUrgency? urgency,
     int? repeatIntervalMs,
     bool? shouldRepeat,
@@ -122,12 +169,17 @@ class BoneConductionAudioCue {
       estimatedDistanceMeters: clearEstimatedDistanceMeters
           ? null
           : estimatedDistanceMeters ?? this.estimatedDistanceMeters,
-      proximityTrend: clearProximityTrend
+      proximityTrend:
+          clearProximityTrend ? null : proximityTrend ?? this.proximityTrend,
+      sourceEventType:
+          clearSourceEventType ? null : sourceEventType ?? this.sourceEventType,
+      gain: clearGain ? null : gain ?? this.gain,
+      leftGain: clearLeftGain ? null : leftGain ?? this.leftGain,
+      rightGain: clearRightGain ? null : rightGain ?? this.rightGain,
+      pan: clearPan ? null : pan ?? this.pan,
+      relativeBearingDegrees: clearRelativeBearingDegrees
           ? null
-          : proximityTrend ?? this.proximityTrend,
-      sourceEventType: clearSourceEventType
-          ? null
-          : sourceEventType ?? this.sourceEventType,
+          : relativeBearingDegrees ?? this.relativeBearingDegrees,
       urgency: urgency ?? this.urgency,
       repeatIntervalMs: repeatIntervalMs ?? this.repeatIntervalMs,
       shouldRepeat: shouldRepeat ?? this.shouldRepeat,
@@ -143,6 +195,11 @@ class BoneConductionAudioCue {
         'estimatedDistanceMeters': estimatedDistanceMeters,
         'proximityTrend': proximityTrend?.toJsonValue(),
         'sourceEventType': sourceEventType?.toJsonValue(),
+        'gain': gain,
+        'leftGain': leftGain,
+        'rightGain': rightGain,
+        'pan': pan,
+        'relativeBearingDegrees': relativeBearingDegrees,
         'urgency': urgency.toJsonValue(),
         'repeatIntervalMs': repeatIntervalMs,
         'shouldRepeat': shouldRepeat,
@@ -157,22 +214,31 @@ class BoneConductionAudioCue {
     final estimatedDistanceMeters = json['estimatedDistanceMeters'];
     final proximityTrend = json['proximityTrend'];
     final sourceEventType = json['sourceEventType'];
+    final gain = json['gain'];
+    final leftGain = json['leftGain'];
+    final rightGain = json['rightGain'];
+    final pan = json['pan'];
+    final relativeBearingDegrees = json['relativeBearingDegrees'];
     final urgency = json['urgency'];
     final repeatIntervalMs = json['repeatIntervalMs'];
     final shouldRepeat = json['shouldRepeat'];
     final createdAt = json['createdAt'];
 
     if (cueId is! String || cueId.isEmpty) {
-      throw ArgumentError('BoneConductionAudioCue.cueId must be a non-empty string.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.cueId must be a non-empty string.');
     }
     if (beaconId is! String || beaconId.isEmpty) {
-      throw ArgumentError('BoneConductionAudioCue.beaconId must be a non-empty string.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.beaconId must be a non-empty string.');
     }
     if (message is! String || message.isEmpty) {
-      throw ArgumentError('BoneConductionAudioCue.message must be a non-empty string.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.message must be a non-empty string.');
     }
     if (signalLevel is! String) {
-      throw ArgumentError('BoneConductionAudioCue.signalLevel must be a string.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.signalLevel must be a string.');
     }
     if (estimatedDistanceMeters != null && estimatedDistanceMeters is! num) {
       throw ArgumentError(
@@ -180,22 +246,48 @@ class BoneConductionAudioCue {
       );
     }
     if (proximityTrend != null && proximityTrend is! String) {
-      throw ArgumentError('BoneConductionAudioCue.proximityTrend must be a string or null.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.proximityTrend must be a string or null.');
     }
     if (sourceEventType != null && sourceEventType is! String) {
-      throw ArgumentError('BoneConductionAudioCue.sourceEventType must be a string or null.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.sourceEventType must be a string or null.');
     }
+    _requireNullableUnitDouble(gain, fieldName: 'BoneConductionAudioCue.gain');
+    _requireNullableUnitDouble(
+      leftGain,
+      fieldName: 'BoneConductionAudioCue.leftGain',
+    );
+    _requireNullableUnitDouble(
+      rightGain,
+      fieldName: 'BoneConductionAudioCue.rightGain',
+    );
+    _requireNullableRangeDouble(
+      pan,
+      fieldName: 'BoneConductionAudioCue.pan',
+      min: -1,
+      max: 1,
+    );
+    _requireNullableRangeDouble(
+      relativeBearingDegrees,
+      fieldName: 'BoneConductionAudioCue.relativeBearingDegrees',
+      min: -180,
+      max: 180,
+    );
     if (urgency is! String) {
       throw ArgumentError('BoneConductionAudioCue.urgency must be a string.');
     }
     if (repeatIntervalMs is! num) {
-      throw ArgumentError('BoneConductionAudioCue.repeatIntervalMs must be a number.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.repeatIntervalMs must be a number.');
     }
     if (shouldRepeat is! bool) {
-      throw ArgumentError('BoneConductionAudioCue.shouldRepeat must be a boolean.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.shouldRepeat must be a boolean.');
     }
     if (createdAt is! String) {
-      throw ArgumentError('BoneConductionAudioCue.createdAt must be an ISO-8601 string.');
+      throw ArgumentError(
+          'BoneConductionAudioCue.createdAt must be an ISO-8601 string.');
     }
 
     return BoneConductionAudioCue(
@@ -212,6 +304,11 @@ class BoneConductionAudioCue {
       sourceEventType: sourceEventType == null
           ? null
           : ProximityEventTypeJson.fromJsonValue(sourceEventType as String),
+      gain: (gain as num?)?.toDouble(),
+      leftGain: (leftGain as num?)?.toDouble(),
+      rightGain: (rightGain as num?)?.toDouble(),
+      pan: (pan as num?)?.toDouble(),
+      relativeBearingDegrees: (relativeBearingDegrees as num?)?.toDouble(),
       urgency: BoneConductionCueUrgencyJson.fromJsonValue(urgency),
       repeatIntervalMs: repeatIntervalMs.toInt(),
       shouldRepeat: shouldRepeat,
@@ -240,13 +337,37 @@ class BoneConductionAudioCue {
   /// `APPROACHING_STOP`, `LEAVING_STOP` 네 가지이다.
   /// 이 factory는 실제 TTS 재생, 골전도 이어폰 제어, 공간음향 렌더링을 수행하지
   /// 않고 V2 섹션 7 기준 eventType별 message/urgency/repeat payload만 만든다.
+  static void _requireNullableUnitDouble(
+    Object? value, {
+    required String fieldName,
+  }) {
+    _requireNullableRangeDouble(value, fieldName: fieldName, min: 0, max: 1);
+  }
+
+  static void _requireNullableRangeDouble(
+    Object? value, {
+    required String fieldName,
+    required double min,
+    required double max,
+  }) {
+    if (value == null) return;
+    if (value is! num || !value.isFinite) {
+      throw ArgumentError('$fieldName must be a finite number or null.');
+    }
+    final numericValue = value.toDouble();
+    if (numericValue < min || numericValue > max) {
+      throw ArgumentError('$fieldName must be between $min and $max.');
+    }
+  }
+
   factory BoneConductionAudioCue.fromProximityEvent(
     ProximityEvent event, {
     DateTime? createdAt,
   }) {
     final now = createdAt ?? event.timestamp;
     final trend = _trendForEvent(event);
-    final eventName = event.eventType.toJsonValue().toLowerCase().replaceAll('_', '-');
+    final eventName =
+        event.eventType.toJsonValue().toLowerCase().replaceAll('_', '-');
 
     return BoneConductionAudioCue(
       cueId: 'event-$eventName-${event.beaconId}-${now.millisecondsSinceEpoch}',
@@ -257,7 +378,8 @@ class BoneConductionAudioCue {
       proximityTrend: trend,
       sourceEventType: event.eventType,
       urgency: _urgencyForEvent(event.eventType, event.signalLevel),
-      repeatIntervalMs: _repeatIntervalForEvent(event.eventType, event.signalLevel),
+      repeatIntervalMs:
+          _repeatIntervalForEvent(event.eventType, event.signalLevel),
       shouldRepeat: _shouldRepeatForEvent(event.eventType, event.signalLevel),
       createdAt: now,
     );
