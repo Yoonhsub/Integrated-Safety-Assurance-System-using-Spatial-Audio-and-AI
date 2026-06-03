@@ -178,6 +178,9 @@ async def stt_live(websocket: WebSocket) -> None:
         async with open_gemini_stt_session() as gemini:
             await websocket.send_json({"type": "ready"})
 
+            # 두 펌프가 공유하는 전사 버퍼(턴 사이 reset으로 잔여 전사 분리).
+            shared = {"buffer": ""}
+
             async def pump_client_to_gemini() -> None:
                 while True:
                     msg = await websocket.receive_json()
@@ -193,6 +196,9 @@ async def stt_live(websocket: WebSocket) -> None:
                                     )
                                 )
                             )
+                    elif kind == "reset":
+                        # 새 턴 시작: 이전 턴 잔여 전사가 섞이지 않게 버퍼 비움.
+                        shared["buffer"] = ""
                     elif kind == "stop":
                         try:
                             await gemini.send(
@@ -205,18 +211,17 @@ async def stt_live(websocket: WebSocket) -> None:
             async def pump_gemini_to_client() -> None:
                 # AUDIO 모달리티에선 turnComplete가 모델의 (무시할) 음성 응답 뒤에야 와서
                 # 느리다. 그래서 입력 전사가 일정 시간 갱신되지 않으면(발화 종료) 확정한다.
-                buffer = ""
                 last_delta = 0.0
                 loop = asyncio.get_running_loop()
                 while True:
                     try:
                         raw = await asyncio.wait_for(gemini.recv(), timeout=0.25)
                     except asyncio.TimeoutError:
-                        if buffer.strip() and (loop.time() - last_delta) >= 1.2:
+                        if shared["buffer"].strip() and (loop.time() - last_delta) >= 1.2:
                             await websocket.send_json(
-                                {"type": "transcript", "text": buffer, "isFinal": True}
+                                {"type": "transcript", "text": shared["buffer"], "isFinal": True}
                             )
-                            buffer = ""
+                            shared["buffer"] = ""
                         continue
                     try:
                         decoded = json.loads(raw)
@@ -226,16 +231,16 @@ async def stt_live(websocket: WebSocket) -> None:
                         continue
                     text, turn_complete = extract_input_transcript(decoded)
                     if text:
-                        buffer += text
+                        shared["buffer"] += text
                         last_delta = loop.time()
                         await websocket.send_json(
-                            {"type": "transcript", "text": buffer, "isFinal": False}
+                            {"type": "transcript", "text": shared["buffer"], "isFinal": False}
                         )
-                    if turn_complete and buffer.strip():
+                    if turn_complete and shared["buffer"].strip():
                         await websocket.send_json(
-                            {"type": "transcript", "text": buffer, "isFinal": True}
+                            {"type": "transcript", "text": shared["buffer"], "isFinal": True}
                         )
-                        buffer = ""
+                        shared["buffer"] = ""
 
             tasks = [
                 asyncio.create_task(pump_client_to_gemini()),

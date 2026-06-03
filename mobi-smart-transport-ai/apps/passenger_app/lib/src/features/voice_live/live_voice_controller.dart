@@ -125,14 +125,13 @@ class LiveVoiceController {
     if (_disposed || _ending) return;
     if (muted.value) muted.value = false;
     _listeningSince = DateTime.now();
-    // 사용자 제스처 컨텍스트에서 인식을 (재)시작한다. 최초 getUserMedia 권한 프롬프트가
-    // 제스처를 요구하는 iOS 환경에서의 복구 경로. 이미 동작 중이면 활성화만 보장.
-    _recognizer.setActive(true);
-    if (!_recognizer.isContinuous) {
-      _recognizer.resume();
-      return;
+    if (state.value != VoiceTurnState.listening) {
+      _setState(VoiceTurnState.listening);
     }
-    unawaited(_startRecognition());
+    // 사용자 제스처 컨텍스트에서 마이크를 복구한다(iOS의 AudioContext suspend/WS 종료 회복).
+    _recognizer.setActive(true);
+    final ok = _recognizer.resume();
+    if (!ok) unawaited(_startRecognition());
   }
 
   Future<void> setMuted(bool value) async {
@@ -355,9 +354,8 @@ class LiveVoiceController {
       _partial = '';
       _setState(VoiceTurnState.listening);
       _listeningSince = DateTime.now();
-      if (!_recognizer.isContinuous) {
-        _recognizer.resume();
-      }
+      // AI 발화 후 멈췄을 수 있는 마이크를 복구(컨텍스트 재개 + WS 재연결 + 버퍼 리셋).
+      _recognizer.resume();
       _resetInactivityTimer();
     } finally {
       _isCommitting = false;

@@ -6,6 +6,7 @@ extension type _MobiSttMic._(JSObject _) implements JSObject {
   external bool supported();
   external void setHandlers(JSFunction onTranscript, JSFunction onState);
   external JSPromise<JSBoolean> start(JSString wsUrl, JSString lang);
+  external JSPromise<JSAny?> resume();
   external void setPaused(JSBoolean paused);
   external double getLevel();
   external bool isRunning();
@@ -65,10 +66,13 @@ class LiveSpeechRecognizer {
     return v.isFinite ? v : 0.0;
   }
 
-  /// 서버 STT는 마이크가 계속 열려 있어 별도 재시작이 필요 없다. 활성화만 보장.
+  /// TTS 재생 후 멈춘 마이크 복구: 컨텍스트 재개 + WS 재연결 + 버퍼 리셋.
+  /// 사용자 제스처(탭) 컨텍스트에서 호출되면 iOS의 suspend도 확실히 풀린다.
   bool resume() {
-    setActive(true);
-    return _api?.isRunning() ?? false;
+    final api = _api;
+    if (api == null) return false;
+    api.resume(); // fire-and-forget (Promise)
+    return true;
   }
 
   Future<void> stop() async {
