@@ -1427,16 +1427,35 @@ def _deterministic_route_plan_message(route_plan: RoutePlanResponse) -> str:
     if route_plan.status != RoutePlanStatus.RESOLVED or route_plan.recommendedPlan is None:
         return route_plan.question or route_plan.destination.question or "목적지를 다시 말해줘."
     plan = route_plan.recommendedPlan
-    message = plan.boardingInstruction
+    if not plan.segments:
+        return plan.boardingInstruction or route_plan.question or "승차 경로를 찾지 못했어."
+    first = plan.segments[0]
+    message = _segment_guidance_sentence(first)
     if plan.verificationStatus.value in {"ODSAY_ONLY", "PARTIAL"}:
         message += " 정류장에서는 전광판이나 버스 번호를 한 번 더 확인해줘."
-    if not plan.segments[0].directionHint:
+    if not first.directionHint:
         message += " 정류장 방향 정보는 확실히 확인하지 못했어. 정류장 표지판에서 노선 방향을 한 번 더 확인해줘."
     if any("ODsay unavailable" in warning for warning in route_plan.warnings):
         message = f"ODsay 경로탐색은 지금 사용할 수 없어서, 청주 버스 공공데이터 기준으로 경로를 계산했어. {message}"
     if plan.type.value == "ONE_TRANSFER" and len(plan.segments) >= 2:
         second = plan.segments[1]
-        message += f" {plan.segments[0].alightStop.stopName}에서 내려 {second.routeNo}번으로 한 번 갈아타면 돼."
+        message += f" 이어서 {second.boardStop.stopName}에서 {second.routeNo}번으로 갈아타고 {second.alightStop.stopName}에서 내려."
+    return message
+
+
+def _segment_guidance_sentence(segment) -> str:
+    board = segment.boardStop.stopName
+    alight = segment.alightStop.stopName
+    direction = segment.directionHint or segment.boardStop.directionHint
+    direction_text = f"({direction})" if direction else ""
+    message = f"{board}{direction_text}에서 {segment.routeNo}번을 타고 {alight}에서 내려."
+    first_arrival = min((arrival.arrivalMinutes for arrival in segment.arrivals), default=None)
+    if first_arrival is not None:
+        message += f" 지금 기준 첫 차는 약 {first_arrival}분 뒤 도착 예정이야."
+    elif segment.serviceStatus is not None and segment.serviceStatus.message:
+        message += f" {segment.serviceStatus.message}"
+    elif segment.arrivalUnknown:
+        message += " 실시간 도착정보는 아직 확인하지 못했어."
     return message
 
 

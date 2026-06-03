@@ -329,6 +329,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       if (hasNavPlan) {
         _pendingNavPlan = routePlan;
         _pendingNavPosition = preparation?.position;
+        if (_isExplicitNavStartRequest(text)) {
+          return LiveProcessResult(
+            spokenText: response.message,
+            navigateNow: true,
+          );
+        }
         return LiveProcessResult(
           spokenText:
               "${response.message} 이 경로로 안내를 시작할까? '그래'라고 답하면 길 안내를 시작할게.",
@@ -498,7 +504,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         // 실제 API 모드에서 버스 경로를 찾으면 바로 안내를 켜지 않고,
         // 사용자에게 안내 시작 의사를 물어본다.
         final hasNavPlan = routePlan?.recommendedPlan != null;
-        final askConsent = _isLiveMode && hasNavPlan;
+        final autoStartNav = hasNavPlan && _isExplicitNavStartRequest(text);
+        final askConsent = _isLiveMode && hasNavPlan && !autoStartNav;
         final agentText = askConsent
             ? "${response.message} 이 경로로 안내를 시작할까? '그래'라고 답하면 길 안내를 시작할게."
             : response.message;
@@ -535,6 +542,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           // 동의를 기다리는 동안에는 내비게이션을 활성화하지 않는다.
           _pendingNavPlan = routePlan;
           _pendingNavPosition = planningPreparation?.position;
+        } else if (autoStartNav) {
+          _pendingNavPlan = null;
+          _pendingNavPosition = null;
+          await _activateLiveRoutePanel(routePlan!, planningPreparation?.position);
         } else if (hasNavPlan) {
           unawaited(_activateLiveRoutePanel(
               routePlan!, planningPreparation?.position));
@@ -603,6 +614,21 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     // 긴 새 목적지 문장을 동의로 오인하지 않도록 짧은 발화만 부분 일치 허용.
     if (compact.length <= 6) return yes.any(compact.contains);
     return false;
+  }
+
+  bool _isExplicitNavStartRequest(String text) {
+    final compact = _consentCompact(text);
+    const triggers = [
+      '안내해줘',
+      '안내해',
+      '길안내',
+      '안내시작',
+      '시작해줘',
+      '시작해',
+      '출발',
+      '가자',
+    ];
+    return triggers.any(compact.contains);
   }
 
   bool _isNavNegative(String text) {

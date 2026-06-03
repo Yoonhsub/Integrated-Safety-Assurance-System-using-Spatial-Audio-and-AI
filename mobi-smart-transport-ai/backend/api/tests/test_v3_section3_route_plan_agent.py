@@ -49,6 +49,25 @@ def test_agent_converse_returns_structured_route_plan_for_arbitrary_place() -> N
     assert state["nearbyAlightingStops"]
 
 
+def test_agent_route_message_includes_boarding_and_alighting_steps() -> None:
+    response = _say(
+        "s-hospital-guidance",
+        "자비스, 충북대병원으로 안내해줘",
+        originLat=36.6359,
+        originLng=127.4596,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    message = body["message"]
+    assert body["routePlan"]["status"] == "RESOLVED"
+    assert "사창사거리 정류장" in message
+    assert "823번" in message
+    assert "충북대학교병원 정류장" in message
+    assert message.index("사창사거리 정류장") < message.index("823번")
+    assert message.index("823번") < message.index("충북대학교병원 정류장")
+
+
 def test_agent_converse_confirmation_followup_uses_pending_route_plan_context() -> None:
     first = _say(
         "s-confirm",
