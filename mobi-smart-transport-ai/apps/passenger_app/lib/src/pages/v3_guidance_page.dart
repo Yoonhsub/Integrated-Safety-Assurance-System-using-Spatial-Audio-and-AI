@@ -101,6 +101,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   // 보행 내비게이션을 자동 활성화하지 않는다(채팅·음성 공통).
   V3RoutePlanResponse? _pendingNavPlan;
   Position? _pendingNavPosition;
+  bool _activatePendingNavAfterLiveExit = false;
 
   String get _wakeWord => widget.agentName;
   bool get _isLiveMode => widget.dataMode == 'live';
@@ -251,6 +252,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// 전체 화면 Live 음성 대화 페이지를 연다(실제 API 모드 전용).
   Future<void> _openLiveVoice() async {
     unawaited(_cueService.prepareLiveGeneratedSpeech());
+    _activatePendingNavAfterLiveExit = false;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
@@ -263,6 +265,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         ),
       ),
     );
+    if (!mounted) return;
+    await _activatePendingNavPlanAfterLiveExit();
   }
 
   /// Live 음성 발화 1턴 처리: 길안내 동의 → 네비 전환, 그 외 → 에이전트 응답.
@@ -362,12 +366,34 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       });
     }
     if (navigated && _pendingNavPlan != null) {
-      final plan = _pendingNavPlan!;
-      final pos = _pendingNavPosition;
-      _pendingNavPlan = null;
-      _pendingNavPosition = null;
-      unawaited(_activateLiveRoutePanel(plan, pos));
+      debugPrint('[MOBI v3 live nav] route activation queued by consent.');
+      _activatePendingNavAfterLiveExit = true;
+    } else if (!navigated && _pendingNavPlan != null) {
+      debugPrint('[MOBI v3 live nav] route activation queued by close.');
+      _activatePendingNavAfterLiveExit = true;
+    } else if (navigated) {
+      debugPrint('[MOBI v3 live nav] consent received but pending plan is empty.');
     }
+  }
+
+  Future<void> _activatePendingNavPlanAfterLiveExit() async {
+    if (!_activatePendingNavAfterLiveExit) return;
+    _activatePendingNavAfterLiveExit = false;
+    final routePlan = _pendingNavPlan;
+    final position = _pendingNavPosition;
+    _pendingNavPlan = null;
+    _pendingNavPosition = null;
+    if (routePlan == null) {
+      debugPrint('[MOBI v3 live nav] skipped activation: no pending plan.');
+      return;
+    }
+    final plan = routePlan.recommendedPlan;
+    if (plan == null || plan.segments.isEmpty) {
+      debugPrint('[MOBI v3 live nav] skipped activation: empty route segments.');
+      _stopLiveRoutePolling(clearStatus: true);
+      return;
+    }
+    await _activateLiveRoutePanel(routePlan, position);
   }
 
   Future<void> _sendUtteranceFromSource({
