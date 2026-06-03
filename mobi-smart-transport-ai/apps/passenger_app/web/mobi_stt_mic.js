@@ -14,6 +14,8 @@
   let level = 0.0;
   let running = false;
   let lastUrl = "";
+  let watchdog = null;
+  let recoveryTimer = null;
 
   function setHandlers(onTranscript, onState) {
     handlers = { onTranscript, onState };
@@ -48,22 +50,64 @@
     return window.btoa(binary);
   }
 
+  function _emitState(state) {
+    if (handlers.onState) handlers.onState(state);
+  }
+
+  function _scheduleRecover(delayMs = 350) {
+    if (!running || recoveryTimer) return;
+    recoveryTimer = window.setTimeout(async () => {
+      recoveryTimer = null;
+      await resume();
+    }, delayMs);
+  }
+
   function _openSocket() {
+    if (!lastUrl) return;
     if (socket && (socket.readyState === 0 || socket.readyState === 1)) return;
-    socket = new WebSocket(lastUrl);
+    try {
+      socket = new WebSocket(lastUrl);
+    } catch (_) {
+      _scheduleRecover(1000);
+      return;
+    }
+    socket.onopen = () => _emitState("listening");
     socket.onmessage = (event) => {
       let msg;
       try { msg = JSON.parse(event.data); } catch (_) { return; }
       if (msg.type === "transcript" && handlers.onTranscript) {
         handlers.onTranscript(msg.text || "", !!msg.isFinal);
-      } else if (msg.type === "ready" && handlers.onState) {
-        handlers.onState("ready");
-      } else if (msg.type === "error" && handlers.onState) {
-        handlers.onState("error");
+      } else if (msg.type === "ready") {
+        _emitState("ready");
+      } else if (msg.type === "error") {
+        _emitState("error");
       }
     };
-    socket.onclose = () => { if (handlers.onState) handlers.onState("closed"); };
-    socket.onerror = () => { if (handlers.onState) handlers.onState("error"); };
+    socket.onclose = () => {
+      _emitState("closed");
+      _scheduleRecover();
+    };
+    socket.onerror = () => {
+      _emitState("error");
+      _scheduleRecover(700);
+    };
+  }
+
+  function _startWatchdog() {
+    if (watchdog) return;
+    watchdog = window.setInterval(() => {
+      if (!running) return;
+      const suspended = ctx && ctx.state === "suspended";
+      const socketClosed = !socket || socket.readyState === 2 || socket.readyState === 3;
+      if (suspended || socketClosed) _scheduleRecover(0);
+    }, 1000);
+  }
+
+  function _stopWatchdog() {
+    if (watchdog) window.clearInterval(watchdog);
+    if (recoveryTimer) window.clearTimeout(recoveryTimer);
+    watchdog = null;
+    recoveryTimer = null;
   }
 
   function _attachProcessor() {
@@ -78,7 +122,12 @@
       let sum = 0;
       for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
       level = Math.min(1, Math.sqrt(sum / input.length) * 4.0);
-      if (paused || !socket || socket.readyState !== 1) return;
+      if (!running) return;
+      if (!socket || socket.readyState > 1) {
+        _openSocket();
+        return;
+      }
+      if (socket.readyState !== 1) return;
       const ds = _downsampleTo16k(input, ctx.sampleRate);
       try {
         socket.send(JSON.stringify({ type: "audio", data: _floatToPcm16Base64(ds), sampleRate: 16000 }));
@@ -99,9 +148,10 @@
       if (!ctx) ctx = new AudioContext();
       if (ctx.state === "suspended") await ctx.resume();
       _attachProcessor();
-      _openSocket();
       paused = false;
       running = true;
+      _openSocket();
+      _startWatchdog();
       return true;
     } catch (_) {
       await stop();
@@ -120,22 +170,40 @@
       // 이전 턴 잔여 전사가 다음 턴에 섞이지 않도록 서버 버퍼 리셋.
       if (socket && socket.readyState === 1) {
         try { socket.send(JSON.stringify({ type: "reset" })); } catch (_) {}
+      } else if (socket) {
+        socket.addEventListener("open", () => {
+          try { socket.send(JSON.stringify({ type: "reset" })); } catch (_) {}
+        }, { once: true });
       }
       running = true;
+      _startWatchdog();
       return true;
     } catch (_) {
+      _emitState("resumeBlocked");
       return false;
     }
   }
 
-  function setPaused(p) { paused = !!p; }
+  function setPaused(p) {
+    // Keep the capture graph and WebSocket alive across AI turns. Dart ignores
+    // transcripts while not listening and calls resume(), which resets the
+    // server buffer before the next user turn.
+    paused = !!p;
+    if (running && !paused) {
+      resume();
+    }
+  }
   function getLevel() { return level; } // 전송 멈춰도 RMS는 유지(barge-in용)
   function isRunning() { return running; }
+  function needsRecovery() {
+    return !!(running && ((!ctx || ctx.state === "suspended") || (!socket || socket.readyState > 1)));
+  }
 
   async function stop() {
     running = false;
     paused = false;
     level = 0.0;
+    _stopWatchdog();
     try { if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: "stop" })); } catch (_) {}
     try { if (processor) processor.disconnect(); } catch (_) {}
     try { if (source) source.disconnect(); } catch (_) {}
@@ -146,7 +214,7 @@
   }
 
   window.MobiSttMic = {
-    setHandlers, start, resume, stop, setPaused, getLevel, isRunning,
+    setHandlers, start, resume, stop, setPaused, getLevel, isRunning, needsRecovery,
     supported: () => !!(navigator.mediaDevices && (window.AudioContext || window.webkitAudioContext) && window.WebSocket),
   };
 })();

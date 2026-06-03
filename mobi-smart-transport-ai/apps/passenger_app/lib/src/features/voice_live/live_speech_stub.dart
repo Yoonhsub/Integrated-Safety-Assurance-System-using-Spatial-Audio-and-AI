@@ -12,6 +12,7 @@ class LiveSpeechRecognizer {
 
   bool get isContinuous => false;
   bool get supported => true;
+  bool get needsRecovery => false;
 
   Future<bool> start({
     required String localeId,

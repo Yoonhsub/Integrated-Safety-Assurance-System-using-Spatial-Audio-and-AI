@@ -70,10 +70,12 @@ class LiveVoiceController {
   static const Duration _inactivityTimeout = Duration(seconds: 12);
   static const Duration _bargeInSustain = Duration(milliseconds: 320);
   static const Duration _tick = Duration(milliseconds: 33);
+  static const Duration _speechRecoveryTick = Duration(seconds: 1);
   // 듣기 재개 직후 잠깐은 이전 턴 잔여 인식 결과일 수 있어 무시한다.
   static const Duration _resumeGuard = Duration(milliseconds: 300);
 
   Timer? _levelTimer;
+  Timer? _speechRecoveryTimer;
   Timer? _inactivityTimer;
   bool _isCommitting = false;
   bool _disposed = false;
@@ -97,6 +99,10 @@ class LiveVoiceController {
     await _audioLevel.startMic();
     _startedAt = DateTime.now();
     _levelTimer ??= Timer.periodic(_tick, (_) => _onTick());
+    _speechRecoveryTimer ??= Timer.periodic(
+      _speechRecoveryTick,
+      (_) => _recoverRecognitionIfNeeded(),
+    );
     _setState(VoiceTurnState.listening);
     _listeningSince = DateTime.now();
     await _startRecognition();
@@ -115,7 +121,7 @@ class LiveVoiceController {
     if (_disposed) return;
     state.value = next;
     shaderMode.value = next.shaderMode;
-    // 듣는 중에만 마이크 전송 활성화(AI 발화 중 에코가 전사되는 것을 막는다).
+    // 웹은 캡처/WS를 계속 유지하고, 듣기 상태가 아닐 때 들어온 결과는 Dart에서 무시한다.
     _recognizer.setActive(next == VoiceTurnState.listening);
   }
 
@@ -253,7 +259,11 @@ class LiveVoiceController {
   void _onSpeechState(String s) {
     if (_disposed || _ending) return;
     if (s == 'listening') return;
-    if (s.startsWith('error')) return; // 자동 재시작/탭으로 회복.
+    if (s == 'ready' || s == 'recovering') return;
+    if (s == 'closed' || s == 'resumeBlocked' || s.startsWith('error')) {
+      _recoverRecognitionIfNeeded(force: true);
+      return;
+    }
     if (s == 'ended' || s == 'notListening' || s == 'done') {
       // 연속 인식(웹)은 JS가 자동 재시작한다. 비연속(네이티브)만 여기서 재개.
       if (!_recognizer.isContinuous &&
@@ -261,6 +271,13 @@ class LiveVoiceController {
         _recognizer.resume();
       }
     }
+  }
+
+  void _recoverRecognitionIfNeeded({bool force = false}) {
+    if (_disposed || _ending) return;
+    if (!force && !_recognizer.needsRecovery) return;
+    final ok = _recognizer.resume();
+    if (!ok) unawaited(_startRecognition());
   }
 
   void _resetInactivityTimer() {
@@ -355,7 +372,7 @@ class LiveVoiceController {
       _setState(VoiceTurnState.listening);
       _listeningSince = DateTime.now();
       // AI 발화 후 멈췄을 수 있는 마이크를 복구(컨텍스트 재개 + WS 재연결 + 버퍼 리셋).
-      _recognizer.resume();
+      if (!_recognizer.resume()) unawaited(_startRecognition());
       _resetInactivityTimer();
     } finally {
       _isCommitting = false;
@@ -367,6 +384,8 @@ class LiveVoiceController {
     _disposed = true;
     _levelTimer?.cancel();
     _levelTimer = null;
+    _speechRecoveryTimer?.cancel();
+    _speechRecoveryTimer = null;
     _inactivityTimer?.cancel();
     _inactivityTimer = null;
     try {
@@ -384,6 +403,7 @@ class LiveVoiceController {
 
   void dispose() {
     _levelTimer?.cancel();
+    _speechRecoveryTimer?.cancel();
     _inactivityTimer?.cancel();
     state.dispose();
     level.dispose();

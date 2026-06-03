@@ -10,6 +10,7 @@ extension type _MobiSttMic._(JSObject _) implements JSObject {
   external void setPaused(JSBoolean paused);
   external double getLevel();
   external bool isRunning();
+  external bool needsRecovery();
   external JSPromise<JSAny?> stop();
 }
 
@@ -52,11 +53,19 @@ class LiveSpeechRecognizer {
     }
   }
 
-  /// 듣기 활성/비활성(AI 발화 중에는 마이크 전송을 멈춰 에코 전사를 막는다).
+  /// 듣기 활성/비활성. 웹 JS는 캡처와 WS를 유지하고 Dart가 비듣기 결과를 무시한다.
   void setActive(bool active) {
     try {
       _api?.setPaused((!active).toJS);
     } catch (_) {}
+  }
+
+  bool get needsRecovery {
+    try {
+      return _api?.needsRecovery() ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   double micLevel() {
