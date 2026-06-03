@@ -40,6 +40,24 @@ def test_destination_candidates_needs_confirmation_for_stt_like_misrecognition()
     assert body["question"] == "혹시 상당산성 맞아?"
 
 
+def test_destination_candidates_confirms_sachang_stt_misrecognition() -> None:
+    result = DestinationCandidateResolver().resolve(heard_text="산창사거리", live=False)
+
+    assert result.status == "NEEDS_CONFIRMATION"
+    assert result.topCandidate is not None
+    assert result.topCandidate.name == "사창사거리"
+    assert result.question == "혹시 사창사거리 맞아?"
+
+
+def test_destination_candidates_auto_resolves_obvious_hospital_alias() -> None:
+    result = DestinationCandidateResolver().resolve(heard_text="충북 대학교 병원", live=False)
+
+    assert result.status == "RESOLVED"
+    assert result.topCandidate is not None
+    assert result.topCandidate.name == "충북대학교병원"
+    assert result.question is None
+
+
 def test_destination_resolver_prefers_stt_confirmation_over_live_keyword_choice() -> None:
     class EmptyStopCatalog:
         def search_by_name(self, **_):

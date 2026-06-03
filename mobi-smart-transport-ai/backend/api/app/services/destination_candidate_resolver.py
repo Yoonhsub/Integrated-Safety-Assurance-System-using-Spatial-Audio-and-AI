@@ -30,7 +30,10 @@ _CHEONGJU_CENTER_LAT = 36.6424
 _CHEONGJU_CENTER_LNG = 127.4890
 _CHEONGJU_LOCAL_SEARCH_RADIUS_METERS = 20_000
 _LOCAL_AREA_DESTINATION_KEYWORDS = frozenset({"성안길"})
-_STT_CONFIRMATION_ALIASES = {"상단산성": "상당산성"}
+_STT_CONFIRMATION_ALIASES = {
+    "상단산성": "상당산성",
+    "산창사거리": "사창사거리",
+}
 
 
 @dataclass(frozen=True)
