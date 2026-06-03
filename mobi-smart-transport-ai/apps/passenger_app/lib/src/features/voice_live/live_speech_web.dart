@@ -2,32 +2,36 @@ import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
 
-extension type _MobiSpeech._(JSObject _) implements JSObject {
+extension type _MobiSttMic._(JSObject _) implements JSObject {
   external bool supported();
-  external void setHandlers(JSFunction onResult, JSFunction onState);
-  external bool start(JSString localeId);
-  external bool resume();
-  external void stop();
+  external void setHandlers(JSFunction onTranscript, JSFunction onState);
+  external JSPromise<JSBoolean> start(JSString wsUrl, JSString lang);
+  external void setPaused(JSBoolean paused);
+  external double getLevel();
   external bool isRunning();
+  external JSPromise<JSAny?> stop();
 }
 
 extension type _MobiWindow._(JSObject _) implements JSObject {
-  @JS('MobiSpeech')
-  external _MobiSpeech? get mobiSpeech;
+  @JS('MobiSttMic')
+  external _MobiSttMic? get sttMic;
 }
 
-/// 웹 연속 음성 인식기(webkitSpeechRecognition, continuous=true).
-/// 세션을 한 번만 시작하고 턴 사이에 멈추지 않아, iOS/인앱 브라우저의 무제스처
-/// 재시작 차단으로 두 번째 턴부터 인식이 씹히던 문제를 피한다.
+/// 웹 음성 인식기 — 브라우저 Web Speech 대신 **서버 STT**(마이크 PCM → /agent/stt/live
+/// → Gemini Live 입력 전사)를 사용한다. 세션을 한 번만 시작하고(연속) 마이크는 계속
+/// 열려 있어 iOS/인앱 브라우저의 무제스처 재시작 제약을 우회한다.
 class LiveSpeechRecognizer {
-  _MobiSpeech? get _api => _MobiWindow._(web.window).mobiSpeech;
+  _MobiSttMic? get _api => _MobiWindow._(web.window).sttMic;
 
-  /// 연속 인식 여부. 웹은 true(턴마다 stop/restart 안 함).
   bool get isContinuous => true;
-
   bool get supported => _api?.supported() ?? false;
 
-  /// 사용자 제스처(버튼 탭) 컨텍스트에서 호출해야 모바일에서 확실히 시작된다.
+  String _wsUrl() {
+    final loc = web.window.location;
+    final scheme = loc.protocol == 'https:' ? 'wss' : 'ws';
+    return '$scheme://${loc.host}/agent/stt/live';
+  }
+
   Future<bool> start({
     required String localeId,
     required void Function(String text, bool isFinal) onResult,
@@ -35,31 +39,41 @@ class LiveSpeechRecognizer {
   }) async {
     final api = _api;
     if (api == null) return false;
-    void resultCb(JSString text, JSBoolean isFinal) =>
+    void transcriptCb(JSString text, JSBoolean isFinal) =>
         onResult(text.toDart, isFinal.toDart);
     void stateCb(JSString state) => onState(state.toDart);
-    api.setHandlers(resultCb.toJS, stateCb.toJS);
+    api.setHandlers(transcriptCb.toJS, stateCb.toJS);
     try {
-      return api.start(localeId.toJS);
+      final ok = await api.start(_wsUrl().toJS, localeId.toJS).toDart;
+      return ok.toDart;
     } catch (_) {
       return false;
     }
   }
 
-  /// 자동 재시작이 막힌 뒤 사용자 탭으로 다시 시작.
-  bool resume() {
-    final api = _api;
-    if (api == null) return false;
+  /// 듣기 활성/비활성(AI 발화 중에는 마이크 전송을 멈춰 에코 전사를 막는다).
+  void setActive(bool active) {
     try {
-      return api.resume();
-    } catch (_) {
-      return false;
-    }
+      _api?.setPaused((!active).toJS);
+    } catch (_) {}
+  }
+
+  double micLevel() {
+    final api = _api;
+    if (api == null) return 0.0;
+    final v = api.getLevel();
+    return v.isFinite ? v : 0.0;
+  }
+
+  /// 서버 STT는 마이크가 계속 열려 있어 별도 재시작이 필요 없다. 활성화만 보장.
+  bool resume() {
+    setActive(true);
+    return _api?.isRunning() ?? false;
   }
 
   Future<void> stop() async {
     try {
-      _api?.stop();
+      await _api?.stop().toDart;
     } catch (_) {}
   }
 }

@@ -45,6 +45,9 @@ class LiveSpeechRecognizer {
     );
   }
 
+  // 네이티브 경로에는 에코 전사 이슈가 없어 no-op.
+  void setActive(bool active) {}
+
   bool resume() {
     if (!_ready || _speech.isListening) return _ready;
     _listen();

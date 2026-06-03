@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -45,8 +46,12 @@ from app.services.v3_gemini_service import (
 )
 from app.services.v3_gemini_live_audio_service import (
     GeminiLiveAudioUnavailable,
+    extract_input_transcript,
     live_audio_model,
     live_audio_voice,
+    live_stt_audio_message,
+    live_stt_audio_stream_end_message,
+    open_gemini_stt_session,
     stream_live_audio_pcm,
 )
 from app.services.v3_guidance_store import V3SessionRecord, v3_guidance_store
@@ -151,6 +156,125 @@ async def tts_live(websocket: WebSocket) -> None:
             websocket,
             code="GEMINI_LIVE_TTS_ERROR",
             message="Live TTS streaming failed.",
+        )
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
+@router.websocket("/stt/live")
+async def stt_live(websocket: WebSocket) -> None:
+    """클라이언트 마이크 PCM을 Gemini Live API 입력 전사로 중계해 실시간 STT를 돌려준다.
+
+    브라우저 Web Speech의 무제스처 재시작 제약을 우회하는 서버 STT 경로.
+    클라이언트는 {type:'audio', data:<base64 pcm16>, sampleRate:16000} 를 계속 보내고,
+    서버는 {type:'transcript', text, isFinal} 를 돌려준다. Gemini의 서버측 VAD가
+    발화 종료(turnComplete)를 판정한다.
+    """
+    await websocket.accept()
+    try:
+        async with open_gemini_stt_session() as gemini:
+            await websocket.send_json({"type": "ready"})
+
+            async def pump_client_to_gemini() -> None:
+                while True:
+                    msg = await websocket.receive_json()
+                    kind = msg.get("type")
+                    if kind == "audio":
+                        data = msg.get("data")
+                        if isinstance(data, str) and data:
+                            sr = msg.get("sampleRate") or 16000
+                            await gemini.send(
+                                json.dumps(
+                                    live_stt_audio_message(
+                                        b64_pcm16=data, sample_rate=int(sr)
+                                    )
+                                )
+                            )
+                    elif kind == "stop":
+                        try:
+                            await gemini.send(
+                                json.dumps(live_stt_audio_stream_end_message())
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return
+
+            async def pump_gemini_to_client() -> None:
+                # AUDIO 모달리티에선 turnComplete가 모델의 (무시할) 음성 응답 뒤에야 와서
+                # 느리다. 그래서 입력 전사가 일정 시간 갱신되지 않으면(발화 종료) 확정한다.
+                buffer = ""
+                last_delta = 0.0
+                loop = asyncio.get_running_loop()
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(gemini.recv(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        if buffer.strip() and (loop.time() - last_delta) >= 1.2:
+                            await websocket.send_json(
+                                {"type": "transcript", "text": buffer, "isFinal": True}
+                            )
+                            buffer = ""
+                        continue
+                    try:
+                        decoded = json.loads(raw)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(decoded, dict):
+                        continue
+                    text, turn_complete = extract_input_transcript(decoded)
+                    if text:
+                        buffer += text
+                        last_delta = loop.time()
+                        await websocket.send_json(
+                            {"type": "transcript", "text": buffer, "isFinal": False}
+                        )
+                    if turn_complete and buffer.strip():
+                        await websocket.send_json(
+                            {"type": "transcript", "text": buffer, "isFinal": True}
+                        )
+                        buffer = ""
+
+            tasks = [
+                asyncio.create_task(pump_client_to_gemini()),
+                asyncio.create_task(pump_gemini_to_client()),
+            ]
+            try:
+                done, _ = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        import traceback
+
+                        detail = "".join(
+                            traceback.format_exception_only(type(exc), exc)
+                        ).strip()
+                        try:
+                            await websocket.send_json(
+                                {"type": "debug", "where": "pump", "detail": detail}
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+            finally:
+                for task in tasks:
+                    task.cancel()
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    except GeminiLiveAudioUnavailable:
+        await _send_live_audio_error(
+            websocket,
+            code="GEMINI_LIVE_STT_UNAVAILABLE",
+            message="Gemini Live STT could not be started.",
+        )
+    except Exception:  # noqa: BLE001
+        await _send_live_audio_error(
+            websocket,
+            code="GEMINI_LIVE_STT_ERROR",
+            message="Live STT streaming failed.",
         )
     finally:
         try:

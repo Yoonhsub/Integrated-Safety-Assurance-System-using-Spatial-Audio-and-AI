@@ -99,18 +99,24 @@ class LiveVoiceController {
     _levelTimer ??= Timer.periodic(_tick, (_) => _onTick());
     _setState(VoiceTurnState.listening);
     _listeningSince = DateTime.now();
-    await _recognizer.start(
+    await _startRecognition();
+    _resetInactivityTimer();
+  }
+
+  Future<bool> _startRecognition() async {
+    return _recognizer.start(
       localeId: 'ko_KR',
       onResult: _onSpeechResult,
       onState: _onSpeechState,
     );
-    _resetInactivityTimer();
   }
 
   void _setState(VoiceTurnState next) {
     if (_disposed) return;
     state.value = next;
     shaderMode.value = next.shaderMode;
+    // 듣는 중에만 마이크 전송 활성화(AI 발화 중 에코가 전사되는 것을 막는다).
+    _recognizer.setActive(next == VoiceTurnState.listening);
   }
 
   // 사용자가 마이크 버튼을 탭하면 듣기를 (재)개한다. 자동 재시작이 막힌 환경에서
@@ -118,9 +124,15 @@ class LiveVoiceController {
   void handleMicTap() {
     if (_disposed || _ending) return;
     if (muted.value) muted.value = false;
-    if (state.value != VoiceTurnState.listening) return;
     _listeningSince = DateTime.now();
-    _recognizer.resume();
+    // 사용자 제스처 컨텍스트에서 인식을 (재)시작한다. 최초 getUserMedia 권한 프롬프트가
+    // 제스처를 요구하는 iOS 환경에서의 복구 경로. 이미 동작 중이면 활성화만 보장.
+    _recognizer.setActive(true);
+    if (!_recognizer.isContinuous) {
+      _recognizer.resume();
+      return;
+    }
+    unawaited(_startRecognition());
   }
 
   Future<void> setMuted(bool value) async {

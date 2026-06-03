@@ -2,10 +2,8 @@ import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
 
-extension type _MobiVoiceMic._(JSObject _) implements JSObject {
-  external JSPromise<JSBoolean> start();
+extension type _MobiSttMic._(JSObject _) implements JSObject {
   external double getLevel();
-  external JSPromise<JSAny?> stop();
 }
 
 extension type _MobiLiveAudio._(JSObject _) implements JSObject {
@@ -14,28 +12,20 @@ extension type _MobiLiveAudio._(JSObject _) implements JSObject {
 }
 
 extension type _MobiWindow._(JSObject _) implements JSObject {
-  @JS('MobiVoiceMic')
-  external _MobiVoiceMic? get voiceMic;
+  @JS('MobiSttMic')
+  external _MobiSttMic? get sttMic;
   @JS('MobiLiveAudio')
   external _MobiLiveAudio? get liveAudio;
 }
 
-/// 웹에서 마이크 입력 RMS(파란 오로라·VAD)와 AI 출력 RMS(주황 오로라)를
-/// Web Audio AnalyserNode로 읽어 온다.
+/// 웹 오디오 레벨: 마이크 RMS(파란 오로라)는 서버 STT용 마이크(MobiSttMic)에서,
+/// AI 출력 RMS·재생 잔여(주황 오로라/드레인)는 MobiLiveAudio에서 읽는다.
+/// 마이크 자체는 음성 인식기(LiveSpeechRecognizer)가 열고 닫으므로 여기선 no-op.
 class VoiceAudioLevel {
-  Future<bool> startMic() async {
-    final mic = _MobiWindow._(web.window).voiceMic;
-    if (mic == null) return false;
-    try {
-      final ok = await mic.start().toDart;
-      return ok.toDart;
-    } catch (_) {
-      return false;
-    }
-  }
+  Future<bool> startMic() async => true;
 
   double micLevel() {
-    final mic = _MobiWindow._(web.window).voiceMic;
+    final mic = _MobiWindow._(web.window).sttMic;
     if (mic == null) return 0.0;
     final value = mic.getLevel();
     return value.isFinite ? value : 0.0;
@@ -55,13 +45,5 @@ class VoiceAudioLevel {
     return value.isFinite ? value : 0.0;
   }
 
-  Future<void> stopMic() async {
-    final mic = _MobiWindow._(web.window).voiceMic;
-    if (mic == null) return;
-    try {
-      await mic.stop().toDart;
-    } catch (_) {
-      // 정리 실패는 무시한다.
-    }
-  }
+  Future<void> stopMic() async {}
 }
