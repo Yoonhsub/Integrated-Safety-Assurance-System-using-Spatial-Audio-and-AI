@@ -1447,8 +1447,9 @@ def _segment_guidance_sentence(segment) -> str:
     board = segment.boardStop.stopName
     alight = segment.alightStop.stopName
     direction = segment.directionHint or segment.boardStop.directionHint
-    direction_text = f"({direction})" if direction else ""
-    message = f"{board}{direction_text}에서 {segment.routeNo}번을 타고 {alight}에서 내려."
+    message = f"{board}에서 {segment.routeNo}번을 타고 {alight}에서 내려."
+    if direction:
+        message += f" 승차 방향은 {direction}이야."
     first_arrival = min((arrival.arrivalMinutes for arrival in segment.arrivals), default=None)
     if first_arrival is not None:
         message += f" 지금 기준 첫 차는 약 {first_arrival}분 뒤 도착 예정이야."
