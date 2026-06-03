@@ -1,11 +1,12 @@
 {
-    "name": "mobi_passenger_app",
-    "short_name": "mobi_passenger_app",
+    "name": "모비 실시간 버스 안내",
+    "short_name": "모비",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B0B12",
+    "theme_color": "#6750A4",
+    "description": "시각장애인을 위한 모비 실시간 버스 안내 — 음성 대화로 청주 버스 길찾기",
+    "lang": "ko",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
