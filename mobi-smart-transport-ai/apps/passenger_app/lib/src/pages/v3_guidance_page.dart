@@ -88,6 +88,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   final List<ChatMessage> _chatMessages = [];
   bool _isChatOpen = false;
 
+  // 경로 확정 시 실시간 내비 카드(지도)로 자동 스크롤하기 위한 키/컨트롤러.
+  final ScrollController _bodyScrollController = ScrollController();
+  final GlobalKey _navCardKey = GlobalKey();
+
+  // 안내 중 3분마다 더 나은 경로를 탐색해 사용자에게 교체를 권유한다.
+  Timer? _betterRouteTimer;
+  V3RoutePlanResponse? _betterRoutePlan;
+  String? _declinedRouteKey;
+
   // 경로를 찾은 뒤 사용자에게 "안내해줄까?"를 물어 두고, 사용자가 동의("그래")할 때까지
   // 보행 내비게이션을 자동 활성화하지 않는다(채팅·음성 공통).
   V3RoutePlanResponse? _pendingNavPlan;
@@ -113,8 +122,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void dispose() {
     _liveRouteTimer?.cancel();
+    _betterRouteTimer?.cancel();
     _voiceGuideService.cancelListening();
     _utteranceController.dispose();
+    _bodyScrollController.dispose();
     _cueService.dispose();
     super.dispose();
   }
@@ -765,6 +776,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     return const _RoutePlanningPreparation();
   }
 
+  /// 실시간 내비(지도) 카드가 화면에 보이도록 부드럽게 스크롤한다.
+  void _scrollToNavCard() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _navCardKey.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
+    });
+  }
+
   Future<void> _activateLiveRoutePanel(
     V3RoutePlanResponse routePlan,
     Position? position,
@@ -783,14 +808,94 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _liveStatus = null;
       _liveRouteError = null;
       _lastRoutePosition = position ?? _cachedPosition;
+      // 경로 확정 시 채팅 오버레이를 닫고 지도(내비) 화면으로 자동 이동한다.
+      _isChatOpen = false;
     });
+    _scrollToNavCard();
     await _refreshNavStatus();
+    _scrollToNavCard();
     if (!mounted || !_liveRoutePanelVisible || _navStopped) return;
     // 30초 단위 최신화. 서버의 더 짧은 캐시가 같은 경계의 이전 응답 재사용을 막는다.
     _liveRouteTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!_isLiveRouteLoading && _liveRoutePanelVisible && !_navStopped) {
         unawaited(_refreshNavStatus());
       }
+    });
+    // 새 경로가 켜지면 이전 '더 나은 경로' 제안/거절 기록을 초기화하고 3분 주기 탐색 시작.
+    _betterRouteTimer?.cancel();
+    _betterRoutePlan = null;
+    _declinedRouteKey = null;
+    _betterRouteTimer = Timer.periodic(const Duration(minutes: 3), (_) {
+      if (_liveRoutePanelVisible && !_navStopped) {
+        unawaited(_checkBetterRoute());
+      }
+    });
+  }
+
+  String _segmentKey(V3RoutePlanSegment? seg) =>
+      seg == null ? '' : '${seg.routeNo}-${seg.boardStop.stopId}';
+
+  int? _planEtaMinutes(V3RoutePlanResponse? rp) {
+    final plan = rp?.recommendedPlan;
+    if (plan == null || plan.segments.isEmpty) return null;
+    if (plan.totalEstimatedMinutes != null) return plan.totalEstimatedMinutes;
+    final seg = plan.segments.first;
+    return seg.arrivals.isNotEmpty ? seg.arrivals.first.arrivalMinutes : null;
+  }
+
+  /// 3분마다 같은 목적지로 다시 탐색해, 실시간 도착 기준으로 더 빠른 경로가 있으면 제안.
+  Future<void> _checkBetterRoute() async {
+    if (_navStopped || !_liveRoutePanelVisible || _betterRoutePlan != null) return;
+    final current = _lastRoutePlan;
+    final curPlan = current?.recommendedPlan;
+    if (curPlan == null || curPlan.segments.isEmpty) return;
+    final destination = current?.destination?.topCandidate?.name ??
+        curPlan.destinationName;
+    if (destination.trim().isEmpty) return;
+    final pos = _cachedPosition ?? _lastRoutePosition;
+    try {
+      final fresh = await _client.routePlan(
+        q: destination,
+        originLat: pos?.latitude,
+        originLng: pos?.longitude,
+        mode: widget.dataMode,
+      );
+      final cand = fresh.recommendedPlan;
+      if (cand == null || cand.segments.isEmpty) return;
+      final candKey = _segmentKey(cand.segments.first);
+      final curKey = _segmentKey(curPlan.segments.first);
+      if (candKey == curKey || candKey == _declinedRouteKey) return;
+      final candEta = _planEtaMinutes(fresh);
+      final curEta = _planEtaMinutes(current);
+      if (candEta == null || curEta == null) return;
+      // 최소 3분 이상 빨라질 때만 권유(잦은 제안 방지).
+      if (candEta <= curEta - 3 && mounted) {
+        setState(() => _betterRoutePlan = fresh);
+        unawaited(_speakAgentMessage(
+          '더 빠른 ${cand.segments.first.routeNo}번 경로를 찾았어. 약 $candEta분이야. 바꿀까?',
+        ));
+      }
+    } catch (_) {
+      // 실패는 조용히 무시하고 다음 주기에 다시 시도한다.
+    }
+  }
+
+  void _acceptBetterRoute() {
+    final fresh = _betterRoutePlan;
+    if (fresh == null) return;
+    setState(() {
+      _betterRoutePlan = null;
+      _lastRoutePlan = fresh;
+      _lastArrivals = _arrivalsFromRoutePlan(fresh);
+    });
+    unawaited(_activateLiveRoutePanel(fresh, _cachedPosition ?? _lastRoutePosition));
+  }
+
+  void _declineBetterRoute() {
+    final seg = _betterRoutePlan?.recommendedPlan?.segments.first;
+    setState(() {
+      _declinedRouteKey = _segmentKey(seg);
+      _betterRoutePlan = null;
     });
   }
 
@@ -860,6 +965,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   void _stopNavigation() {
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
+    _betterRouteTimer?.cancel();
+    _betterRouteTimer = null;
     if (!mounted) return;
     setState(() {
       _navStopped = true;
@@ -868,6 +975,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _liveStatus = null;
       _liveRouteError = null;
       _routePlanningStatus = null;
+      _betterRoutePlan = null;
       _lastRoutePlan = null;
       _lastArrivals = null;
     });
@@ -877,10 +985,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   void _stopLiveRoutePolling({bool clearStatus = false}) {
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
+    _betterRouteTimer?.cancel();
+    _betterRouteTimer = null;
     if (!mounted) return;
     setState(() {
       _liveRoutePanelVisible = false;
       _isLiveRouteLoading = false;
+      _betterRoutePlan = null;
       if (clearStatus) {
         _liveStatus = null;
         _liveRouteError = null;
@@ -1164,6 +1275,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         child: Stack(
           children: [
             SingleChildScrollView(
+              controller: _bodyScrollController,
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1200,9 +1312,21 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                           : () => _ensureLocation(forceRequest: true),
                     ),
                   ],
+                  if (_betterRoutePlan != null &&
+                      _liveRoutePanelVisible &&
+                      !_navStopped) ...[
+                    const SizedBox(height: 12),
+                    _BetterRouteCard(
+                      candidate: _betterRoutePlan!,
+                      etaMinutes: _planEtaMinutes(_betterRoutePlan),
+                      onAccept: _acceptBetterRoute,
+                      onDecline: _declineBetterRoute,
+                    ),
+                  ],
                   if (_liveRoutePanelVisible && !_navStopped) ...[
                     const SizedBox(height: 12),
                     _RealtimeNavCard(
+                      key: _navCardKey,
                       status: _liveStatus,
                       routePlan: _lastRoutePlan,
                       userPosition: _cachedPosition ?? _lastRoutePosition,
@@ -1788,6 +1912,79 @@ class _LiveQuestionMethodsCard extends StatelessWidget {
   }
 }
 
+class _BetterRouteCard extends StatelessWidget {
+  const _BetterRouteCard({
+    required this.candidate,
+    required this.etaMinutes,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final V3RoutePlanResponse candidate;
+  final int? etaMinutes;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final plan = candidate.recommendedPlan;
+    final seg = (plan != null && plan.segments.isNotEmpty)
+        ? plan.segments.first
+        : null;
+    final routeNo = seg?.routeNo ?? '새 경로';
+    final etaText = etaMinutes == null ? '' : ' · 약 $etaMinutes분';
+    return Card(
+      color: theme.colorScheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.alt_route, color: theme.colorScheme.onTertiaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '더 빠른 경로를 찾았어',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onTertiaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$routeNo번 경로$etaText. 이 경로로 바꿀까?',
+              style: TextStyle(color: theme.colorScheme.onTertiaryContainer),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onAccept,
+                    icon: const Icon(Icons.swap_horiz),
+                    label: const Text('이 경로로 바꾸기'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton(
+                  onPressed: onDecline,
+                  child: const Text('유지'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _NavStoppedNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -1805,6 +2002,7 @@ class _NavStoppedNotice extends StatelessWidget {
 
 class _RealtimeNavCard extends StatelessWidget {
   const _RealtimeNavCard({
+    super.key,
     required this.status,
     required this.routePlan,
     required this.userPosition,

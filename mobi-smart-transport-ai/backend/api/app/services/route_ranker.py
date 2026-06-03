@@ -37,7 +37,27 @@ class RouteRanker:
             + unknown_directions * 6
             + (min(total_estimated_minutes // 5, 16) if total_estimated_minutes is not None else 0)
         )
-        score = max(0, min(100, 100 + direct_bonus + verification_adjustment - penalty))
+        # 실시간 도착정보 기반 보정: 단순 소요시간만 보지 않고, 탑승 버스가 실제로
+        # 곧 오는지를 강하게 반영한다. (예: '도착 예정 정보 없음' 노선보다 '3분 뒤 도착'
+        # 노선을 우선) — 도착정보 없는 경로는 신뢰도가 낮아 큰 감점.
+        boarding = candidate.segments[0] if candidate.segments else None
+        boarding_wait = (
+            boarding.arrivals[0].arrivalMinutes
+            if boarding is not None and boarding.arrivals
+            else None
+        )
+        no_realtime = (
+            boarding is None or boarding.arrivalUnknown or not boarding.arrivals
+        )
+        if no_realtime:
+            arrival_adjustment = -22
+        else:
+            # 0분 임박 +12 ~ 26분 이상 -14. 곧 오는 버스일수록 가점.
+            arrival_adjustment = max(-14, 12 - int(boarding_wait or 0))
+        score = max(
+            0,
+            min(100, 100 + direct_bonus + verification_adjustment + arrival_adjustment - penalty),
+        )
         accessibility = max(0.0, min(1.0, 1.0 - candidate.transferCount * 0.22 - candidate.estimatedWalkMeters / 3500))
         simplicity = max(0.0, min(1.0, 1.0 - candidate.transferCount * 0.35 - len(candidate.segments) * 0.04))
         evidence = [
@@ -50,7 +70,15 @@ class RouteRanker:
         if unknown_directions:
             evidence.append(f"방향정보 미확인 {unknown_directions}개 구간")
         evidence.append(f"검증 상태 {candidate.verificationStatus.value}")
-        if candidate.transferCount == 0:
+        if no_realtime:
+            evidence.append("탑승 버스 실시간 도착정보 없음")
+        elif boarding_wait is not None:
+            evidence.append(f"탑승 버스 약 {boarding_wait}분 뒤 도착")
+        if no_realtime:
+            reason = "다른 후보는 실시간 도착정보가 없어, 도착이 확인된 버스를 우선 추천합니다."
+        elif boarding_wait is not None and boarding_wait <= 6:
+            reason = f"탑승 버스가 약 {boarding_wait}분 뒤 도착해 실제로 가장 빨리 탈 수 있어 추천합니다."
+        elif candidate.transferCount == 0:
             reason = "환승 없이 이동할 수 있어 우선 추천합니다."
         elif unknown_arrivals:
             reason = "일부 도착정보를 확인하지 못했지만 이동 조건이 단순한 순서로 추천합니다."
