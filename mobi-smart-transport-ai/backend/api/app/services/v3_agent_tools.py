@@ -108,6 +108,16 @@ def classify_agent_intent(
         )
     if "언제" in text or "몇 분" in text or "몇분" in compact or "도착정보" in compact:
         return AgentIntentResult(AgentIntent.QUERY_ARRIVAL, normalized)
+    if (
+        "안내해" in text
+        and normalized.destination_candidate_text
+        and not _looks_like_arrival_selection(text, compact)
+    ):
+        return AgentIntentResult(
+            AgentIntent.FIND_ROUTE,
+            normalized,
+            normalized.destination_candidate_text,
+        )
     if "안내해" in text or "오는 걸로" in text or "오는걸로" in compact:
         return AgentIntentResult(AgentIntent.SELECT_ARRIVAL, normalized)
     if any(
@@ -120,6 +130,25 @@ def classify_agent_intent(
             normalized.destination_candidate_text,
         )
     return AgentIntentResult(AgentIntent.UNKNOWN, normalized)
+
+
+def _looks_like_arrival_selection(text: str, compact: str) -> bool:
+    """Distinguish "that arriving bus" from "guide me to <destination>"."""
+
+    selection_terms = (
+        "오는걸로",
+        "이걸로",
+        "그걸로",
+        "저걸로",
+        "걸로",
+        "거로",
+        "첫번째",
+        "두번째",
+        "세번째",
+        "번째",
+        "분뒤",
+    )
+    return "오는 걸로" in text or any(term in compact for term in selection_terms)
 
 
 def resolve_destination_tool(

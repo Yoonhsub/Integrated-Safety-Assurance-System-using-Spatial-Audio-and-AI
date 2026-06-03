@@ -54,6 +54,19 @@ def test_classify_agent_intent_prioritizes_new_destination_over_selected_plan() 
     assert result.explicit_destination == "충북대병원"
 
 
+def test_classify_agent_intent_treats_destination_guidance_as_route_request() -> None:
+    result = classify_agent_intent("충북대병원으로 안내해줘")
+
+    assert result.intent == AgentIntent.FIND_ROUTE
+    assert result.explicit_destination == "충북대병원"
+
+
+def test_classify_agent_intent_keeps_arriving_bus_guidance_as_selection() -> None:
+    result = classify_agent_intent("응, 6분 뒤 오는 걸로 안내해줘.")
+
+    assert result.intent == AgentIntent.SELECT_ARRIVAL
+
+
 def test_classify_agent_intent_keeps_arrival_followup_contextual() -> None:
     session = V3SessionRecord(
         session_id="tool-arrival-followup",
