@@ -970,6 +970,21 @@ def _infer_destination_confirmation(
     if top is None or top.latitude is None or top.longitude is None:
         return None
 
+    # 표기 차이만 있는 명백한 일치(예: "충북대 병원" → "충북대학교병원")는
+    # 되묻지 않고 검증된 경로를 그대로 안내한다.
+    if _is_obvious_destination_match(heard_text, top.name):
+        trace.record(
+            "DESTINATION_INFERENCE",
+            "목적지 추론·검증 완료(자동 확정)",
+            "들린 목적지가 검증된 후보와 명백히 일치해 확인 질문 없이 바로 안내해.",
+            safe_payload={
+                "heardText": heard_text,
+                "inferred": guess,
+                "verified": top.name,
+            },
+        )
+        return verify
+
     question = f"혹시 {top.name} 맞을까?"
     trace.record(
         "DESTINATION_INFERENCE",
@@ -1490,6 +1505,28 @@ def _is_explicit_new_route_request(utterance: str, wake_word: str) -> bool:
 
 def _compact(text: str) -> str:
     return "".join(character for character in text if character.isalnum())
+
+
+def _normalize_place(text: str) -> str:
+    """장소명을 느슨하게 정규화한다(표기 차이 흡수용).
+
+    예: "충북대 병원" ↔ "충북대학교병원" 을 같은 키로 만든다.
+    """
+    compact = _compact(text)
+    return compact.replace("대학교", "대").replace("학교", "")
+
+
+def _is_obvious_destination_match(heard: str, name: str) -> bool:
+    """들린 목적지와 (API로 검증된) 후보가 명백히 같은 곳이면 True.
+
+    이 경우 "혹시 X 맞을까?" 되묻지 않고 바로 안내한다. 검증 단계에서 이미
+    실재가 확인된 후보이므로, 표기 차이만 있는 명백한 일치는 확인을 생략한다.
+    """
+    a = _normalize_place(heard)
+    b = _normalize_place(name)
+    if len(a) < 3 or len(b) < 3:
+        return False
+    return a == b or a in b or b in a
 
 
 def _extract_destination(utterance: str) -> str | None:
