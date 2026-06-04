@@ -392,11 +392,14 @@ class DestinationCandidateResolver:
             _normalize(top.name) == normalized
             or _is_unambiguous_known_alias(normalized, top.name)
         )
-        verbatim_match = _normalize(top.name) == normalized
+        _norm_top = _normalize(top.name)
+        # 후보 이름이 사용자 발화와 글자 그대로 같거나(verbatim), 발화 안에 후보
+        # 이름이 통째로 들어 있으면(예: "상당구청으로", "상당구청 가") 확정으로 본다.
+        # (자기가 방금 말한 "상당구청"을 "혹시 상당구청 맞아?"로 되묻는 멍청함 방지)
+        verbatim_match = _norm_top == normalized or (
+            len(_norm_top) >= 3 and _norm_top in normalized
+        )
         if verbatim_match or (exact_top_name and not close_choices):
-            # 사용자가 말한 지명과 후보 이름이 글자 그대로 일치하면(verbatim) 경쟁 후보·
-            # 확신 점수와 무관하게 바로 확정한다. (자기가 방금 말한 "상당구청"을
-            # "혹시 상당구청 맞아?"로 되묻는 멍청한 동작 방지)
             status = DestinationResolveStatus.RESOLVED
         elif exact_top_name and top.confidence >= 0.90:
             status = DestinationResolveStatus.RESOLVED
