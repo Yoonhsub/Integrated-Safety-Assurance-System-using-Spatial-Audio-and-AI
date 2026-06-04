@@ -304,7 +304,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final preparation = shouldPlanRoute ? await _beginRoutePlanning() : null;
     // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
     // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
-    if (_cachedPosition == null) await _ensureLocation(forceRequest: true);
+    _absorbWatchedPosition();
     final originPosition = preparation?.position ?? _cachedPosition;
     try {
       final response = await _converseWithThoughts(
@@ -464,7 +464,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         shouldPlanRoute ? await _beginRoutePlanning() : null;
     // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
     // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
-    if (_cachedPosition == null) await _ensureLocation(forceRequest: true);
+    _absorbWatchedPosition();
     final originPosition = planningPreparation?.position ?? _cachedPosition;
 
     try {
@@ -807,6 +807,27 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _locationRequest = null;
       }
     }
+  }
+
+  /// watch가 받아 둔 최신 웹 좌표를 _cachedPosition에 즉시 흡수한다(긴 대기 없이).
+  /// 권한이 있으면 watchPosition이 계속 좌표를 갱신하므로, 매 요청마다 무거운
+  /// getCurrentPosition을 기다리지 않고도 최신 좌표를 실어 보낼 수 있다.
+  void _absorbWatchedPosition() {
+    if (_cachedPosition != null || !kIsWeb) return;
+    final c = webGeoCached();
+    if (c == null) return;
+    _cachedPosition = Position(
+      latitude: c.latitude,
+      longitude: c.longitude,
+      timestamp: DateTime.now(),
+      accuracy: c.accuracy,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
   }
 
   Future<void> _resolveLocation() async {
