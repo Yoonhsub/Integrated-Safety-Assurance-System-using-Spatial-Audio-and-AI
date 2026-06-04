@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 
@@ -15,7 +17,7 @@ Future<void> bootstrapFirebase() async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
-    );
+    ).timeout(const Duration(seconds: 3));
     if (kDebugMode) {
       debugPrint('FlutterFire 클라이언트 초기화 완료 (${defaultTargetPlatform.name}).');
     }
