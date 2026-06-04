@@ -80,7 +80,15 @@ class LiveCaptionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 에이전트 응답을 한 글자씩 타이핑되듯 점진적으로 노출한다(GPT 스타일 스트리밍).
+  // 타이핑 노출 속도(말하는 속도에 맞춤). 한 글자당 대략 이 시간만큼 걸려 노출된다.
+  // TTS(한국어) 발화 속도와 비슷하게 잡아, 긴 답변이 한 번에 쏟아지지 않고
+  // 음성과 함께 또박또박 타이핑되도록 한다.
+  static const double _msPerChar = 120.0;
+
+  /// 에이전트 응답을 한 글자씩 타이핑되듯 점진적으로 노출한다(말하는 속도에 동기화).
+  ///
+  /// 경과 시간 기준으로 노출 글자 수를 계산해, 답변이 길어도(5줄 이상이어도)
+  /// 한 번에 생성되지 않고 발화 속도에 맞춰 또박또박 채워진다.
   void streamAgent(String text) {
     clearThoughts();
     _streamTimer?.cancel();
@@ -94,14 +102,17 @@ class LiveCaptionController extends ChangeNotifier {
     );
     _temporaryLines.add(line);
     final index = _temporaryLines.length - 1;
-    var shown = 0;
+    final startedAt = DateTime.now();
     notifyListeners();
-    _streamTimer = Timer.periodic(const Duration(milliseconds: 32), (timer) {
+    // 40ms 주기로 다시 그리되, 실제 노출 글자 수는 경과 시간/_msPerChar 로 정해
+    // 프레임이 끊겨도 일정한 '말하는 속도'를 유지한다.
+    _streamTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) {
       if (index >= _temporaryLines.length) {
         timer.cancel();
         return;
       }
-      shown = (shown + 2).clamp(0, full.length);
+      final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+      final shown = (elapsedMs / _msPerChar).floor().clamp(0, full.length);
       final partial = full.substring(0, shown);
       final done = shown >= full.length;
       _temporaryLines[index] = _temporaryLines[index].copyWith(

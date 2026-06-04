@@ -89,9 +89,18 @@ void main() {
 
   // 진폭이 클수록 결이 들쭉날쭉하게 출렁인다.
   float jitter = (wave - 0.5) * mix(0.18, 0.62, level);
-  // 좌우로 부드럽게 굽이치는 큰 파동을 더해 통화 중 생동감을 준다.
-  float swell = sin(uv.x * 6.2831 + t * 0.9) * 0.05 * (0.4 + level);
-  float band = rise + jitter + swell;
+
+  // 음성 파형처럼 위아래로 출렁이는 다중 주파수 파동. 진폭을 오디오 레벨에
+  // 강하게 묶어, 소리가 클수록 오로라 윗가장자리가 파형처럼 크게 울렁이게 한다.
+  float amp = 0.05 + level * 0.34;
+  float waveform =
+      sin(uv.x * 6.2831 + t * 2.4) * amp
+    + sin(uv.x * 12.566 - t * 3.3) * amp * 0.55
+    + sin(uv.x * 19.0 + t * 1.8) * amp * 0.30;
+  // 화면 전체가 한 번씩 위아래로 들썩이는 호흡(레벨에 비례).
+  float bob = sin(t * 2.7) * (0.02 + level * 0.12);
+
+  float band = rise + jitter + waveform + bob;
 
   // 아래쪽일수록 진하고 위로 갈수록 부드럽게 사라지는 세로 마스크.
   float vertical = smoothstep(band + 0.30, 0.0, fromBottom);

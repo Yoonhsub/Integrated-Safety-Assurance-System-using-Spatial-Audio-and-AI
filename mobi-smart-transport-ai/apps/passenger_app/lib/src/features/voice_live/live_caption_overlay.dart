@@ -19,7 +19,7 @@ class LiveCaptionOverlay extends StatelessWidget {
 
   static const TextStyle _lineStyle = TextStyle(
     color: Colors.white,
-    fontSize: 16,
+    fontSize: 32,
     height: 1.35,
     shadows: [Shadow(blurRadius: 6, color: Colors.black87)],
   );
@@ -185,7 +185,7 @@ class _AnimatedCaptionLine extends StatelessWidget {
               ? LiveCaptionOverlay._lineStyle.copyWith(
                   color: Colors.white60,
                   fontStyle: FontStyle.italic,
-                  fontSize: 14,
+                  fontSize: 28,
                 )
               : LiveCaptionOverlay._lineStyle,
         ),
