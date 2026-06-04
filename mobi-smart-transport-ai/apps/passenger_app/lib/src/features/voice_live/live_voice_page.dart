@@ -64,10 +64,14 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
     _captions.flushTemporaryToSessionLog();
     final log = _captions.sessionLog;
     // 2) 진행 중인 Live TTS 재생/WebSocket 즉시 중단 + 마이크/STT/타이머 정리.
+    //    정리가 길어지거나 멈춰도(iOS 오디오 컨텍스트/WS close 지연) 화면 전환이
+    //    막히지 않도록 타임아웃을 둔다. (수십초 멈춰 X를 눌러야 했던 문제 방지)
     try {
-      await widget.stopAudio();
+      await widget.stopAudio().timeout(const Duration(milliseconds: 700));
     } catch (_) {}
-    await _controller.stop();
+    try {
+      await _controller.stop().timeout(const Duration(milliseconds: 700));
+    } catch (_) {}
     // 3) 화면 임시 자막 제거.
     _captions.clearTemporary();
     // 4) 로그 전달(부모가 통합 대화 로그에 저장) + 네비 전환 여부 통지.
