@@ -213,10 +213,10 @@ def _max_sync_enrich_candidates() -> int:
 
 def _sync_enrich_timeout_seconds() -> float:
     try:
-        value = float(os.getenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "12.0"))
+        value = float(os.getenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "20.0"))
     except ValueError:
-        value = 12.0
-    return max(0.05, min(value, 20.0))
+        value = 20.0
+    return max(0.05, min(value, 30.0))
 
 
 def _with_warning(candidate: RoutePlanCandidate, warning: str) -> RoutePlanCandidate:

@@ -226,10 +226,10 @@ def test_slow_tago_enrichment_returns_odsay_candidate_without_blocking(monkeypat
 
 def test_sync_tago_enrichment_timeout_is_bounded(monkeypatch) -> None:
     monkeypatch.delenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", raising=False)
-    assert _sync_enrich_timeout_seconds() == 12.0
+    assert _sync_enrich_timeout_seconds() == 20.0
 
     monkeypatch.setenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "99")
-    assert _sync_enrich_timeout_seconds() == 20.0
+    assert _sync_enrich_timeout_seconds() == 30.0
 
 
 def test_odsay_mapper_removes_side_of_road_claims_from_provider_stop_names() -> None:
