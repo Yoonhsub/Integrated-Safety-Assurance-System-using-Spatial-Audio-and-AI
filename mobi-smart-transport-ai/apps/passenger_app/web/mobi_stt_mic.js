@@ -151,7 +151,13 @@
     lastUrl = wsUrl || lastUrl;
     if (!navigator.mediaDevices) return false;
     try {
-      if (!stream) {
+      // 세션 동안 살려 둔 마이크 스트림이 있으면 재사용해 권한을 다시 묻지 않는다.
+      // 단, iOS가 백그라운드에서 트랙을 끝낸 경우(ended)엔 재획득한다.
+      const tracksLive = stream &&
+        stream.getTracks().length > 0 &&
+        stream.getTracks().every((t) => t.readyState === "live");
+      if (!tracksLive) {
+        if (stream) { try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {} }
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
         });
@@ -211,6 +217,10 @@
     return !!(running && ((!ctx || ctx.state === "suspended") || (!socket || socket.readyState > 1)));
   }
 
+  // 소프트 정지: 전송·분석·소켓만 멈추고 **마이크 스트림(stream)과 오디오
+  // 컨텍스트(ctx)는 세션 동안 유지**한다. 이렇게 하면 Live를 다시 열 때
+  // getUserMedia를 새로 호출하지 않아 권한을 매번 다시 묻지 않는다.
+  // (마이크 표시등은 켜진 채 유지되며, 앱(탭)을 닫으면 자동 해제된다.)
   async function stop() {
     running = false;
     paused = false;
@@ -220,13 +230,25 @@
     try { if (processor) processor.disconnect(); } catch (_) {}
     try { if (source) source.disconnect(); } catch (_) {}
     try { if (socket) socket.close(); } catch (_) {}
-    try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
-    try { if (ctx) await ctx.close(); } catch (_) {}
-    processor = null; source = null; socket = null; stream = null; ctx = null;
+    processor = null; source = null; socket = null;
+    // stream/ctx 는 의도적으로 유지(권한 재요청 방지). 해제는 release().
   }
 
+  // 하드 해제: 마이크 트랙까지 완전히 닫는다(표시등 꺼짐). 앱(탭) 종료 시 호출.
+  async function release() {
+    await stop();
+    try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    try { if (ctx) await ctx.close(); } catch (_) {}
+    stream = null; ctx = null;
+  }
+
+  // 페이지(앱)가 닫히거나 백그라운드로 사라질 때 마이크를 확실히 해제한다.
+  try {
+    window.addEventListener("pagehide", () => { release(); });
+  } catch (_) {}
+
   window.MobiSttMic = {
-    setHandlers, start, resume, stop, setPaused, getLevel, isRunning, needsRecovery,
+    setHandlers, start, resume, stop, release, setPaused, getLevel, isRunning, needsRecovery,
     supported: () => !!(navigator.mediaDevices && (window.AudioContext || window.webkitAudioContext) && window.WebSocket),
   };
 })();
