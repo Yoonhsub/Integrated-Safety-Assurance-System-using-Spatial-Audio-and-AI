@@ -78,6 +78,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Position? _cachedPosition;
   // 위치 권한이 거부/불가해 실제 위치를 쓸 수 없는 상태.
   bool _locationDenied = false;
+  // 마지막 위치 실패 원인(권한 거부/위치 불가/타임아웃 등)을 사용자에게 노출용.
+  String? _locationError;
   Future<void>? _locationRequest;
   bool _isAgentTraceExpanded = false;
   bool _isListening = false;
@@ -115,6 +117,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
     );
     _bootstrap();
+    // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
+    // 캐시한다(일회성 실패로 좌표가 비는 '들쭉날쭉' 방지).
+    if (kIsWeb) startWebGeoWatch();
     // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
     _ensureLocation(forceRequest: true);
   }
@@ -297,11 +302,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
     final shouldPlanRoute = _looksLikeRouteRequest(text);
     final preparation = shouldPlanRoute ? await _beginRoutePlanning() : null;
+    // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
+    // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
+    if (_cachedPosition == null) await _ensureLocation(forceRequest: true);
+    final originPosition = preparation?.position ?? _cachedPosition;
     try {
       final response = await _converseWithThoughts(
         text: text,
-        originLat: preparation?.position?.latitude,
-        originLng: preparation?.position?.longitude,
+        originLat: originPosition?.latitude,
+        originLng: originPosition?.longitude,
         onThought: onThought ?? (_) {},
       );
       // 종료 의사는 백엔드 Gemini가 자연어로 판별(END_CONVERSATION).
@@ -453,6 +462,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final shouldPlanRoute = _looksLikeRouteRequest(text);
     final planningPreparation =
         shouldPlanRoute ? await _beginRoutePlanning() : null;
+    // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
+    // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
+    if (_cachedPosition == null) await _ensureLocation(forceRequest: true);
+    final originPosition = planningPreparation?.position ?? _cachedPosition;
 
     try {
       await _runGuarded(() async {
@@ -460,8 +473,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         final thinkingMessages = <ChatMessage>[];
         final response = await _converseWithThoughts(
           text: text,
-          originLat: planningPreparation?.position?.latitude,
-          originLng: planningPreparation?.position?.longitude,
+          originLat: originPosition?.latitude,
+          originLng: originPosition?.longitude,
           onThought: (thought) {
             final msg = ChatMessage(
               text: thought,
@@ -803,13 +816,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       setState(() {
         _cachedPosition = position;
         _locationDenied = false;
+        _locationError = null;
       });
     } catch (_) {
       if (!mounted) return;
       // 실제 위치를 못 받으면 사창사거리 같은 가짜 좌표를 만들지 않는다.
       // 위치 없이 진행하고, 사용자가 권한을 켤 수 있도록 안내 배너만 띄운다.
+      // 실패 원인(권한 거부/위치 불가/타임아웃)을 함께 노출한다.
       setState(() {
         _locationDenied = true;
+        _locationError = kIsWeb ? webGeoError() : null;
       });
     }
   }
@@ -1118,7 +1134,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     // (인앱 브라우저에서 geolocator의 엄격한 호출이 실패해도 maximumAge 캐시로
     //  좌표를 받을 수 있다.)
     if (kIsWeb) {
-      final coords = await getWebCoords();
+      // watch가 이미 받아 둔 최신 좌표가 있으면 즉시 사용(프롬프트/지연 없음).
+      // 없으면 일회성 getCurrentPosition으로 폴백.
+      final coords = webGeoCached() ?? await getWebCoords();
       if (coords != null) {
         return Position(
           latitude: coords.latitude,
@@ -1371,6 +1389,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                   if (_locationDenied) ...[
                     const SizedBox(height: 12),
                     _LocationNeededBanner(
+                      detail: _locationError,
                       onRetry: _isBusy
                           ? null
                           : () => _ensureLocation(forceRequest: true),
@@ -1759,9 +1778,10 @@ class _InfoChip extends StatelessWidget {
 }
 
 class _LocationNeededBanner extends StatelessWidget {
-  const _LocationNeededBanner({this.onRetry});
+  const _LocationNeededBanner({this.onRetry, this.detail});
 
   final VoidCallback? onRetry;
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -1776,6 +1796,13 @@ class _LocationNeededBanner extends StatelessWidget {
               '현재 위치를 확인하지 못했어. 정확한 경로 안내에는 위치가 필요해.',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
+            if (detail != null && detail!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                '원인: ${detail!}',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+            ],
             const SizedBox(height: 6),
             const Text(
               '• 카카오톡·인스타그램 같은 앱 안의 브라우저는 위치를 막는 경우가 많아. '
