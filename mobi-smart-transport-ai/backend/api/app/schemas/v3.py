@@ -411,6 +411,7 @@ class V3BusArrival(StrictApiModel):
     routeId: str | None = None
     stopId: str
     arrivalMinutes: int = Field(ge=0)
+    arrivalSeconds: int | None = Field(default=None, ge=0)
     remainingStops: int | None = Field(default=None, ge=0)
     lowFloor: bool | None = None
     congestion: str | None = None

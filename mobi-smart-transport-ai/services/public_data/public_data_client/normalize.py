@@ -143,3 +143,17 @@ def seconds_to_arrival_minutes(raw_seconds) -> int:
     if seconds < 0:
         return 0
     return int(round(seconds / 60))
+
+
+def seconds_to_arrival_seconds(raw_seconds) -> int:
+    """원본 도착 예정 초를 UI 표시용 정수 초로 보존한다."""
+    if raw_seconds is None:
+        raise TypeError("raw_seconds must not be None")
+    try:
+        if isinstance(raw_seconds, str):
+            seconds = float(raw_seconds.strip())
+        else:
+            seconds = float(raw_seconds)
+    except (ValueError, TypeError) as exc:
+        raise TypeError(f"raw_seconds must be numeric, got {raw_seconds!r}") from exc
+    return max(0, int(round(seconds)))

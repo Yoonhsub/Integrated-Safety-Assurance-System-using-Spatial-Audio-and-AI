@@ -92,6 +92,31 @@ def test_odsay_success_and_tago_match_returns_enriched_candidate() -> None:
     assert plan.arrival.source == FallbackSource.PUBLIC_API
 
 
+def test_odsay_stop_name_suffix_still_matches_tago_sequence() -> None:
+    enricher = RoutePlanEnricher(
+        sequence_cache=RouteStopSequenceCache(mock_sequences=[_sequence()]),
+        arrival_fetcher=_arrival_fetcher,
+    )
+    orchestrator = _orchestrator(
+        local_response=_local_response(plans=[]),
+        odsay_client=_FakeOdsayClient(
+            payload=_odsay_payload(
+                boarding_name="사창사거리앞",
+                alighting_name="상당산성입구",
+            )
+        ),
+        enricher=enricher,
+    )
+
+    response = orchestrator.plan(heard_text="상당산성", origin_lat=36.1, origin_lng=127.1, live=True)
+
+    plan = response.recommendedPlan
+    assert plan is not None
+    assert plan.verificationStatus == RoutePlanVerificationStatus.VERIFIED_WITH_TAGO
+    assert plan.segments[0].boardStop.stopId == "CJB-BOARD"
+    assert plan.segments[0].alightStop.stopId == "CJB-ALIGHT"
+
+
 def test_odsay_success_without_tago_match_keeps_safe_odsay_only_candidate() -> None:
     orchestrator = _orchestrator(
         local_response=_local_response(plans=[]),
@@ -229,6 +254,24 @@ def test_odsay_mapper_removes_side_of_road_claims_from_provider_stop_names() -> 
         assert prohibited not in visible_text
 
 
+def test_odsay_mapper_preserves_tago_node_id_when_provider_supplies_it() -> None:
+    candidate = OdsayRouteMapper().map_result(
+        OdsayTransitResult(
+            raw_response=_odsay_payload(
+                start_id="CJB-BOARD",
+                end_id="CJB-ALIGHT",
+            )
+        ),
+        destination_name="상당산성",
+    )[0]
+
+    segment = candidate.segments[0]
+    assert segment.boardStop.stopId == "CJB-BOARD"
+    assert segment.boardStop.nodeId == "CJB-BOARD"
+    assert segment.alightStop.stopId == "CJB-ALIGHT"
+    assert segment.alightStop.nodeId == "CJB-ALIGHT"
+
+
 class _FakeResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
@@ -251,9 +294,16 @@ class _FakeHttpClient:
 
 
 class _FakeOdsayClient:
-    def __init__(self, *, enabled: bool = True, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        error: Exception | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
         self.enabled = enabled
         self.error = error
+        self.payload = payload
 
     def is_enabled(self) -> bool:
         return self.enabled
@@ -261,7 +311,7 @@ class _FakeOdsayClient:
     def search_public_transit_path(self, **_: Any) -> OdsayTransitResult:
         if self.error:
             raise self.error
-        return OdsayTransitResult(raw_response=_odsay_payload())
+        return OdsayTransitResult(raw_response=self.payload or _odsay_payload())
 
 
 class _FakeLocalPlanner:
@@ -394,6 +444,8 @@ def _odsay_payload(
     *,
     boarding_name: str = "사창사거리",
     alighting_name: str = "상당산성",
+    start_id: Any = 100,
+    end_id: Any = 200,
 ) -> dict[str, Any]:
     return {
         "result": {
@@ -405,9 +457,9 @@ def _odsay_payload(
                         {
                             "trafficType": 2,
                             "startName": boarding_name,
-                            "startID": 100,
+                            "startID": start_id,
                             "endName": alighting_name,
-                            "endID": 200,
+                            "endID": end_id,
                             "stationCount": 2,
                             "sectionTime": 22,
                             "lane": [{"busNo": "862", "busID": 86200}],

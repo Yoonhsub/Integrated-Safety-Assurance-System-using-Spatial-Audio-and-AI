@@ -417,6 +417,7 @@ def test_tago_lowercase_arrival_fields_are_normalized() -> None:
     assert arrivals[0].routeId == "CJB270086200"
     assert arrivals[0].busNo == "862"
     assert arrivals[0].arrivalMinutes == 4
+    assert arrivals[0].arrivalSeconds == 240
     assert arrivals[0].remainingStops == 3
     assert arrivals[0].lowFloor is True
 

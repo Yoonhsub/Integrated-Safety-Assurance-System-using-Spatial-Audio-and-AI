@@ -122,6 +122,8 @@ class RouteStopSequenceCache:
                             stop_id=str(stop.nodeId or ""),
                             stop_name=str(stop.nodeNm or ""),
                             order=int(stop.nodeOrd or index),
+                            latitude=stop.latitude,
+                            longitude=stop.longitude,
                         )
                     )
                 for route_id, nodes in grouped.items():

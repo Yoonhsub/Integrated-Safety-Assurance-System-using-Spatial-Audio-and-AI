@@ -65,6 +65,8 @@ class OdsayRouteMapper:
             alighting_name = _guidance_text(sub_path.get("endName"))
             boarding_provider_id = _text(sub_path.get("startID"))
             alighting_provider_id = _text(sub_path.get("endID"))
+            boarding_stop_id = _verified_tago_node_id(boarding_provider_id) or f"odsay-unverified-board-{index}-{leg_index}"
+            alighting_stop_id = _verified_tago_node_id(alighting_provider_id) or f"odsay-unverified-alight-{index}-{leg_index}"
             legs.append(
                 RoutePlanLeg(
                     mode=mode,
@@ -87,13 +89,19 @@ class OdsayRouteMapper:
                     source="ODSAY",
                     providerRouteId=provider_route_id,
                     boardStop=RoutePlanStop(
-                        stopId=f"odsay-unverified-board-{index}-{leg_index}",
+                        stopId=boarding_stop_id,
                         stopName=boarding_name,
+                        nodeId=boarding_provider_id,
+                        latitude=_float_or_none(sub_path.get("startY") or sub_path.get("startLat") or sub_path.get("startLatitude")),
+                        longitude=_float_or_none(sub_path.get("startX") or sub_path.get("startLng") or sub_path.get("startLongitude")),
                         visionRequiredForSideHint=True,
                     ),
                     alightStop=RoutePlanStop(
-                        stopId=f"odsay-unverified-alight-{index}-{leg_index}",
+                        stopId=alighting_stop_id,
                         stopName=alighting_name,
+                        nodeId=alighting_provider_id,
+                        latitude=_float_or_none(sub_path.get("endY") or sub_path.get("endLat") or sub_path.get("endLatitude")),
+                        longitude=_float_or_none(sub_path.get("endX") or sub_path.get("endLng") or sub_path.get("endLongitude")),
                         visionRequiredForSideHint=True,
                     ),
                     stopCount=max(0, _int_or_zero(sub_path.get("stationCount"))),
@@ -202,3 +210,16 @@ def _float_or_zero(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _verified_tago_node_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value if value.upper().startswith("CJB") else None

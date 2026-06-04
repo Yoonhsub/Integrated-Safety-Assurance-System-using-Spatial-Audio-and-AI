@@ -18,6 +18,7 @@ class NormalizedBusArrival(StrictPublicDataModel):
     routeId: str
     busNo: str
     arrivalMinutes: int = Field(ge=0)
+    arrivalSeconds: int | None = Field(default=None, ge=0)
     remainingStops: int | None = Field(default=None, ge=0)
     lowFloor: bool
     congestion: CongestionLevel
@@ -45,6 +46,8 @@ class NormalizedBusRouteNode(StrictPublicDataModel):
     nodeId: str
     nodeNm: str
     nodeOrd: int
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class NormalizedBusRouteStopsResponse(StrictPublicDataModel):

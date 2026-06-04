@@ -33,6 +33,13 @@
             "type": "integer",
             "minimum": 0
           },
+          "arrivalSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
           "remainingStops": {
             "type": [
               "integer",

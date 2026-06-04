@@ -282,6 +282,7 @@ class LiveBusArrivalsProvider:
         from .normalize import (
             map_reride_to_congestion,
             map_vehicle_type_to_low_floor,
+            seconds_to_arrival_seconds,
             seconds_to_arrival_minutes,
         )
 
@@ -321,6 +322,7 @@ class LiveBusArrivalsProvider:
             if raw_secs is None:
                 raw_secs = 0
             arrival_minutes = seconds_to_arrival_minutes(raw_secs)
+            arrival_seconds = seconds_to_arrival_seconds(raw_secs)
 
             # 남은 정류장 수 (서울 BIS staOrd → TAGO arrprevstationcnt)
             remaining_stops = item.get("staOrd")
@@ -368,6 +370,7 @@ class LiveBusArrivalsProvider:
                     routeId=route_id,
                     busNo=bus_no,
                     arrivalMinutes=arrival_minutes,
+                    arrivalSeconds=arrival_seconds,
                     remainingStops=remaining_stops,
                     lowFloor=low_floor,
                     congestion=congestion,

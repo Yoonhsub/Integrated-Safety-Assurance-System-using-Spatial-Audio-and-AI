@@ -830,6 +830,7 @@ def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None
         "routeId",
         "busNo",
         "arrivalMinutes",
+        "arrivalSeconds",
         "remainingStops",
         "lowFloor",
         "congestion",

@@ -104,6 +104,19 @@ class BusRouteService(DataGoKrClient):
                         nodeId=str(item.get("nodeid", "")),
                         nodeNm=str(item.get("nodenm", "")),
                         nodeOrd=int(item.get("nodeord", 0)),
+                        latitude=_float_or_none(
+                            item.get("gpslati")
+                            or item.get("gpsLat")
+                            or item.get("lat")
+                            or item.get("latitude")
+                        ),
+                        longitude=_float_or_none(
+                            item.get("gpslong")
+                            or item.get("gpsLong")
+                            or item.get("lng")
+                            or item.get("lon")
+                            or item.get("longitude")
+                        ),
                     )
                 )
 
@@ -111,3 +124,10 @@ class BusRouteService(DataGoKrClient):
             logger.warning(f"Failed to parse bus route stops: {e}")
 
         return NormalizedBusRouteStopsResponse(routeId=routeId, nodes=nodes)
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

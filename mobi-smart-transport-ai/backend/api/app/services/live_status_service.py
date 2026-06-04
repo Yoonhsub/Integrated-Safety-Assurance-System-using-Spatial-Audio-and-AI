@@ -13,15 +13,37 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 
-from app.schemas.v3 import FallbackSource, utc_now
+from app.schemas.v3 import FallbackSource, RoutePlanSegment, RoutePlanStop, utc_now
 from app.schemas.v3_map import GeoPoint, LiveStatusResponse, NearbyStop
 from app.services import nearby_stops_service, walking_route_service
+from app.services.cheongju_route_planner import _mock_route_sequences
+from app.services.route_plan_enricher import _match_sequence
 from app.services.route_service_status import evaluate_route_service_status
+from app.services.route_stop_sequence_cache import RouteStopSequenceCache
 from app.services.v3_agent_tools import get_arrivals_tool, get_bus_locations_tool
+from services.public_data.public_data_client import BusRouteService
 
 # key -> (expires_at_monotonic, LiveStatusResponse)
 _CACHE: dict[tuple, tuple[float, LiveStatusResponse]] = {}
+_LIVE_SEQUENCE_CACHE = RouteStopSequenceCache(
+    route_service=BusRouteService(),
+    mock_sequences=_mock_route_sequences(),
+)
+
+
+@dataclass(frozen=True)
+class _RecoveredRouteIdentity:
+    route_id: str | None
+    board_stop_id: str
+    alight_stop_id: str | None
+    board_stop_name: str | None
+    alight_stop_name: str | None
+    board_lat: float | None
+    board_lng: float | None
+    alight_lat: float | None
+    alight_lng: float | None
 
 
 def _cache_ttl_seconds() -> float:
@@ -137,6 +159,28 @@ def get_live_status(
     mode: str | None = None,
 ) -> LiveStatusResponse:
     live = _resolve_live(mode)
+    recovered = _recover_route_identity(
+        live=live,
+        route_no=route_no,
+        route_id=route_id,
+        board_stop_id=board_stop_id,
+        alight_stop_id=alight_stop_id,
+        board_stop_name=board_stop_name,
+        alight_stop_name=alight_stop_name,
+        board_lat=board_lat,
+        board_lng=board_lng,
+        alight_lat=alight_lat,
+        alight_lng=alight_lng,
+    )
+    route_id = recovered.route_id
+    board_stop_id = recovered.board_stop_id
+    alight_stop_id = recovered.alight_stop_id
+    board_stop_name = recovered.board_stop_name
+    alight_stop_name = recovered.alight_stop_name
+    board_lat = recovered.board_lat
+    board_lng = recovered.board_lng
+    alight_lat = recovered.alight_lat
+    alight_lng = recovered.alight_lng
     key = _cache_key(
         route_no,
         route_id,
@@ -307,3 +351,88 @@ def get_live_status(
     if ttl > 0:
         _CACHE[key] = (now + ttl, response)
     return response
+
+
+def _recover_route_identity(
+    *,
+    live: bool,
+    route_no: str,
+    route_id: str | None,
+    board_stop_id: str,
+    alight_stop_id: str | None,
+    board_stop_name: str | None,
+    alight_stop_name: str | None,
+    board_lat: float | None,
+    board_lng: float | None,
+    alight_lat: float | None,
+    alight_lng: float | None,
+) -> _RecoveredRouteIdentity:
+    current = _RecoveredRouteIdentity(
+        route_id=route_id,
+        board_stop_id=board_stop_id,
+        alight_stop_id=alight_stop_id,
+        board_stop_name=board_stop_name,
+        alight_stop_name=alight_stop_name,
+        board_lat=board_lat,
+        board_lng=board_lng,
+        alight_lat=alight_lat,
+        alight_lng=alight_lng,
+    )
+    if not live or not board_stop_name or not alight_stop_name:
+        return current
+    if _looks_verified(route_id) and _looks_verified(board_stop_id) and _looks_verified(alight_stop_id):
+        return current
+    try:
+        sequences = [
+            sequence
+            for sequence in _LIVE_SEQUENCE_CACHE.sequences(live=True, route_nos=[route_no])
+            if sequence.source == FallbackSource.PUBLIC_API
+        ]
+    except Exception:
+        return current
+    segment = RoutePlanSegment(
+        routeNo=route_no,
+        routeId=route_id or "",
+        boardStop=RoutePlanStop(
+            stopId=board_stop_id,
+            nodeId=None if _is_unverified_id(board_stop_id) else board_stop_id,
+            stopName=board_stop_name,
+            latitude=board_lat,
+            longitude=board_lng,
+        ),
+        alightStop=RoutePlanStop(
+            stopId=alight_stop_id or "",
+            nodeId=None if _is_unverified_id(alight_stop_id) else alight_stop_id,
+            stopName=alight_stop_name,
+            latitude=alight_lat,
+            longitude=alight_lng,
+        ),
+        stopCount=0,
+        arrivals=[],
+        arrivalSource=FallbackSource.ERROR,
+    )
+    match = _match_sequence(sequences, segment)
+    if match is None:
+        return current
+    sequence, boarding_node, alighting_node = match
+    return _RecoveredRouteIdentity(
+        route_id=sequence.route_id,
+        board_stop_id=boarding_node.stop_id,
+        alight_stop_id=alighting_node.stop_id,
+        board_stop_name=boarding_node.stop_name or board_stop_name,
+        alight_stop_name=alighting_node.stop_name or alight_stop_name,
+        board_lat=boarding_node.latitude or board_lat,
+        board_lng=boarding_node.longitude or board_lng,
+        alight_lat=alighting_node.latitude or alight_lat,
+        alight_lng=alighting_node.longitude or alight_lng,
+    )
+
+
+def _looks_verified(value: str | None) -> bool:
+    return bool(value and value.strip().upper().startswith("CJB"))
+
+
+def _is_unverified_id(value: str | None) -> bool:
+    if not value:
+        return True
+    return value.startswith("odsay-unverified")

@@ -16,6 +16,7 @@ class BusArrival(StrictApiModel):
     routeId: str
     busNo: str
     arrivalMinutes: int = Field(ge=0)
+    arrivalSeconds: int | None = Field(default=None, ge=0)
     remainingStops: int | None = Field(default=None, ge=0)
     lowFloor: bool
     congestion: CongestionLevel

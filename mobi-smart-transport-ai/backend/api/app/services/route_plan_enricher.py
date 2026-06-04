@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
+from difflib import SequenceMatcher
 
 from app.schemas.v3 import (
     FallbackSource,
@@ -148,20 +150,27 @@ def _match_sequence(
     sequences: list[RouteSequence],
     segment: RoutePlanSegment,
 ) -> tuple[RouteSequence, RouteStopNode, RouteStopNode] | None:
-    boarding_name = _normalize_stop_name(segment.boardStop.stopName)
-    alighting_name = _normalize_stop_name(segment.alightStop.stopName)
+    best: tuple[float, RouteSequence, RouteStopNode, RouteStopNode] | None = None
     for sequence in sequences:
         if _normalize_route_no(sequence.route_no) != _normalize_route_no(segment.routeNo):
             continue
         for boarding_node in sequence.nodes:
-            if not _stop_name_matches(boarding_name, boarding_node.stop_name):
+            board_score = _stop_match_score(segment.boardStop, boarding_node)
+            if board_score < 0.58:
                 continue
             for alighting_node in sequence.nodes:
                 if boarding_node.order >= alighting_node.order:
                     continue
-                if _stop_name_matches(alighting_name, alighting_node.stop_name):
-                    return sequence, boarding_node, alighting_node
-    return None
+                alight_score = _stop_match_score(segment.alightStop, alighting_node)
+                if alight_score < 0.58:
+                    continue
+                score = board_score + alight_score
+                if best is None or score > best[0]:
+                    best = (score, sequence, boarding_node, alighting_node)
+    if best is None:
+        return None
+    _, sequence, boarding_node, alighting_node = best
+    return sequence, boarding_node, alighting_node
 
 
 def _stop(node: RouteStopNode, *, direction_hint: str | None) -> RoutePlanStop:
@@ -234,7 +243,68 @@ def _normalize_route_no(value: str) -> str:
 
 
 def _normalize_stop_name(value: str) -> str:
-    return re.sub(r"[\s\-_.,()]+", "", value).replace("정류장", "").lower()
+    normalized = re.sub(r"[\s\-_.,()/·]+", "", value or "").lower()
+    for suffix in ("버스정류장", "정류장", "승강장", "정류소"):
+        normalized = normalized.replace(suffix, "")
+    for prefix in ("충청북도", "충북", "청주시"):
+        normalized = normalized.replace(prefix, "")
+    return normalized
+
+
+def _candidate_stop_names(value: str) -> list[str]:
+    raw = value or ""
+    candidates = [raw]
+    candidates.extend(part for part in re.split(r"[.·,/()]", raw) if part)
+    out: list[str] = []
+    for candidate in candidates:
+        normalized = _normalize_stop_name(candidate)
+        if normalized and normalized not in out:
+            out.append(normalized)
+    return out
+
+
+def _stop_match_score(stop: RoutePlanStop, node: RouteStopNode) -> float:
+    stop_ids = {
+        value.strip()
+        for value in (stop.stopId, stop.nodeId)
+        if value and value.strip() and not value.startswith("odsay-unverified")
+    }
+    if node.stop_id and node.stop_id in stop_ids:
+        return 1.0
+
+    provider_names = _candidate_stop_names(stop.stopName)
+    sequence_name = _normalize_stop_name(node.stop_name)
+    name_score = 0.0
+    for provider_name in provider_names:
+        if not provider_name or not sequence_name:
+            continue
+        if provider_name == sequence_name:
+            name_score = max(name_score, 0.96)
+        elif provider_name in sequence_name or sequence_name in provider_name:
+            name_score = max(name_score, 0.86)
+        else:
+            name_score = max(name_score, SequenceMatcher(None, provider_name, sequence_name).ratio())
+
+    coordinate_score = _coordinate_match_score(stop, node)
+    return max(name_score, coordinate_score)
+
+
+def _coordinate_match_score(stop: RoutePlanStop, node: RouteStopNode) -> float:
+    if (
+        stop.latitude is None
+        or stop.longitude is None
+        or node.latitude is None
+        or node.longitude is None
+    ):
+        return 0.0
+    distance = _distance_meters(stop.latitude, stop.longitude, node.latitude, node.longitude)
+    if distance <= 40:
+        return 0.96
+    if distance <= 80:
+        return 0.82
+    if distance <= 140:
+        return 0.62
+    return 0.0
 
 
 def _stop_name_matches(normalized_provider_name: str, sequence_name: str) -> bool:
@@ -248,6 +318,19 @@ def _stop_name_matches(normalized_provider_name: str, sequence_name: str) -> boo
             or normalized_sequence_name in normalized_provider_name
         )
     )
+
+
+def _distance_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def _dedupe(values: list[str]) -> list[str]:
