@@ -154,7 +154,7 @@ class TransitPlannerOrchestrator:
             ]
         plans = self._ranker.rank(candidates)[:5]
         recommended = plans[0] if plans else None
-        warnings = _dedupe([warning for plan in plans for warning in plan.warnings])
+        warnings = _dedupe(recommended.warnings if recommended else [])
         return RoutePlanResponse(
             status=RoutePlanStatus.RESOLVED if recommended else RoutePlanStatus.NO_ROUTE,
             readiness=RoutePlanReadiness.READY if recommended else RoutePlanReadiness.NO_ROUTE,
