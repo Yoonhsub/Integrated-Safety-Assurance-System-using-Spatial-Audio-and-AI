@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, wait
 from collections.abc import Callable
 from typing import Any
 
@@ -186,29 +186,36 @@ class TransitPlannerOrchestrator:
         *,
         live: bool,
     ) -> tuple[list[RoutePlanCandidate], bool]:
-        enriched: list[RoutePlanCandidate] = []
-        for candidate in candidates:
-            future = _ENRICHMENT_EXECUTOR.submit(self._enricher.enrich, candidate, live=live)
-            try:
-                enriched.append(future.result(timeout=_sync_enrich_timeout_seconds()))
-            except FutureTimeoutError:
-                return enriched, True
-        return enriched, False
+        futures = [
+            (candidate, _ENRICHMENT_EXECUTOR.submit(self._enricher.enrich, candidate, live=live))
+            for candidate in candidates
+        ]
+        if not futures:
+            return [], False
+        done, not_done = wait(
+            [future for _, future in futures],
+            timeout=_sync_enrich_timeout_seconds(),
+        )
+        enriched = [
+            future.result() if future in done else candidate
+            for candidate, future in futures
+        ]
+        return enriched, bool(not_done)
 
 
 def _max_sync_enrich_candidates() -> int:
     try:
-        value = int(os.getenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "1"))
+        value = int(os.getenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "2"))
     except ValueError:
-        value = 1
+        value = 2
     return max(0, min(value, 5))
 
 
 def _sync_enrich_timeout_seconds() -> float:
     try:
-        value = float(os.getenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "4.0"))
+        value = float(os.getenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "7.0"))
     except ValueError:
-        value = 4.0
+        value = 7.0
     return max(0.05, min(value, 8.0))
 
 

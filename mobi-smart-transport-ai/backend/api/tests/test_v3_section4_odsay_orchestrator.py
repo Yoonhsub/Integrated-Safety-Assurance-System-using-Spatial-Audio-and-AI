@@ -191,15 +191,15 @@ def test_odsay_messages_do_not_add_side_of_road_claims() -> None:
         assert prohibited not in text
 
 
-def test_sync_tago_enrichment_defaults_to_one_candidate_and_is_bounded(monkeypatch) -> None:
+def test_sync_tago_enrichment_defaults_to_two_candidates_and_is_bounded(monkeypatch) -> None:
     monkeypatch.delenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", raising=False)
-    assert _max_sync_enrich_candidates() == 1
+    assert _max_sync_enrich_candidates() == 2
 
     monkeypatch.setenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "99")
     assert _max_sync_enrich_candidates() == 5
 
     monkeypatch.setenv("ODSAY_MAX_SYNC_ENRICH_CANDIDATES", "invalid")
-    assert _max_sync_enrich_candidates() == 1
+    assert _max_sync_enrich_candidates() == 2
 
 
 def test_slow_tago_enrichment_returns_odsay_candidate_without_blocking(monkeypatch) -> None:
@@ -226,7 +226,7 @@ def test_slow_tago_enrichment_returns_odsay_candidate_without_blocking(monkeypat
 
 def test_sync_tago_enrichment_timeout_is_bounded(monkeypatch) -> None:
     monkeypatch.delenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", raising=False)
-    assert _sync_enrich_timeout_seconds() == 4.0
+    assert _sync_enrich_timeout_seconds() == 7.0
 
     monkeypatch.setenv("ODSAY_SYNC_ENRICH_TIMEOUT_SECONDS", "99")
     assert _sync_enrich_timeout_seconds() == 8.0
