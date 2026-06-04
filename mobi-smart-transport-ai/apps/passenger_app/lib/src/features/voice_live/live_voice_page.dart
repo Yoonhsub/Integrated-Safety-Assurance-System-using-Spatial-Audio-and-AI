@@ -28,8 +28,8 @@ class LiveVoicePage extends StatefulWidget {
   final Future<void> Function() stopAudio;
 
   /// Live 세션 종료 시 호출. [navigated]이 true면 길 안내 동의로 인한 전환.
-  final void Function(List<LiveCaptionLine> sessionLog, {required bool navigated})
-      onExit;
+  final void Function(List<LiveCaptionLine> sessionLog,
+      {required bool navigated}) onExit;
 
   @override
   State<LiveVoicePage> createState() => _LiveVoicePageState();
@@ -66,9 +66,13 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
     // 2) 진행 중인 Live TTS 재생/WebSocket 즉시 중단 + 마이크/STT/타이머 정리.
     //    정리가 길어지거나 멈춰도(iOS 오디오 컨텍스트/WS close 지연) 화면 전환이
     //    막히지 않도록 타임아웃을 둔다. (수십초 멈춰 X를 눌러야 했던 문제 방지)
-    try {
-      await widget.stopAudio().timeout(const Duration(milliseconds: 700));
-    } catch (_) {}
+    //    단, 길 안내 전환에서는 마지막 안내 음성을 끝까지 들려야 하므로 TTS는
+    //    계속 재생하게 두고 마이크/STT만 정리한다.
+    if (!navigated) {
+      try {
+        await widget.stopAudio().timeout(const Duration(milliseconds: 700));
+      } catch (_) {}
+    }
     try {
       await _controller.stop().timeout(const Duration(milliseconds: 700));
     } catch (_) {}

@@ -71,12 +71,14 @@ class LiveVoiceController {
   static const Duration _bargeInSustain = Duration(milliseconds: 320);
   static const Duration _tick = Duration(milliseconds: 33);
   static const Duration _speechRecoveryTick = Duration(seconds: 1);
-  // 듣기 재개 직후 잠깐은 이전 턴 잔여 인식 결과일 수 있어 무시한다.
-  static const Duration _resumeGuard = Duration(milliseconds: 300);
+  static const Duration _partialCommitDelay = Duration(milliseconds: 750);
+  // 듣기 재개 직후 아주 짧게만 이전 턴 잔여 인식 결과를 거른다.
+  static const Duration _resumeGuard = Duration(milliseconds: 120);
 
   Timer? _levelTimer;
   Timer? _speechRecoveryTimer;
   Timer? _inactivityTimer;
+  Timer? _partialCommitTimer;
   bool _isCommitting = false;
   bool _disposed = false;
   bool _navigateRequested = false;
@@ -259,7 +261,10 @@ class LiveVoiceController {
       captions.updatePartial(speaker: Speaker.user, text: trimmed);
     }
     if (isFinal && trimmed.isNotEmpty) {
+      _partialCommitTimer?.cancel();
       _commitUserTurn(trimmed);
+    } else if (trimmed.isNotEmpty) {
+      _schedulePartialCommit();
     }
   }
 
@@ -300,6 +305,17 @@ class LiveVoiceController {
     });
   }
 
+  void _schedulePartialCommit() {
+    _partialCommitTimer?.cancel();
+    _partialCommitTimer = Timer(_partialCommitDelay, () {
+      if (_disposed || _ending || _isCommitting) return;
+      if (state.value != VoiceTurnState.listening || muted.value) return;
+      final spoken = _partial.trim();
+      if (spoken.isEmpty) return;
+      _commitUserTurn(spoken);
+    });
+  }
+
   Future<void> _endConversation() async {
     if (_disposed || _ending) return;
     _ending = true;
@@ -329,6 +345,8 @@ class LiveVoiceController {
     if (spoken.isEmpty) return;
     _isCommitting = true;
     _inactivityTimer?.cancel();
+    _partialCommitTimer?.cancel();
+    _partial = '';
     try {
       captions.commitFinal(speaker: Speaker.user, text: spoken);
       _setState(VoiceTurnState.thinking);
@@ -344,7 +362,7 @@ class LiveVoiceController {
       if (_disposed) return;
 
       final reply = result.spokenText.trim();
-      if (result.endSession || result.navigateNow) _ending = true;
+      if (result.endSession) _ending = true;
 
       var captionShown = false;
       void showAgentCaption() {
@@ -354,6 +372,16 @@ class LiveVoiceController {
       }
 
       _setState(VoiceTurnState.speaking);
+      if (result.navigateNow) {
+        _ending = true;
+        _navigateRequested = true;
+        if (reply.isNotEmpty) {
+          showAgentCaption();
+          unawaited(_speakNavigatingReply(reply));
+        }
+        onNavigate();
+        return;
+      }
       if (reply.isNotEmpty) {
         try {
           await speak(reply, onStart: showAgentCaption);
@@ -362,12 +390,6 @@ class LiveVoiceController {
       showAgentCaption();
       await _drainPlayback();
       if (_disposed) return;
-
-      if (result.navigateNow) {
-        _navigateRequested = true;
-        onNavigate();
-        return;
-      }
       if (result.endSession) {
         onEnd();
         return;
@@ -386,6 +408,12 @@ class LiveVoiceController {
     }
   }
 
+  Future<void> _speakNavigatingReply(String reply) async {
+    try {
+      await speak(reply);
+    } catch (_) {}
+  }
+
   Future<void> stop() async {
     if (_disposed) return;
     _disposed = true;
@@ -395,6 +423,8 @@ class LiveVoiceController {
     _speechRecoveryTimer = null;
     _inactivityTimer?.cancel();
     _inactivityTimer = null;
+    _partialCommitTimer?.cancel();
+    _partialCommitTimer = null;
     try {
       await _recognizer.stop();
     } catch (_) {}
@@ -412,6 +442,7 @@ class LiveVoiceController {
     _levelTimer?.cancel();
     _speechRecoveryTimer?.cancel();
     _inactivityTimer?.cancel();
+    _partialCommitTimer?.cancel();
     state.dispose();
     level.dispose();
     shaderMode.dispose();

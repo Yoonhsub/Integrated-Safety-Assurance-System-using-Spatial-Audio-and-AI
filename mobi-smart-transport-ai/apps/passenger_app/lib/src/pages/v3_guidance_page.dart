@@ -382,9 +382,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     if (navigated && _pendingNavPlan != null) {
       debugPrint('[MOBI v3 live nav] route activation queued by consent.');
       _activatePendingNavAfterLiveExit = true;
-    } else if (!navigated && _pendingNavPlan != null) {
-      debugPrint('[MOBI v3 live nav] route activation queued by close.');
-      _activatePendingNavAfterLiveExit = true;
     } else if (navigated) {
       debugPrint(
         '[MOBI v3 live nav] consent received but pending plan is empty.',
@@ -448,7 +445,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _pendingNavPlan = null;
         _pendingNavPosition = null;
         _addAgentLog('좋아, 길 안내를 시작할게.', fromChat: fromChat);
-        await _speakAgentMessage('좋아, 길 안내를 시작할게.');
+        if (_isLiveMode) {
+          unawaited(_speakAgentMessage('좋아, 길 안내를 시작할게.'));
+        } else {
+          await _speakAgentMessage('좋아, 길 안내를 시작할게.');
+        }
         await _activateLiveRoutePanel(plan, pos);
         return;
       }
@@ -466,9 +467,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
 
     final shouldPlanRoute = _looksLikeRouteRequest(text);
-    final planningPreparation = shouldPlanRoute
-        ? await _beginRoutePlanning()
-        : null;
+    final planningPreparation =
+        shouldPlanRoute ? await _beginRoutePlanning() : null;
     // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
     // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
     _absorbWatchedPosition();
@@ -554,30 +554,43 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             ),
           );
         });
-        await _cueService.playCue(response.cue, fallbackMessage: agentText);
-        if (response.cue.isNone && response.ttsMode != 'NONE') {
-          await _speakAgentMessage(
-            agentText,
-            forceLocal: response.ttsMode == 'SAFETY_LOCAL',
-          );
+        Future<void> playAgentAudio() async {
+          await _cueService.playCue(response.cue, fallbackMessage: agentText);
+          if (response.cue.isNone && response.ttsMode != 'NONE') {
+            await _speakAgentMessage(
+              agentText,
+              forceLocal: response.ttsMode == 'SAFETY_LOCAL',
+            );
+          }
         }
+
         if (askConsent) {
+          await playAgentAudio();
           // 동의를 기다리는 동안에는 내비게이션을 활성화하지 않는다.
           _pendingNavPlan = routePlan;
           _pendingNavPosition = planningPreparation?.position;
         } else if (autoStartNav) {
           _pendingNavPlan = null;
           _pendingNavPosition = null;
+          if (_isLiveMode) {
+            unawaited(playAgentAudio());
+          } else {
+            await playAgentAudio();
+          }
           await _activateLiveRoutePanel(
             routePlan!,
             planningPreparation?.position,
           );
         } else if (hasNavPlan) {
+          await playAgentAudio();
           unawaited(
             _activateLiveRoutePanel(routePlan!, planningPreparation?.position),
           );
         } else if (shouldPlanRoute) {
+          await playAgentAudio();
           _stopLiveRoutePolling(clearStatus: true);
+        } else {
+          await playAgentAudio();
         }
       });
     } finally {
@@ -783,8 +796,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         } else {
           _stopLiveRoutePolling(clearStatus: true);
         }
-        final spokenGuidance =
-            routePlan.agentMessage ??
+        final spokenGuidance = routePlan.agentMessage ??
             routePlan.recommendedPlan?.boardingInstruction ??
             routePlan.question;
         if (spokenGuidance != null && spokenGuidance.isNotEmpty) {
@@ -1126,9 +1138,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
     }
     final plan = routePlan.recommendedPlan!;
-    final locationLabel = preparation.position == null
-        ? '현재 위치 없이'
-        : '현재 위치 기준으로';
+    final locationLabel =
+        preparation.position == null ? '현재 위치 없이' : '현재 위치 기준으로';
     final typeLabel = plan.type == 'DIRECT' ? '직통' : '1회 환승';
     return '$locationLabel $typeLabel 경로 ${routePlan.plans.length}개를 계산했습니다. 추천 점수 ${plan.score.toStringAsFixed(1)}점.';
   }
@@ -1238,9 +1249,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _runGuarded(() async {
       final state = _sessionState;
       final segments = _lastRoutePlan?.recommendedPlan?.segments;
-      final firstSegment = segments == null || segments.isEmpty
-          ? null
-          : segments.first;
+      final firstSegment =
+          segments == null || segments.isEmpty ? null : segments.first;
       final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
       final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
       if (stopId == null || routeNo == null) {
@@ -1368,8 +1378,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   Widget build(BuildContext context) {
     final state = _sessionState;
-    final lastMessage =
-        _lastAgentResponse?.message ??
+    final lastMessage = _lastAgentResponse?.message ??
         _latestGeofenceMessage ??
         _lastBeaconDecision?.message ??
         'V3 버스 탑승 보조 에이전트가 대기 중이야.';
@@ -1539,13 +1548,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       ]),
                       onTargetBusNear: () =>
                           _mockBeacons(const <V3BeaconSignal>[
-                            V3BeaconSignal(
-                              busId: 'BUS_2',
-                              routeNo: '502',
-                              rssi: -52,
-                              distanceMeters: 1.4,
-                            ),
-                          ]),
+                        V3BeaconSignal(
+                          busId: 'BUS_2',
+                          routeNo: '502',
+                          rssi: -52,
+                          distanceMeters: 1.4,
+                        ),
+                      ]),
                       onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
                       onBusPassed: _mockBusPassed,
                       onRefreshArrivals: _refreshArrivals,
@@ -1618,8 +1627,8 @@ class _AgentTraceCard extends StatelessWidget {
                   child: Text(
                     '모비가 실제 데이터를 확인했어',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
                 ),
                 TextButton.icon(
@@ -1925,16 +1934,13 @@ class _ConversationLogCard extends StatelessWidget {
                   );
                 }
                 final isUser = m.isUser;
-                final sourceIcon = m.source == 'voice'
-                    ? Icons.mic
-                    : Icons.chat_bubble_outline;
-                final who = isUser
-                    ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)')
-                    : '모비';
+                final sourceIcon =
+                    m.source == 'voice' ? Icons.mic : Icons.chat_bubble_outline;
+                final who =
+                    isUser ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)') : '모비';
                 return Align(
-                  alignment: isUser
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
+                  alignment:
+                      isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 320),
                     padding: const EdgeInsets.symmetric(
@@ -2085,9 +2091,8 @@ class _BetterRouteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final plan = candidate.recommendedPlan;
-    final seg = (plan != null && plan.segments.isNotEmpty)
-        ? plan.segments.first
-        : null;
+    final seg =
+        (plan != null && plan.segments.isNotEmpty) ? plan.segments.first : null;
     final routeNo = seg?.routeNo ?? '새 경로';
     final etaText = etaMinutes == null ? '' : ' · 약 $etaMinutes분';
     return Card(
@@ -2175,74 +2180,52 @@ class _RealtimeNavCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final plan = routePlan?.recommendedPlan;
-    final segment = plan?.segments.isNotEmpty == true
-        ? plan!.segments.first
-        : null;
+    final segment =
+        plan?.segments.isNotEmpty == true ? plan!.segments.first : null;
     final s = status;
     final statusArrivals = s?.arrivals ?? const <V3BusArrival>[];
     final planArrivals = segment?.arrivals ?? const <V3BusArrival>[];
-    final displayedArrivals = statusArrivals.isNotEmpty
-        ? statusArrivals
-        : planArrivals;
-    final firstArrival = displayedArrivals.isNotEmpty
-        ? displayedArrivals.first
-        : null;
+    final displayedArrivals =
+        statusArrivals.isNotEmpty ? statusArrivals : planArrivals;
+    final firstArrival =
+        displayedArrivals.isNotEmpty ? displayedArrivals.first : null;
     final serviceStatus = s?.serviceStatus ?? segment?.serviceStatus;
     final walking = s?.walkingRouteToBoardStop;
     final egressWalking = s?.walkingRouteFromAlightStop;
     final walkToBoardMinutes = _walkingMinutes(walking);
     final walkToBoardMeters = walking?.totalDistanceMeters?.round();
-    final busEtaMinutes = firstArrival?.arrivalMinutes;
-    final busEtaSeconds = firstArrival?.arrivalSeconds;
     final rideMinutes = segment?.estimatedMinutes;
     final walkFromAlightMinutes = _walkingMinutes(egressWalking);
     final walkFromAlightMeters = egressWalking?.totalDistanceMeters?.round();
-    // 환승(멀티세그먼트) 경로에선 첫 구간 기준 재합산이 과대 추정(155분 보행 등)되므로
-    // 백엔드(ODsay) 총시간을 우선 사용한다.
-    final multiLeg = (plan?.segments.length ?? 0) > 1;
-    final totalMinutes =
-        (multiLeg ? plan?.totalEstimatedMinutes : null) ??
-        _journeyTotalMinutes(
-          walkToBoardMinutes: walkToBoardMinutes,
-          busEtaMinutes: busEtaMinutes,
-          rideMinutes: rideMinutes,
-          walkFromAlightMinutes: walkFromAlightMinutes,
-          fallback: plan?.totalEstimatedMinutes,
-        );
 
     final destName =
         plan?.destinationName ?? segment?.alightStop.stopName ?? '목적지';
     final routeNo = segment?.routeNo ?? s?.routeNo ?? '미확인';
     final boardName =
         s?.selectedBoardStop?.stopName ?? segment?.boardStop.stopName ?? '미확인';
-    final alightName =
-        s?.selectedAlightStop?.stopName ??
+    final alightName = s?.selectedAlightStop?.stopName ??
         segment?.alightStop.stopName ??
         '미확인';
     final congestion = _congestionLabel(s?.congestion);
     final lowFloor = firstArrival?.lowFloor == null
         ? '미확인'
         : firstArrival!.lowFloor!
-        ? '저상버스'
-        : '일반버스';
+            ? '저상버스'
+            : '일반버스';
     final walkingProvider = walking == null
         ? '확인 중'
         : walking.provider == 'TMAP'
-        ? 'TMAP 보행자 경로 API'
-        : '${walking.provider} 보조 경로';
+            ? 'TMAP 보행자 경로 API'
+            : '${walking.provider} 보조 경로';
     final walkText = (walking == null || walking.totalDistanceMeters == null)
         ? '미확인'
         : '약 ${walking.totalDistanceMeters!.round()}m · 약 ${(((walking.totalDurationSeconds ?? 0) / 60).ceil()).clamp(1, 999)}분'
-              '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
+            '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
     final busMsg = (s == null || s.busPositions.isEmpty)
         ? '현재 버스 위치는 아직 조회되지 않았어.'
         : '현재 ${s.busPositions.length}대의 버스 위치를 조회했어.';
     final updated = s?.lastUpdatedAt;
     final updatedText = updated == null ? '미확인' : _hhmm(updated.toLocal());
-    final clockStart = DateTime.now();
-    final clockEnd = totalMinutes == null
-        ? null
-        : clockStart.add(Duration(minutes: totalMinutes));
 
     final markers = _buildNavMarkers(s, userPosition, segment);
     final walkPolyline = walking?.polyline ?? const <V3GeoPoint>[];
@@ -2267,8 +2250,8 @@ class _RealtimeNavCard extends StatelessWidget {
                     child: Text(
                       '정류장까지 보행 내비게이션',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                   if (isLoading)
@@ -2319,27 +2302,62 @@ class _RealtimeNavCard extends StatelessWidget {
                 ],
               ),
               const Divider(height: 20),
-              _CompactJourneyCard(
-                segments: plan?.segments ?? const <V3RoutePlanSegment>[],
-                routeNo: routeNo,
-                destinationName: destName,
-                boardStopName: boardName,
-                alightStopName: alightName,
-                busEtaMinutes: busEtaMinutes,
-                busEtaSeconds: busEtaSeconds,
-                arrivalEmptyLabel: s == null ? '도착 확인 중' : '도착정보 없음',
-                remainingStops: firstArrival?.remainingStops,
-                rideMinutes: rideMinutes,
-                walkToBoardMinutes: walkToBoardMinutes,
-                walkToBoardMeters: walkToBoardMeters,
-                walkFromAlightMinutes: walkFromAlightMinutes,
-                walkFromAlightMeters: walkFromAlightMeters,
-                totalMinutes: totalMinutes,
-                clockStart: clockStart,
-                clockEnd: clockEnd,
-                congestion: congestion,
-                lowFloor: lowFloor,
-                arrivals: displayedArrivals,
+              StreamBuilder<DateTime>(
+                stream: Stream<DateTime>.periodic(
+                  const Duration(seconds: 1),
+                  (_) => DateTime.now(),
+                ),
+                initialData: DateTime.now(),
+                builder: (context, snapshot) {
+                  final clockStart = snapshot.data ?? DateTime.now();
+                  final busEtaSeconds = _countdownEtaSeconds(
+                    rawEtaSeconds: firstArrival?.arrivalSeconds,
+                    updatedAt: updated,
+                    now: clockStart,
+                  );
+                  final busEtaMinutes = _etaMinutesFromSeconds(
+                    busEtaSeconds,
+                    fallback: firstArrival?.arrivalMinutes,
+                  );
+                  // 환승(멀티세그먼트) 경로에선 첫 구간 기준 재합산이 과대 추정(155분 보행 등)되므로
+                  // 백엔드(ODsay) 총시간을 우선 사용한다.
+                  final multiLeg = (plan?.segments.length ?? 0) > 1;
+                  final totalMinutes =
+                      (multiLeg ? plan?.totalEstimatedMinutes : null) ??
+                          _journeyTotalMinutes(
+                            walkToBoardMinutes: walkToBoardMinutes,
+                            busEtaMinutes: busEtaMinutes,
+                            rideMinutes: rideMinutes,
+                            walkFromAlightMinutes: walkFromAlightMinutes,
+                            fallback: plan?.totalEstimatedMinutes,
+                          );
+                  final clockEnd = totalMinutes == null
+                      ? null
+                      : clockStart.add(Duration(minutes: totalMinutes));
+                  return _CompactJourneyCard(
+                    segments: plan?.segments ?? const <V3RoutePlanSegment>[],
+                    routeNo: routeNo,
+                    destinationName: destName,
+                    boardStopName: boardName,
+                    alightStopName: alightName,
+                    busEtaMinutes: busEtaMinutes,
+                    busEtaSeconds: busEtaSeconds,
+                    arrivalEmptyLabel: s == null ? '도착 확인 중' : '도착정보 없음',
+                    remainingStops: firstArrival?.remainingStops,
+                    rideMinutes: rideMinutes,
+                    walkToBoardMinutes: walkToBoardMinutes,
+                    walkToBoardMeters: walkToBoardMeters,
+                    walkFromAlightMinutes: walkFromAlightMinutes,
+                    walkFromAlightMeters: walkFromAlightMeters,
+                    totalMinutes: totalMinutes,
+                    clockStart: clockStart,
+                    clockEnd: clockEnd,
+                    congestion: congestion,
+                    lowFloor: lowFloor,
+                    arrivals: displayedArrivals,
+                    arrivalUpdatedAt: updated,
+                  );
+                },
               ),
               const SizedBox(height: 10),
               if (walking?.instructions.isNotEmpty == true) ...[
@@ -2376,7 +2394,7 @@ class _RealtimeNavCard extends StatelessWidget {
               ],
               const SizedBox(height: 8),
               Text(
-                '마지막 갱신: $updatedText · 30초마다 자동 갱신 중',
+                '마지막 갱신: $updatedText · 도착 카운트다운 매초 표시 · 실데이터 30초마다 갱신',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               if (s != null) ...[
@@ -2495,8 +2513,8 @@ class _RealtimeNavCard extends StatelessWidget {
             final radius = m.type == 'BUS'
                 ? 10.0
                 : m.type == 'NEARBY'
-                ? 6.0
-                : 8.0;
+                    ? 6.0
+                    : 8.0;
             return Marker(
               point: LatLng(m.latitude, m.longitude),
               width: radius * 2,
@@ -2564,6 +2582,46 @@ String _arrivalEtaText({
   }
   if (etaMinutes == null) return emptyLabel;
   return etaMinutes <= 0 ? '잠시 후 도착' : '$etaMinutes분 뒤';
+}
+
+int? _countdownEtaSeconds({
+  required int? rawEtaSeconds,
+  required DateTime? updatedAt,
+  required DateTime now,
+}) {
+  if (rawEtaSeconds == null) return null;
+  if (updatedAt == null) return rawEtaSeconds;
+  final elapsed = now.difference(updatedAt).inSeconds;
+  if (elapsed <= 0) return rawEtaSeconds;
+  final remaining = rawEtaSeconds - elapsed;
+  return remaining < 0 ? 0 : remaining;
+}
+
+int? _etaMinutesFromSeconds(int? etaSeconds, {required int? fallback}) {
+  if (etaSeconds == null) return fallback;
+  return (etaSeconds / 60).ceil();
+}
+
+String _arrivalDisplayLabel(
+  V3BusArrival arrival,
+  DateTime? updatedAt,
+  DateTime now,
+) {
+  final etaSeconds = _countdownEtaSeconds(
+    rawEtaSeconds: arrival.arrivalSeconds,
+    updatedAt: updatedAt,
+    now: now,
+  );
+  final etaMinutes = _etaMinutesFromSeconds(
+    etaSeconds,
+    fallback: arrival.arrivalMinutes,
+  );
+  final bus = arrival.busId == null || arrival.busId!.isEmpty
+      ? ''
+      : ' · ${arrival.busId}';
+  final stops =
+      arrival.remainingStops == null ? '' : ' · ${arrival.remainingStops}정류장 전';
+  return '${arrival.routeNo}번 ${_arrivalEtaText(etaSeconds: etaSeconds, etaMinutes: etaMinutes, emptyLabel: '도착정보 없음')}$stops$bus';
 }
 
 int? _walkingMinutes(V3WalkingRoute? route) {
@@ -2686,6 +2744,7 @@ class _CompactJourneyCard extends StatelessWidget {
     required this.congestion,
     required this.lowFloor,
     required this.arrivals,
+    this.arrivalUpdatedAt,
   });
 
   final List<V3RoutePlanSegment> segments;
@@ -2708,6 +2767,7 @@ class _CompactJourneyCard extends StatelessWidget {
   final String congestion;
   final String lowFloor;
   final List<V3BusArrival> arrivals;
+  final DateTime? arrivalUpdatedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -2838,8 +2898,7 @@ class _CompactJourneyCard extends StatelessWidget {
                       etaSeconds: i == 0 ? busEtaSeconds : null,
                       emptyEtaLabel: i == 0 ? arrivalEmptyLabel : '도착정보 없음',
                       remainingStops: i == 0 ? remainingStops : null,
-                      rideMinutes:
-                          segments[i].estimatedMinutes ??
+                      rideMinutes: segments[i].estimatedMinutes ??
                           (i == 0 ? rideMinutes : null),
                       stopCount: segments[i].stopCount,
                       congestion: i == 0 ? congestion : null,
@@ -2880,7 +2939,7 @@ class _CompactJourneyCard extends StatelessWidget {
                   if (arrivals.length > 1) ...[
                     const SizedBox(height: 10),
                     Text(
-                      '다음 버스  ${arrivals.skip(1).take(2).map((item) => item.displayLabel).join(' / ')}',
+                      '다음 버스  ${arrivals.skip(1).take(2).map((item) => _arrivalDisplayLabel(item, arrivalUpdatedAt, clockStart)).join(' / ')}',
                       style: const TextStyle(color: muted),
                     ),
                   ],
@@ -3471,8 +3530,8 @@ class _CombinedChatControlCard extends StatelessWidget {
                     onPressed: isBusy
                         ? null
                         : () => onQuickAction(
-                            '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
-                          ),
+                              '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
+                            ),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
@@ -3498,9 +3557,8 @@ class _CombinedChatControlCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   ActionChip(
                     label: const Text('목적지 변경 (충북대병원)'),
-                    onPressed: isBusy
-                        ? null
-                        : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
+                    onPressed:
+                        isBusy ? null : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
                   ),
                 ],
               ),
@@ -3675,8 +3733,8 @@ class _ArrivalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final firstRecommendation =
         routeRecommendation?.recommendations.isNotEmpty == true
-        ? routeRecommendation!.recommendations.first
-        : null;
+            ? routeRecommendation!.recommendations.first
+            : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3826,9 +3884,8 @@ class _RoutePlanCard extends StatelessWidget {
     final typeLabel = plan.type == 'DIRECT' ? '직통 추천' : '1회 환승 추천';
     final firstSegment = plan.segments.isEmpty ? null : plan.segments.first;
     final arrivals = firstSegment?.arrivals;
-    final firstArrival = arrivals == null || arrivals.isEmpty
-        ? null
-        : arrivals.first;
+    final firstArrival =
+        arrivals == null || arrivals.isEmpty ? null : arrivals.first;
     return Semantics(
       container: true,
       label: '구조화된 버스 경로 계획, $typeLabel',
@@ -3982,8 +4039,8 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
                     child: Text(
                       '실제 공공 API 정류소 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -3992,9 +4049,9 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
               Text(
                 '청주시 승인 API · PUBLIC_API',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · 서비스ID ${evidence.serviceId}'),
@@ -4045,8 +4102,8 @@ class _MapsEvidenceCard extends StatelessWidget {
                     child: Text(
                       'Google Maps 위치 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -4074,9 +4131,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPublicData = evidence.isPublicData;
     final colorScheme = Theme.of(context).colorScheme;
-    final accentColor = isPublicData
-        ? colorScheme.primary
-        : colorScheme.tertiary;
+    final accentColor =
+        isPublicData ? colorScheme.primary : colorScheme.tertiary;
     final sourceLabel = switch (evidence.source) {
       'PUBLIC_API' => '실시간 공공 API',
       'CACHE' => '공공 API 정규화 캐시',
@@ -4106,8 +4162,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
                     child: Text(
                       '버스 도착 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -4116,9 +4172,9 @@ class _PublicDataEvidenceCard extends StatelessWidget {
               Text(
                 sourceLabel,
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: accentColor,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: accentColor,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · ${evidence.routeNo}번'),
@@ -4173,8 +4229,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                     Text(
                       '${arrival.routeNo}번 버스',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -4191,8 +4247,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                   emptyLabel: '도착정보 없음',
                 ),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
             ],
           ),
@@ -4249,8 +4305,8 @@ class _RoutePlanningOverlayState extends State<_RoutePlanningOverlay> {
                 Text(
                   '생각 중... ${_seconds > 0 ? '($_seconds초)' : ''}',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),
