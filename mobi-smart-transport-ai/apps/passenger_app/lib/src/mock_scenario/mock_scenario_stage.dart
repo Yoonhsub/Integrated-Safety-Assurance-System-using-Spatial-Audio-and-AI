@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'mock_scenario_state.dart';
+import 'mock_scenario_phase.dart';
 
 class MockScenarioStage extends StatelessWidget {
   const MockScenarioStage({
@@ -12,6 +13,12 @@ class MockScenarioStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showWarningBorder =
+    state.phase == MockScenarioPhase.geofenceWarning ||
+    state.phase == MockScenarioPhase.wrongBusWarning ||
+    state.phase == MockScenarioPhase.missedBus ||
+    state.isUserOutsideGeofence;
+
     return Semantics(
       label: 'V3 Mock 시나리오 시각화 캔버스',
       hint: '사용자, 정류장, 버스, 지오펜스 상태를 시각적으로 표시합니다.',
@@ -22,9 +29,12 @@ class MockScenarioStage extends StatelessWidget {
           color: const Color(0xFFF2F3F5),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: const Color(0xFFD0D4DA),
-          ),
+            color: showWarningBorder
+              ? const Color(0xFFD32F2F)
+              : const Color(0xFFD0D4DA),
+            width: showWarningBorder ? 3 : 1,
         ),
+      ),
  child: LayoutBuilder(
   builder: (context, constraints) {
     final canvasWidth = constraints.maxWidth;
@@ -39,7 +49,8 @@ class MockScenarioStage extends StatelessWidget {
           canvasHeight: canvasHeight,
           isArmed: state.geofenceArmed,
           isReleased: state.geofenceReleased,
-          isWarning: state.isUserOutsideGeofence,
+          isWarning: state.phase == MockScenarioPhase.geofenceWarning ||
+            state.isUserOutsideGeofence,
         ),
 
 _PositionedMarker(
@@ -82,7 +93,7 @@ Positioned(
   right: 16,
   child: _ScenarioMessageBanner(
     message: state.currentScenarioMessage,
-    isWarning: state.isUserOutsideGeofence,
+    isWarning: showWarningBorder,
   ),
 ),
       ],
@@ -281,6 +292,7 @@ class _ScenarioMessageBanner extends StatelessWidget {
     );
   }
 }
+
 
 
 
