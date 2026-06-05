@@ -69,6 +69,26 @@ class MockScenarioControlPanel extends StatelessWidget {
                 icon: Icons.check_circle_outline,
                 onPressed: controller.confirmBoarded,
               ),
+              _ScenarioButton(
+                label: '지오펜스 이탈',
+                icon: Icons.warning_amber_rounded,
+                onPressed: controller.userLeavesGeofence,
+              ),
+              _ScenarioButton(
+                label: '지오펜스 복귀',
+                icon: Icons.keyboard_return,
+                onPressed: controller.userReturnsToGeofence,
+              ),
+              _ScenarioButton(
+                label: '잘못된 버스',
+                icon: Icons.report_problem_outlined,
+                onPressed: controller.wrongBusApproaches,
+              ),
+              _ScenarioButton(
+                label: '버스 놓침',
+                icon: Icons.cancel_outlined,
+                onPressed: controller.confirmMissedBus,
+              ),
             ],
           ),
         ),
