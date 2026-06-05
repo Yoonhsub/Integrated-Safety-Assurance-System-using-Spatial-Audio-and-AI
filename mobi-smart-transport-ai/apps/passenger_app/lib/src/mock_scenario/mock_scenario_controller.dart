@@ -124,6 +124,71 @@ class MockScenarioController extends ChangeNotifier {
     _refreshMetrics();
   }
 
+    void userLeavesGeofence() {
+    _state = _state.copyWith(
+      phase: MockScenarioPhase.geofenceWarning,
+      userPosition: const Offset(0.86, 0.82),
+      geofenceArmed: true,
+      geofenceReleased: false,
+      isUserOutsideGeofence: true,
+      cueType: 'alarm',
+      shouldPlayCue: true,
+      shouldStopCue: false,
+      currentScriptLineId: 'geofence_warning',
+      currentScenarioMessage: '정류장 안전 구역을 벗어났습니다. 안내음 방향을 따라 복귀하세요.',
+    );
+
+    _refreshMetrics();
+  }
+
+  void userReturnsToGeofence() {
+    _state = _state.copyWith(
+      phase: MockScenarioPhase.atStopGeofenceArmed,
+      userPosition: _state.stopPosition,
+      geofenceArmed: true,
+      geofenceReleased: false,
+      isUserOutsideGeofence: false,
+      cueType: 'normal',
+      shouldPlayCue: true,
+      shouldStopCue: false,
+      currentScriptLineId: 'return_to_geofence',
+      currentScenarioMessage: '정류장 안전 구역 안으로 복귀했습니다.',
+    );
+
+    _refreshMetrics();
+  }
+
+  void wrongBusApproaches() {
+    _state = _state.copyWith(
+      phase: MockScenarioPhase.wrongBusWarning,
+      wrongBusPosition: const Offset(0.78, 0.35),
+      cueType: 'warning',
+      shouldPlayCue: true,
+      shouldStopCue: false,
+      currentScriptLineId: 'wrong_bus_warning',
+      currentScenarioMessage: '탑승 대상이 아닌 버스가 접근 중입니다. 현재 안내 대상 버스가 아닙니다.',
+    );
+
+    _refreshMetrics();
+  }
+
+  void confirmMissedBus() {
+    _state = _state.copyWith(
+      phase: MockScenarioPhase.missedBus,
+      targetBusPosition: const Offset(0.95, 0.30),
+      busMoving: true,
+      busStopped: false,
+      geofenceReleased: false,
+      cueType: 'missed',
+      shouldPlayCue: true,
+      shouldStopCue: false,
+      currentScriptLineId: 'missed_bus',
+      currentScenarioMessage: '탑승 대상 버스를 놓쳤습니다. 다음 버스 안내를 기다려주세요.',
+    );
+
+    _refreshMetrics();
+  }
+
   void _refreshMetrics() {
     final metrics = MockScenarioMath.calculate(
       userPosition: _state.userPosition,
