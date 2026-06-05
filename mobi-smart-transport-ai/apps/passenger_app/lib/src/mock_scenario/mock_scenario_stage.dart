@@ -41,6 +41,41 @@ class MockScenarioStage extends StatelessWidget {
           isReleased: state.geofenceReleased,
           isWarning: state.isUserOutsideGeofence,
         ),
+
+_PositionedMarker(
+  label: '정류장',
+  icon: Icons.signpost_outlined,
+  color: const Color(0xFF1565C0),
+  position: state.stopPosition,
+  canvasWidth: canvasWidth,
+  canvasHeight: canvasHeight,
+),
+_PositionedMarker(
+  label: '사용자',
+  icon: Icons.accessibility_new,
+  color: const Color(0xFF2E7D32),
+  position: state.userPosition,
+  canvasWidth: canvasWidth,
+  canvasHeight: canvasHeight,
+),
+_PositionedMarker(
+  label: '탑승 대상 버스',
+  icon: Icons.directions_bus,
+  color: const Color(0xFFFF8F00),
+  position: state.targetBusPosition,
+  canvasWidth: canvasWidth,
+  canvasHeight: canvasHeight,
+),
+if (state.wrongBusPosition != null)
+  _PositionedMarker(
+    label: '잘못된 버스',
+    icon: Icons.warning_amber_rounded,
+    color: const Color(0xFFC62828),
+    position: state.wrongBusPosition!,
+    canvasWidth: canvasWidth,
+    canvasHeight: canvasHeight,
+  ),
+
         Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -120,6 +155,94 @@ class _GeofenceCircle extends StatelessWidget {
             color: borderColor,
             width: 2,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PositionedMarker extends StatelessWidget {
+  const _PositionedMarker({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.position,
+    required this.canvasWidth,
+    required this.canvasHeight,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final Offset position;
+  final double canvasWidth;
+  final double canvasHeight;
+
+  static const double _markerSize = 58;
+
+  @override
+  Widget build(BuildContext context) {
+    final left =
+        (position.dx.clamp(0.0, 1.0) * canvasWidth) - (_markerSize / 2);
+    final top =
+        (position.dy.clamp(0.0, 1.0) * canvasHeight) - (_markerSize / 2);
+
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeOutCubic,
+      left: left,
+      top: top,
+      child: Semantics(
+        label: label,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: _markerSize,
+              height: _markerSize,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: color,
+                  width: 3,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                    color: Color(0x22000000),
+                  ),
+                ],
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 3,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: const Color(0xFFE0E0E0),
+                ),
+              ),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
