@@ -77,4 +77,60 @@ class MockScenarioState {
   final bool shouldStopCue;
   final String? currentScriptLineId;
   final String currentScenarioMessage;
+
+    MockScenarioState copyWith({
+    MockScenarioPhase? phase,
+    Offset? userPosition,
+    Offset? stopPosition,
+    Offset? targetBusPosition,
+    Offset? wrongBusPosition,
+    bool clearWrongBusPosition = false,
+    bool? busMoving,
+    bool? busStopped,
+    bool? geofenceArmed,
+    bool? geofenceReleased,
+    double? geofenceRadius,
+    bool? isUserOutsideGeofence,
+    double? distanceMeters,
+    String? directionLabel,
+    double? pan,
+    double? gain,
+    int? beepIntervalMs,
+    String? cueType,
+    bool? shouldPlayCue,
+    bool? shouldStopCue,
+    String? currentScriptLineId,
+    bool clearCurrentScriptLineId = false,
+    String? currentScenarioMessage,
+  }) {
+    return MockScenarioState(
+      phase: phase ?? this.phase,
+      userPosition: userPosition ?? this.userPosition,
+      stopPosition: stopPosition ?? this.stopPosition,
+      targetBusPosition: targetBusPosition ?? this.targetBusPosition,
+      wrongBusPosition: clearWrongBusPosition
+          ? null
+          : wrongBusPosition ?? this.wrongBusPosition,
+      busMoving: busMoving ?? this.busMoving,
+      busStopped: busStopped ?? this.busStopped,
+      geofenceArmed: geofenceArmed ?? this.geofenceArmed,
+      geofenceReleased: geofenceReleased ?? this.geofenceReleased,
+      geofenceRadius: geofenceRadius ?? this.geofenceRadius,
+      isUserOutsideGeofence:
+          isUserOutsideGeofence ?? this.isUserOutsideGeofence,
+      distanceMeters: distanceMeters ?? this.distanceMeters,
+      directionLabel: directionLabel ?? this.directionLabel,
+      pan: pan ?? this.pan,
+      gain: gain ?? this.gain,
+      beepIntervalMs: beepIntervalMs ?? this.beepIntervalMs,
+      cueType: cueType ?? this.cueType,
+      shouldPlayCue: shouldPlayCue ?? this.shouldPlayCue,
+      shouldStopCue: shouldStopCue ?? this.shouldStopCue,
+      currentScriptLineId: clearCurrentScriptLineId
+          ? null
+          : currentScriptLineId ?? this.currentScriptLineId,
+      currentScenarioMessage:
+          currentScenarioMessage ?? this.currentScenarioMessage,
+    );
+  }
 }
