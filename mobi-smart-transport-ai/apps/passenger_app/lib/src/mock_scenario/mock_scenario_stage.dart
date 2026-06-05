@@ -76,19 +76,15 @@ if (state.wrongBusPosition != null)
     canvasHeight: canvasHeight,
   ),
 
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              state.currentScenarioMessage,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
+Positioned(
+  left: 16,
+  top: 16,
+  right: 16,
+  child: _ScenarioMessageBanner(
+    message: state.currentScenarioMessage,
+    isWarning: state.isUserOutsideGeofence,
+  ),
+),
       ],
     );
   },
@@ -248,5 +244,43 @@ class _PositionedMarker extends StatelessWidget {
     );
   }
 }
+
+class _ScenarioMessageBanner extends StatelessWidget {
+  const _ScenarioMessageBanner({
+    required this.message,
+    required this.isWarning,
+  });
+
+  final String message;
+  final bool isWarning;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isWarning ? const Color(0xFFFFEBEE) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isWarning
+              ? const Color(0xFFD32F2F)
+              : const Color(0xFFE0E0E0),
+        ),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: isWarning
+              ? const Color(0xFFB71C1C)
+              : const Color(0xFF263238),
+        ),
+      ),
+    );
+  }
+}
+
 
 
