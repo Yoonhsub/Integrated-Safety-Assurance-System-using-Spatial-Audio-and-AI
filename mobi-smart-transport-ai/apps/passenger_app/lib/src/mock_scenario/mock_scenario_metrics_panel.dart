@@ -23,8 +23,8 @@ class MockScenarioMetricsPanel extends StatelessWidget {
             color: Color(0xFFE0E0E0),
           ),
         ),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -37,8 +37,48 @@ class MockScenarioMetricsPanel extends StatelessWidget {
               ),
               SizedBox(height: 12),
               _MetricRow(
-                label: 'Status',
-                value: 'Mock scenario metrics ready',
+                label: 'Phase',
+                value: state.phase.name,
+              ),
+              _MetricRow(
+                label: 'Distance',
+                value: '${state.distanceMeters.toStringAsFixed(1)} m',
+              ),
+              _MetricRow(
+                label: 'Direction',
+                value: state.directionLabel,
+              ),
+              _MetricRow(
+                label: 'Pan',
+                value: state.pan.toStringAsFixed(2),
+              ),
+              _MetricRow(
+                label: 'Gain',
+                value: state.gain.toStringAsFixed(2),
+              ),
+              _MetricRow(
+                label: 'Beep Interval',
+                value: '${state.beepIntervalMs} ms',
+              ),
+              _MetricRow(
+                label: 'Cue Type',
+                value: state.cueType,
+              ),
+              _MetricRow(
+                label: 'Geofence Armed',
+                value: state.geofenceArmed ? 'true' : 'false',
+              ),
+              _MetricRow(
+                label: 'Geofence Released',
+                value: state.geofenceReleased ? 'true' : 'false',
+              ),
+              _MetricRow(
+                label: 'Outside Geofence',
+                value: state.isUserOutsideGeofence ? 'true' : 'false',
+              ),
+              _MetricRow(
+                label: 'Script Line',
+                value: state.currentScriptLineId ?? '-',
               ),
             ],
           ),
