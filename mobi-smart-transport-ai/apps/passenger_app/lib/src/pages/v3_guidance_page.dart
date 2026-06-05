@@ -21,6 +21,11 @@ import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
+import '../mock_scenario/mock_scenario_control_panel.dart';
+import '../mock_scenario/mock_scenario_controller.dart';
+import '../mock_scenario/mock_scenario_metrics_panel.dart';
+import '../mock_scenario/mock_scenario_stage.dart';
+
 class V3GuidancePage extends StatefulWidget {
   const V3GuidancePage({
     super.key,
@@ -49,6 +54,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   late final AudioHapticCueService _cueService;
   late final VoiceGuideService _voiceGuideService;
   late final TextEditingController _utteranceController;
+  late final MockScenarioController _mockScenarioController;
 
   V3HealthStatus? _healthStatus;
   V3GuidanceState? _sessionState;
@@ -116,6 +122,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
     );
+    _mockScenarioController = MockScenarioController();
+
     _bootstrap();
     // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
     // 캐시한다(일회성 실패로 좌표가 비는 '들쭉날쭉' 방지).
@@ -133,7 +141,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _bodyScrollController.dispose();
     _cueService.dispose();
     super.dispose();
+    _mockScenarioController.dispose();
   }
+  
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
@@ -1486,7 +1496,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                     _NavStoppedNotice(),
                   ],
                   if (!_isLiveMode) ...[
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                      _MockScenarioSimulationCard(
+                        controller: _mockScenarioController,
+                      ),
+                      const SizedBox(height: 12),
                     _ArrivalCard(
                       routeRecommendation: _lastRouteRecommendation,
                       routePlan: _lastRoutePlan,
@@ -1823,6 +1837,35 @@ class _HeroStatusCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MockScenarioSimulationCard extends StatelessWidget {
+  const _MockScenarioSimulationCard({
+    required this.controller,
+  });
+
+  final MockScenarioController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final state = controller.state;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MockScenarioStage(state: state),
+            const SizedBox(height: 12),
+            MockScenarioMetricsPanel(state: state),
+            const SizedBox(height: 12),
+            MockScenarioControlPanel(controller: controller),
+          ],
+        );
+      },
     );
   }
 }
@@ -4351,3 +4394,4 @@ class _HeadTrackingCard extends StatelessWidget {
   String _angle(double? value) =>
       value == null ? '-' : '${value.toStringAsFixed(1)}°';
 }
+
