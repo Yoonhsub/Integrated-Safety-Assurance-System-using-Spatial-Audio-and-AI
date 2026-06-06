@@ -140,8 +140,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _cueService.dispose();
-    super.dispose();
     _mockScenarioController.dispose();
+    super.dispose();
   }
   
 
