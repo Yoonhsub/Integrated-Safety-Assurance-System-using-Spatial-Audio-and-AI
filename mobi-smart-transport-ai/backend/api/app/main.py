@@ -18,12 +18,14 @@ from app.api.routes import (
     safety_events,
     v3_agent,
     v3_beacon,
+    v3_beacon_ingest,
     v3_bus,
     v3_guidance,
     v3_map,
     v3_mock,
     v3_navigation,
 )
+
 from app.services.firebase_client import get_firebase_client
 from pydantic import BaseModel
 
@@ -133,6 +135,7 @@ app.include_router(v3_guidance.router, prefix="/guidance", tags=["v3-guidance"])
 app.include_router(v3_agent.router, prefix="/agent", tags=["v3-agent"])
 app.include_router(v3_bus.router, prefix="/bus", tags=["v3-bus"])
 app.include_router(v3_beacon.router, prefix="/beacon", tags=["v3-beacon"])
+app.include_router(v3_beacon_ingest.router, prefix="/api/v3/beacon", tags=["v3-beacon-ingest"])
 app.include_router(v3_mock.router, prefix="/mock", tags=["v3-mock"])
 # 실시간 지도/내비게이션 지원 라우트(보행경로·근처정류장·통합 실시간 상태).
 app.include_router(v3_map.router, prefix="/map", tags=["v3-map"])
