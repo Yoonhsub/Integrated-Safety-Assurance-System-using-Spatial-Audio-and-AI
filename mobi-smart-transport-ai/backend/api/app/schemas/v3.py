@@ -70,7 +70,30 @@ class BeaconDecision(str, Enum):
     TARGET_BUS_MID = "TARGET_BUS_MID"
     TARGET_BUS_NEAR = "TARGET_BUS_NEAR"
     WRONG_BUS_NEAR = "WRONG_BUS_NEAR"
+    BEACON_LOST = "BEACON_LOST"
+    SIGNAL_UNSTABLE = "SIGNAL_UNSTABLE"
 
+class BeaconProximity(str, Enum):
+    """비컨 RSSI 기반 거리 분류.
+    
+    NEAR: RSSI >= -62 (약 3m 이내)
+    MID: -75 <= RSSI < -62 (약 3~10m)
+    FAR: RSSI < -75 (10m 이상)
+    LOST: 일정 시간 신호 없음
+    UNSTABLE: 짧은 시간에 RSSI 급변
+    """
+    NEAR = "NEAR"
+    MID = "MID"
+    FAR = "FAR"
+    LOST = "LOST"
+    UNSTABLE = "UNSTABLE"
+
+
+class BeaconSource(str, Enum):
+    """비컨 이벤트 소스."""
+    REAL_BLE = "REAL_BLE"
+    MANUAL_TEST = "MANUAL_TEST"
+    MOCK_BRIDGE = "MOCK_BRIDGE"
 
 class V3Cue(StrictApiModel):
     type: CueType = CueType.NONE
@@ -510,6 +533,44 @@ class MockBeaconsRequest(StrictApiModel):
     targetRouteNo: str | None = None
     beacons: list[BeaconSignal] = Field(default_factory=list)
 
+class BeaconIngestRequest(StrictApiModel):
+    """단일 비컨 RSSI 이벤트 수신용 (V3 #35).
+    
+    Android BLE bridge, 수동 curl, 실제 BLE scanner가 호출한다.
+    여러 beacon 목록을 받는 MockBeaconsRequest와 달리, 단일 이벤트를
+    받아 ingest endpoint에서 latest_state를 갱신한다.
+    """
+    sessionId: str = Field(default="demo-session", min_length=1, pattern=NON_BLANK_PATTERN)
+    deviceId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    beaconId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    busId: str | None = None
+    routeNo: str | None = None
+    rssi: int = Field(ge=-120, le=0)
+    distanceMeters: float | None = Field(default=None, ge=0)
+    source: BeaconSource
+    timestamp: datetime
+
+
+class BeaconIngestResponse(StrictApiModel):
+    """V3 beacon ingest/latest 응답 (V3 #35).
+    
+    기존 BeaconDecisionResponse는 mock beacons용으로 유지하고,
+    V3 ingest는 문서 §4 스키마(proximity, phase, cueType, scriptLineId,
+    confidence, warnings 포함)에 맞춰 별도 모델로 정의한다.
+    """
+    sessionId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    lastUpdatedAt: datetime
+    beaconId: str | None = None
+    routeNo: str | None = None
+    rssi: int | None = None
+    distanceMeters: float | None = Field(default=None, ge=0)
+    proximity: BeaconProximity
+    decision: BeaconDecision
+    phase: GuidanceState
+    cueType: CueType
+    scriptLineId: str
+    confidence: float = Field(ge=0, le=1)
+    warnings: list[str] = Field(default_factory=list)
 
 class BeaconDecisionResponse(StrictApiModel):
     sessionId: str
