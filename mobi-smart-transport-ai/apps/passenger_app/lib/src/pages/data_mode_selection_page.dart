@@ -20,9 +20,14 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
   bool _isSwitching = false;
 
   // 백엔드에 데이터 모드 전환 요청을 보내는 메서드
-  Future<void> _selectMode(String mode) async {
-    if (_isSwitching) return;
-    setState(() => _isSwitching = true);
+ Future<void> _selectMode(String mode) async {
+  if (_isSwitching) return;
+
+  if (mode == 'mock') {
+    widget.onModeSelected(mode);
+    return;
+  }
+  setState(() => _isSwitching = true);
 
     try {
       final response = await http.post(
