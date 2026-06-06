@@ -10,10 +10,13 @@ import 'package:latlong2/latlong.dart';
 import '../features/voice_live/live_caption_controller.dart';
 import '../features/voice_live/live_voice_controller.dart';
 import '../features/voice_live/live_voice_page.dart';
+import '../mock_scenario/mock_script_lines.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
+import '../services/mock_script_audio_service.dart';
+import '../services/spatial_cue_service.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
@@ -52,6 +55,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
+  late final SpatialCueService _spatialCueService;
+  late final MockScriptAudioService _mockScriptAudioService;
   late final VoiceGuideService _voiceGuideService;
   late final TextEditingController _utteranceController;
   late final MockScenarioController _mockScenarioController;
@@ -89,6 +94,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Future<void>? _locationRequest;
   bool _isAgentTraceExpanded = false;
   bool _isListening = false;
+  String? _nextLiveScriptLineId;
   String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말해줘.';
 
   // 실시간 채팅 상태
@@ -118,6 +124,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     super.initState();
     _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService();
+    _spatialCueService = SpatialCueService();
+    _mockScriptAudioService = MockScriptAudioService();
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
@@ -140,6 +148,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _cueService.dispose();
+    _spatialCueService.dispose();
+    _mockScriptAudioService.dispose();
     _mockScenarioController.dispose();
     super.dispose();
   }
@@ -266,6 +276,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// 전체 화면 Live 음성 대화 페이지를 연다(실제 API 모드 전용).
   Future<void> _openLiveVoice() async {
     unawaited(_cueService.prepareLiveGeneratedSpeech());
+    unawaited(_spatialCueService.prepare());
     _activatePendingNavAfterLiveExit = false;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -274,7 +285,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           agentName: _wakeWord,
           processor: _processLiveUtterance,
           speak: _speakLiveOnly,
-          stopAudio: () => _cueService.stopCue(),
+          stopAudio: _stopAllCueAudio,
           onExit: _onLiveVoiceExit,
         ),
       ),
@@ -290,6 +301,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }) async {
     final text = utterance.trim();
     if (text.isEmpty) return const LiveProcessResult(spokenText: '');
+    final fixedMockResponse = await _fixedMockLiveResponse(text);
+    if (fixedMockResponse != null) return fixedMockResponse;
 
     // 경로를 찾은 뒤 "안내해줄까?"에 대한 응답을 먼저 해석한다.
     if (_pendingNavPlan != null) {
@@ -477,8 +490,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
 
     final shouldPlanRoute = _looksLikeRouteRequest(text);
-    final planningPreparation =
-        shouldPlanRoute ? await _beginRoutePlanning() : null;
+    final planningPreparation = shouldPlanRoute
+        ? await _beginRoutePlanning()
+        : null;
     // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
     // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
     _absorbWatchedPosition();
@@ -566,6 +580,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         });
         Future<void> playAgentAudio() async {
           await _cueService.playCue(response.cue, fallbackMessage: agentText);
+          await _applySpatialCue(response.cue);
           if (response.cue.isNone && response.ttsMode != 'NONE') {
             await _speakAgentMessage(
               agentText,
@@ -727,6 +742,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
   Future<void> _speakLiveOnly(String message, {VoidCallback? onStart}) async {
     if (message.trim().isEmpty) return;
+    final scriptLineId = _nextLiveScriptLineId;
+    _nextLiveScriptLineId = null;
+    if (scriptLineId != null) {
+      onStart?.call();
+      await _mockScriptAudioService.playScript(
+        scriptLineId,
+        fallbackText: message,
+      );
+      return;
+    }
     try {
       await _cueService.playLiveGeneratedSpeech(
         baseUrl: _apiBaseUrl,
@@ -734,7 +759,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         onFirstAudio: onStart,
       );
     } catch (_) {
-      // 스트리밍 실패/중단은 조용히 넘어간다(자막은 이미 표시됨).
+      onStart?.call();
+      await _mockScriptAudioService.speakText(message);
     }
   }
 
@@ -806,7 +832,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         } else {
           _stopLiveRoutePolling(clearStatus: true);
         }
-        final spokenGuidance = routePlan.agentMessage ??
+        final spokenGuidance =
+            routePlan.agentMessage ??
             routePlan.recommendedPlan?.boardingInstruction ??
             routePlan.question;
         if (spokenGuidance != null && spokenGuidance.isNotEmpty) {
@@ -1148,8 +1175,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
     }
     final plan = routePlan.recommendedPlan!;
-    final locationLabel =
-        preparation.position == null ? '현재 위치 없이' : '현재 위치 기준으로';
+    final locationLabel = preparation.position == null
+        ? '현재 위치 없이'
+        : '현재 위치 기준으로';
     final typeLabel = plan.type == 'DIRECT' ? '직통' : '1회 환승';
     return '$locationLabel $typeLabel 경로 ${routePlan.plans.length}개를 계산했습니다. 추천 점수 ${plan.score.toStringAsFixed(1)}점.';
   }
@@ -1259,8 +1287,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _runGuarded(() async {
       final state = _sessionState;
       final segments = _lastRoutePlan?.recommendedPlan?.segments;
-      final firstSegment =
-          segments == null || segments.isEmpty ? null : segments.first;
+      final firstSegment = segments == null || segments.isEmpty
+          ? null
+          : segments.first;
       final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
       final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
       if (stopId == null || routeNo == null) {
@@ -1290,7 +1319,207 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     );
   }
 
+  Future<void> _stopAllCueAudio() async {
+    await _cueService.stopCue();
+    await _spatialCueService.stopCue();
+    await _mockScriptAudioService.stop();
+  }
+
+  Future<void> _playScriptLine(
+    String scriptLineId, {
+    String? fallbackMessage,
+  }) async {
+    final line = mockScriptLineById(scriptLineId);
+    await _mockScriptAudioService.playScript(
+      scriptLineId,
+      fallbackText: fallbackMessage ?? line?.text,
+    );
+  }
+
+  Future<void> _applySpatialCue(
+    V3Cue cue, {
+    V3BeaconDecisionResponse? beaconDecision,
+  }) async {
+    if (cue.isNone) {
+      await _spatialCueService.stopCue();
+      return;
+    }
+
+    final profile = _spatialProfileForCue(cue, beaconDecision: beaconDecision);
+    if (profile.pattern == 'alarm' || profile.pattern == 'missed') {
+      await _spatialCueService.playAlarm(pattern: profile.pattern);
+      return;
+    }
+    await _spatialCueService.startCue(
+      pan: profile.pan,
+      gain: profile.gain,
+      intervalMs: profile.intervalMs,
+      pattern: profile.pattern,
+    );
+  }
+
+  _SpatialCueProfile _spatialProfileForCue(
+    V3Cue cue, {
+    V3BeaconDecisionResponse? beaconDecision,
+  }) {
+    final cueType = cue.type;
+    final decision = beaconDecision?.decision;
+    final nearest = beaconDecision?.nearestBeacon;
+    final distance = _beaconDistanceMeters(nearest);
+    final isWrong =
+        cueType.contains('WRONG') ||
+        (decision != null && decision.contains('WRONG'));
+    final isTarget =
+        cueType.contains('TARGET') ||
+        (decision != null && decision.contains('TARGET'));
+
+    if (cueType == 'DANGER' || cueType == 'GEOFENCE_WARNING') {
+      return const _SpatialCueProfile(
+        pan: 0,
+        gain: 0.85,
+        intervalMs: 480,
+        pattern: 'alarm',
+      );
+    }
+    if (isWrong) {
+      return _SpatialCueProfile(
+        pan: -0.75,
+        gain: _gainForDistance(distance, fallback: 0.75),
+        intervalMs: _intervalForDistance(distance, fallback: 720),
+        pattern: 'warning',
+      );
+    }
+    if (isTarget) {
+      return _SpatialCueProfile(
+        pan: _panForTargetDistance(distance),
+        gain: _gainForDistance(distance, fallback: 0.55),
+        intervalMs: _intervalForDistance(distance, fallback: 1200),
+        pattern: 'normal',
+      );
+    }
+    return const _SpatialCueProfile(
+      pan: 0,
+      gain: 0.5,
+      intervalMs: 1400,
+      pattern: 'normal',
+    );
+  }
+
+  double? _beaconDistanceMeters(V3BeaconSignal? beacon) {
+    if (beacon == null) return null;
+    if (beacon.distanceMeters != null) return beacon.distanceMeters;
+    final rssi = beacon.rssi;
+    if (rssi == null) return null;
+    if (rssi >= -62) return 2.0;
+    if (rssi >= -75) return 7.0;
+    return 12.0;
+  }
+
+  double _gainForDistance(double? distance, {required double fallback}) {
+    if (distance == null) return fallback;
+    if (distance <= 3) return 0.82;
+    if (distance <= 10) return 0.55;
+    return 0.32;
+  }
+
+  int _intervalForDistance(double? distance, {required int fallback}) {
+    if (distance == null) return fallback;
+    if (distance <= 3) return 650;
+    if (distance <= 10) return 1350;
+    return 2400;
+  }
+
+  double _panForTargetDistance(double? distance) {
+    if (distance == null) return 0.25;
+    if (distance <= 3) return 0.65;
+    if (distance <= 10) return 0.35;
+    return 0.15;
+  }
+
+  String _scriptLineIdForGeofenceEvent(String event) {
+    switch (event) {
+      case 'ARRIVED_AT_STOP':
+      case 'RETURNED_TO_STOP':
+        return 'arrive_at_stop';
+      case 'LEFT_WAITING_AREA':
+      case 'DANGER_ZONE':
+        return 'geofence_warning';
+      default:
+        return 'signal_lost';
+    }
+  }
+
+  String _scriptLineIdForBeaconDecision(V3BeaconDecisionResponse response) {
+    final cueType = response.cue.type;
+    final decision = response.decision;
+    final distance = _beaconDistanceMeters(response.nearestBeacon);
+    if (cueType.contains('WRONG') || decision.contains('WRONG')) {
+      return 'wrong_bus_warning';
+    }
+    if (cueType.contains('TARGET') || decision.contains('TARGET')) {
+      if (distance != null && distance <= 3) return 'bus_stopped';
+      return 'bus_approaching';
+    }
+    return 'signal_lost';
+  }
+
+  Future<LiveProcessResult?> _fixedMockLiveResponse(String text) async {
+    final scriptLineId = _scriptLineIdForLiveIntent(text);
+    if (scriptLineId == null) return null;
+    if (scriptLineId == 'repeat_current_line') {
+      final spoken = _mockScriptAudioService.lastSpokenText;
+      if (spoken == null || spoken.trim().isEmpty) {
+        const fallback = '반복할 안내가 아직 없습니다.';
+        _nextLiveScriptLineId = null;
+        return const LiveProcessResult(spokenText: fallback);
+      }
+      _nextLiveScriptLineId = _mockScriptAudioService.lastScriptLineId;
+      return LiveProcessResult(spokenText: spoken);
+    }
+
+    final line = mockScriptLineById(scriptLineId);
+    _nextLiveScriptLineId = scriptLineId;
+    if (scriptLineId == 'boarded_success') {
+      await _spatialCueService.stopCue();
+      await _cueService.stopCue();
+      return LiveProcessResult(spokenText: line?.text ?? '', endSession: true);
+    }
+    if (scriptLineId == 'missed_bus') {
+      await _spatialCueService.playAlarm(pattern: 'missed');
+    }
+    return LiveProcessResult(spokenText: line?.text ?? '');
+  }
+
+  String? _scriptLineIdForLiveIntent(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    if (normalized.contains('다시') ||
+        normalized.contains('반복') ||
+        normalized.contains('한번더')) {
+      return 'repeat_current_line';
+    }
+    if (normalized.contains('놓쳤') ||
+        normalized.contains('놓침') ||
+        normalized.contains('지나갔') ||
+        normalized.contains('실패')) {
+      return 'missed_bus';
+    }
+    if (normalized.contains('탑승') ||
+        normalized.contains('탔다') ||
+        normalized.contains('탔어')) {
+      if (normalized.contains('완료') ||
+          normalized.contains('성공') ||
+          normalized.contains('했') ||
+          normalized.contains('탔다') ||
+          normalized.contains('탔어')) {
+        return 'boarded_success';
+      }
+      return 'boarding_prompt';
+    }
+    return null;
+  }
+
   Future<void> _startGuidance() async {
+    await _playScriptLine('mock_start');
     await _sendUtterance('응, 선택한 경로로 안내해줘.');
   }
 
@@ -1307,6 +1536,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       });
       await _cueService.playCue(
         response.cue,
+        fallbackMessage: response.message,
+        speakMessage: false,
+        systemBeep: false,
+      );
+      await _applySpatialCue(response.cue);
+      await _playScriptLine(
+        _scriptLineIdForGeofenceEvent(event),
         fallbackMessage: response.message,
       );
     });
@@ -1329,6 +1565,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       await _cueService.playCue(
         response.cue,
         fallbackMessage: response.message,
+        speakMessage: false,
+        systemBeep: false,
+      );
+      await _applySpatialCue(response.cue, beaconDecision: response);
+      await _playScriptLine(
+        _scriptLineIdForBeaconDecision(response),
+        fallbackMessage: response.message,
       );
     });
   }
@@ -1347,13 +1590,42 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       await _cueService.playCue(
         response.cue,
         fallbackMessage: response.message,
+        speakMessage: false,
+        systemBeep: false,
       );
+      await _spatialCueService.playAlarm(pattern: 'missed');
+      await _playScriptLine('missed_bus', fallbackMessage: response.message);
+    });
+  }
+
+  Future<void> _mockBoardingPrompt() async {
+    await _runGuarded(() async {
+      await _playScriptLine('boarding_prompt');
+      setState(() {
+        _latestGeofenceMessage = mockScriptLineById('boarding_prompt')?.text;
+      });
+    });
+  }
+
+  Future<void> _mockBoardedSuccess() async {
+    await _runGuarded(() async {
+      await _stopAllCueAudio();
+      await _playScriptLine('boarded_success');
+      setState(() {
+        _latestGeofenceMessage = mockScriptLineById('boarded_success')?.text;
+      });
+    });
+  }
+
+  Future<void> _repeatMockScript() async {
+    await _runGuarded(() async {
+      await _mockScriptAudioService.repeatLast();
     });
   }
 
   Future<void> _resetSession() async {
     await _runGuarded(() async {
-      await _cueService.stopCue();
+      await _stopAllCueAudio();
       final state = await _client.resetSession(sessionId: _sessionId);
       _liveRouteTimer?.cancel();
       _liveRouteTimer = null;
@@ -1388,7 +1660,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   Widget build(BuildContext context) {
     final state = _sessionState;
-    final lastMessage = _lastAgentResponse?.message ??
+    final lastMessage =
+        _lastAgentResponse?.message ??
         _latestGeofenceMessage ??
         _lastBeaconDecision?.message ??
         'V3 버스 탑승 보조 에이전트가 대기 중이야.';
@@ -1562,15 +1835,18 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       ]),
                       onTargetBusNear: () =>
                           _mockBeacons(const <V3BeaconSignal>[
-                        V3BeaconSignal(
-                          busId: 'BUS_2',
-                          routeNo: '502',
-                          rssi: -52,
-                          distanceMeters: 1.4,
-                        ),
-                      ]),
+                            V3BeaconSignal(
+                              busId: 'BUS_2',
+                              routeNo: '502',
+                              rssi: -52,
+                              distanceMeters: 1.4,
+                            ),
+                          ]),
                       onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
                       onBusPassed: _mockBusPassed,
+                      onBoardingPrompt: _mockBoardingPrompt,
+                      onBoardedSuccess: _mockBoardedSuccess,
+                      onRepeatScript: _repeatMockScript,
                       onRefreshArrivals: _refreshArrivals,
                       latestBeaconDecision: _lastBeaconDecision,
                       latestGeofenceMessage: _latestGeofenceMessage,
@@ -1641,8 +1917,8 @@ class _AgentTraceCard extends StatelessWidget {
                   child: Text(
                     '모비가 실제 데이터를 확인했어',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 TextButton.icon(
@@ -1977,13 +2253,16 @@ class _ConversationLogCard extends StatelessWidget {
                   );
                 }
                 final isUser = m.isUser;
-                final sourceIcon =
-                    m.source == 'voice' ? Icons.mic : Icons.chat_bubble_outline;
-                final who =
-                    isUser ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)') : '모비';
+                final sourceIcon = m.source == 'voice'
+                    ? Icons.mic
+                    : Icons.chat_bubble_outline;
+                final who = isUser
+                    ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)')
+                    : '모비';
                 return Align(
-                  alignment:
-                      isUser ? Alignment.centerRight : Alignment.centerLeft,
+                  alignment: isUser
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 320),
                     padding: const EdgeInsets.symmetric(
@@ -2134,8 +2413,9 @@ class _BetterRouteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final plan = candidate.recommendedPlan;
-    final seg =
-        (plan != null && plan.segments.isNotEmpty) ? plan.segments.first : null;
+    final seg = (plan != null && plan.segments.isNotEmpty)
+        ? plan.segments.first
+        : null;
     final routeNo = seg?.routeNo ?? '새 경로';
     final etaText = etaMinutes == null ? '' : ' · 약 $etaMinutes분';
     return Card(
@@ -2223,15 +2503,18 @@ class _RealtimeNavCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final plan = routePlan?.recommendedPlan;
-    final segment =
-        plan?.segments.isNotEmpty == true ? plan!.segments.first : null;
+    final segment = plan?.segments.isNotEmpty == true
+        ? plan!.segments.first
+        : null;
     final s = status;
     final statusArrivals = s?.arrivals ?? const <V3BusArrival>[];
     final planArrivals = segment?.arrivals ?? const <V3BusArrival>[];
-    final displayedArrivals =
-        statusArrivals.isNotEmpty ? statusArrivals : planArrivals;
-    final firstArrival =
-        displayedArrivals.isNotEmpty ? displayedArrivals.first : null;
+    final displayedArrivals = statusArrivals.isNotEmpty
+        ? statusArrivals
+        : planArrivals;
+    final firstArrival = displayedArrivals.isNotEmpty
+        ? displayedArrivals.first
+        : null;
     final serviceStatus = s?.serviceStatus ?? segment?.serviceStatus;
     final walking = s?.walkingRouteToBoardStop;
     final egressWalking = s?.walkingRouteFromAlightStop;
@@ -2246,24 +2529,25 @@ class _RealtimeNavCard extends StatelessWidget {
     final routeNo = segment?.routeNo ?? s?.routeNo ?? '미확인';
     final boardName =
         s?.selectedBoardStop?.stopName ?? segment?.boardStop.stopName ?? '미확인';
-    final alightName = s?.selectedAlightStop?.stopName ??
+    final alightName =
+        s?.selectedAlightStop?.stopName ??
         segment?.alightStop.stopName ??
         '미확인';
     final congestion = _congestionLabel(s?.congestion);
     final lowFloor = firstArrival?.lowFloor == null
         ? '미확인'
         : firstArrival!.lowFloor!
-            ? '저상버스'
-            : '일반버스';
+        ? '저상버스'
+        : '일반버스';
     final walkingProvider = walking == null
         ? '확인 중'
         : walking.provider == 'TMAP'
-            ? 'TMAP 보행자 경로 API'
-            : '${walking.provider} 보조 경로';
+        ? 'TMAP 보행자 경로 API'
+        : '${walking.provider} 보조 경로';
     final walkText = (walking == null || walking.totalDistanceMeters == null)
         ? '미확인'
         : '약 ${walking.totalDistanceMeters!.round()}m · 약 ${(((walking.totalDurationSeconds ?? 0) / 60).ceil()).clamp(1, 999)}분'
-            '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
+              '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
     final busMsg = (s == null || s.busPositions.isEmpty)
         ? '현재 버스 위치는 아직 조회되지 않았어.'
         : '현재 ${s.busPositions.length}대의 버스 위치를 조회했어.';
@@ -2293,8 +2577,8 @@ class _RealtimeNavCard extends StatelessWidget {
                     child: Text(
                       '정류장까지 보행 내비게이션',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   if (isLoading)
@@ -2367,13 +2651,13 @@ class _RealtimeNavCard extends StatelessWidget {
                   final multiLeg = (plan?.segments.length ?? 0) > 1;
                   final totalMinutes =
                       (multiLeg ? plan?.totalEstimatedMinutes : null) ??
-                          _journeyTotalMinutes(
-                            walkToBoardMinutes: walkToBoardMinutes,
-                            busEtaMinutes: busEtaMinutes,
-                            rideMinutes: rideMinutes,
-                            walkFromAlightMinutes: walkFromAlightMinutes,
-                            fallback: plan?.totalEstimatedMinutes,
-                          );
+                      _journeyTotalMinutes(
+                        walkToBoardMinutes: walkToBoardMinutes,
+                        busEtaMinutes: busEtaMinutes,
+                        rideMinutes: rideMinutes,
+                        walkFromAlightMinutes: walkFromAlightMinutes,
+                        fallback: plan?.totalEstimatedMinutes,
+                      );
                   final clockEnd = totalMinutes == null
                       ? null
                       : clockStart.add(Duration(minutes: totalMinutes));
@@ -2556,8 +2840,8 @@ class _RealtimeNavCard extends StatelessWidget {
             final radius = m.type == 'BUS'
                 ? 10.0
                 : m.type == 'NEARBY'
-                    ? 6.0
-                    : 8.0;
+                ? 6.0
+                : 8.0;
             return Marker(
               point: LatLng(m.latitude, m.longitude),
               width: radius * 2,
@@ -2662,8 +2946,9 @@ String _arrivalDisplayLabel(
   final bus = arrival.busId == null || arrival.busId!.isEmpty
       ? ''
       : ' · ${arrival.busId}';
-  final stops =
-      arrival.remainingStops == null ? '' : ' · ${arrival.remainingStops}정류장 전';
+  final stops = arrival.remainingStops == null
+      ? ''
+      : ' · ${arrival.remainingStops}정류장 전';
   return '${arrival.routeNo}번 ${_arrivalEtaText(etaSeconds: etaSeconds, etaMinutes: etaMinutes, emptyLabel: '도착정보 없음')}$stops$bus';
 }
 
@@ -2941,7 +3226,8 @@ class _CompactJourneyCard extends StatelessWidget {
                       etaSeconds: i == 0 ? busEtaSeconds : null,
                       emptyEtaLabel: i == 0 ? arrivalEmptyLabel : '도착정보 없음',
                       remainingStops: i == 0 ? remainingStops : null,
-                      rideMinutes: segments[i].estimatedMinutes ??
+                      rideMinutes:
+                          segments[i].estimatedMinutes ??
                           (i == 0 ? rideMinutes : null),
                       stopCount: segments[i].stopCount,
                       congestion: i == 0 ? congestion : null,
@@ -3573,8 +3859,8 @@ class _CombinedChatControlCard extends StatelessWidget {
                     onPressed: isBusy
                         ? null
                         : () => onQuickAction(
-                              '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
-                            ),
+                            '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
+                          ),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
@@ -3600,8 +3886,9 @@ class _CombinedChatControlCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   ActionChip(
                     label: const Text('목적지 변경 (충북대병원)'),
-                    onPressed:
-                        isBusy ? null : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
+                    onPressed: isBusy
+                        ? null
+                        : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
                   ),
                 ],
               ),
@@ -3631,6 +3918,9 @@ class _DebugExpansionPanel extends StatelessWidget {
     required this.onTargetBusNear,
     required this.onNoBeacon,
     required this.onBusPassed,
+    required this.onBoardingPrompt,
+    required this.onBoardedSuccess,
+    required this.onRepeatScript,
     required this.onRefreshArrivals,
     required this.latestBeaconDecision,
     required this.latestGeofenceMessage,
@@ -3663,6 +3953,9 @@ class _DebugExpansionPanel extends StatelessWidget {
   final VoidCallback onTargetBusNear;
   final VoidCallback onNoBeacon;
   final VoidCallback onBusPassed;
+  final VoidCallback onBoardingPrompt;
+  final VoidCallback onBoardedSuccess;
+  final VoidCallback onRepeatScript;
   final VoidCallback onRefreshArrivals;
   final V3BeaconDecisionResponse? latestBeaconDecision;
   final String? latestGeofenceMessage;
@@ -3717,6 +4010,9 @@ class _DebugExpansionPanel extends StatelessWidget {
               onTargetBusNear: onTargetBusNear,
               onNoBeacon: onNoBeacon,
               onBusPassed: onBusPassed,
+              onBoardingPrompt: onBoardingPrompt,
+              onBoardedSuccess: onBoardedSuccess,
+              onRepeatScript: onRepeatScript,
               onRefreshArrivals: onRefreshArrivals,
               latestBeaconDecision: latestBeaconDecision,
               latestGeofenceMessage: latestGeofenceMessage,
@@ -3776,8 +4072,8 @@ class _ArrivalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final firstRecommendation =
         routeRecommendation?.recommendations.isNotEmpty == true
-            ? routeRecommendation!.recommendations.first
-            : null;
+        ? routeRecommendation!.recommendations.first
+        : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3927,8 +4223,9 @@ class _RoutePlanCard extends StatelessWidget {
     final typeLabel = plan.type == 'DIRECT' ? '직통 추천' : '1회 환승 추천';
     final firstSegment = plan.segments.isEmpty ? null : plan.segments.first;
     final arrivals = firstSegment?.arrivals;
-    final firstArrival =
-        arrivals == null || arrivals.isEmpty ? null : arrivals.first;
+    final firstArrival = arrivals == null || arrivals.isEmpty
+        ? null
+        : arrivals.first;
     return Semantics(
       container: true,
       label: '구조화된 버스 경로 계획, $typeLabel',
@@ -4082,8 +4379,8 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
                     child: Text(
                       '실제 공공 API 정류소 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -4092,9 +4389,9 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
               Text(
                 '청주시 승인 API · PUBLIC_API',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · 서비스ID ${evidence.serviceId}'),
@@ -4145,8 +4442,8 @@ class _MapsEvidenceCard extends StatelessWidget {
                     child: Text(
                       'Google Maps 위치 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -4174,8 +4471,9 @@ class _PublicDataEvidenceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPublicData = evidence.isPublicData;
     final colorScheme = Theme.of(context).colorScheme;
-    final accentColor =
-        isPublicData ? colorScheme.primary : colorScheme.tertiary;
+    final accentColor = isPublicData
+        ? colorScheme.primary
+        : colorScheme.tertiary;
     final sourceLabel = switch (evidence.source) {
       'PUBLIC_API' => '실시간 공공 API',
       'CACHE' => '공공 API 정규화 캐시',
@@ -4205,8 +4503,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
                     child: Text(
                       '버스 도착 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -4215,9 +4513,9 @@ class _PublicDataEvidenceCard extends StatelessWidget {
               Text(
                 sourceLabel,
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: accentColor,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  color: accentColor,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · ${evidence.routeNo}번'),
@@ -4272,8 +4570,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                     Text(
                       '${arrival.routeNo}번 버스',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -4290,8 +4588,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                   emptyLabel: '도착정보 없음',
                 ),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -4348,8 +4646,8 @@ class _RoutePlanningOverlayState extends State<_RoutePlanningOverlay> {
                 Text(
                   '생각 중... ${_seconds > 0 ? '($_seconds초)' : ''}',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -4358,6 +4656,20 @@ class _RoutePlanningOverlayState extends State<_RoutePlanningOverlay> {
       ),
     );
   }
+}
+
+class _SpatialCueProfile {
+  const _SpatialCueProfile({
+    required this.pan,
+    required this.gain,
+    required this.intervalMs,
+    required this.pattern,
+  });
+
+  final double pan;
+  final double gain;
+  final int intervalMs;
+  final String pattern;
 }
 
 class _RoutePlanningPreparation {

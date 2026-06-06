@@ -12,9 +12,9 @@ class AudioHapticCueService {
     FlutterTts? flutterTts,
     AudioPlayer? audioPlayer,
     LiveAudioPlayer? liveAudioPlayer,
-  })  : _flutterTts = flutterTts ?? FlutterTts(),
-        _audioPlayer = audioPlayer ?? AudioPlayer(),
-        _liveAudioPlayer = liveAudioPlayer ?? LiveAudioPlayer();
+  }) : _flutterTts = flutterTts ?? FlutterTts(),
+       _audioPlayer = audioPlayer ?? AudioPlayer(),
+       _liveAudioPlayer = liveAudioPlayer ?? LiveAudioPlayer();
 
   final FlutterTts _flutterTts;
   final AudioPlayer _audioPlayer;
@@ -26,7 +26,12 @@ class AudioHapticCueService {
   String? get activeCueType => _activeCueType;
   bool get isLooping => _cueTimer?.isActive ?? false;
 
-  Future<void> playCue(V3Cue cue, {String? fallbackMessage}) async {
+  Future<void> playCue(
+    V3Cue cue, {
+    String? fallbackMessage,
+    bool speakMessage = true,
+    bool systemBeep = true,
+  }) async {
     if (cue.isNone) {
       await stopCue();
       return;
@@ -47,17 +52,17 @@ class AudioHapticCueService {
       await HapticFeedback.heavyImpact();
     }
 
-    if (cue.needsLocalPlayback && message.isNotEmpty) {
+    if (speakMessage && cue.needsLocalPlayback && message.isNotEmpty) {
       await _flutterTts.speak(message);
     }
 
-    if (cue.shouldBeep || cue.shouldVibrate) {
+    if ((systemBeep && cue.shouldBeep) || cue.shouldVibrate) {
       final interval = _intervalForCue(cueType);
       _cueTimer = Timer.periodic(interval, (_) async {
         if (cue.shouldVibrate) {
           await HapticFeedback.mediumImpact();
         }
-        if (cue.shouldBeep) {
+        if (systemBeep && cue.shouldBeep) {
           await SystemSound.play(SystemSoundType.click);
         }
       });
