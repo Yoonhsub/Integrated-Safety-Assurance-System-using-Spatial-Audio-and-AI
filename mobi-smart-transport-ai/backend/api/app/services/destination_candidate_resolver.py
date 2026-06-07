@@ -30,6 +30,9 @@ _CHEONGJU_CENTER_LAT = 36.6424
 _CHEONGJU_CENTER_LNG = 127.4890
 _CHEONGJU_LOCAL_SEARCH_RADIUS_METERS = 20_000
 _LOCAL_AREA_DESTINATION_KEYWORDS = frozenset({"성안길"})
+# 교통 거점을 가리키는 일반어. 이런 발화는 "터미널꽃집/새터미널약국" 같은 상호명 부분일치에
+# 밀리지 않도록 알려진 거점(고속/시외 터미널)만 후보로 올려 어디인지 되묻는다.
+_TRANSIT_HUB_QUERIES = frozenset({"터미널", "버스터미널"})
 _STT_CONFIRMATION_ALIASES = {
     "상단산성": "상당산성",
     "산창사거리": "사창사거리",
@@ -481,6 +484,13 @@ class DestinationCandidateResolver:
         live: bool,
     ) -> list[DestinationCandidate]:
         candidates: list[DestinationCandidate] = []
+
+        # 교통 거점 일반어("터미널" 등)는 상호명 부분일치에 밀리지 않도록 알려진 거점만
+        # 후보로 올려 고속/시외 중 어디인지 묻는다(NEEDS_CHOICE).
+        if normalized in _TRANSIT_HUB_QUERIES:
+            hub_candidates = _known_place_candidates(normalized)
+            if hub_candidates:
+                return hub_candidates
 
         known_candidates = _known_place_candidates(normalized)
         seed_candidates = _seed_stop_name_candidates(normalized)
