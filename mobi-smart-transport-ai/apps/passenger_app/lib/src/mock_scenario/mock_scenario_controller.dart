@@ -10,9 +10,14 @@ typedef MockScenarioCueFrame = FutureOr<void> Function(MockScenarioState state);
 typedef MockScenarioStopCue = FutureOr<void> Function();
 typedef MockScenarioScriptLine = FutureOr<void> Function(
     String scriptLineId, String fallbackMessage);
+typedef MockScenarioStopScriptAudio = FutureOr<void> Function();
 
 class MockScenarioController extends ChangeNotifier {
-  MockScenarioController({this.onCueFrame, this.onStopCue, this.onScriptLine})
+  MockScenarioController(
+      {this.onCueFrame,
+      this.onStopCue,
+      this.onScriptLine,
+      this.onStopScriptAudio})
       : _state = MockScenarioState.initial(
           scenario: mockScenarioDefinitions.first,
         ) {
@@ -25,6 +30,9 @@ class MockScenarioController extends ChangeNotifier {
   final MockScenarioCueFrame? onCueFrame;
   final MockScenarioStopCue? onStopCue;
   final MockScenarioScriptLine? onScriptLine;
+  // 멈춤/처음부터/시나리오 전환 시 재생 중인 안내 음성을 끊어 이전 음성이 새 실행에
+  // 겹치지 않게 한다.
+  final MockScenarioStopScriptAudio? onStopScriptAudio;
 
   final List<MockScenarioDefinition> scenarios = mockScenarioDefinitions;
 
@@ -36,9 +44,6 @@ class MockScenarioController extends ChangeNotifier {
   Duration _lastCueFrameAt = Duration(milliseconds: -1000);
   String? _lastScriptLineId;
   double _playbackSpeed = 1.0;
-  // 안내 음성이 재생되는 동안 true. 이 동안 타임라인을 멈춰 시뮬레이션 진행 속도를
-  // 음성 길이에 맞춘다(음성이 끝나기 전에 다음 장면/음성이 시작되지 않게).
-  bool _audioHold = false;
 
   MockScenarioState get state => _state;
   MockScenarioDefinition get selectedScenario => _scenario;
@@ -55,12 +60,12 @@ class MockScenarioController extends ChangeNotifier {
     _scenario = next;
     _elapsed = Duration.zero;
     _lastTickAt = null;
-    _audioHold = false;
     _lastScriptLineId = null;
     _lastCueFrameAt = Duration(milliseconds: -1000);
     _state = _buildState(isPlaying: false, shouldStopCue: true);
     notifyListeners();
     _emitStopCue();
+    _emitStopScriptAudio();
   }
 
   void setPlaybackSpeed(double speed) {
@@ -76,7 +81,6 @@ class MockScenarioController extends ChangeNotifier {
       _lastScriptLineId = null;
     }
     _lastTickAt = DateTime.now();
-    _audioHold = false;
     _timer = Timer.periodic(_tickInterval, _handleTick);
     _state = _buildState(isPlaying: true);
     notifyListeners();
@@ -88,10 +92,10 @@ class MockScenarioController extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _lastTickAt = null;
-    _audioHold = false;
     _state = _buildState(isPlaying: false);
     notifyListeners();
     _emitStopCue();
+    _emitStopScriptAudio();
   }
 
   void togglePlayPause() {
@@ -107,12 +111,12 @@ class MockScenarioController extends ChangeNotifier {
     _timer = null;
     _elapsed = Duration.zero;
     _lastTickAt = null;
-    _audioHold = false;
     _lastScriptLineId = null;
     _lastCueFrameAt = Duration(milliseconds: -1000);
     _state = _buildState(isPlaying: false, shouldStopCue: true);
     notifyListeners();
     _emitStopCue();
+    _emitStopScriptAudio();
   }
 
   void restart() {
@@ -141,11 +145,6 @@ class MockScenarioController extends ChangeNotifier {
     final now = DateTime.now();
     final previous = _lastTickAt ?? now;
     _lastTickAt = now;
-    // 안내 음성 재생 중에는 경과 시간을 진행시키지 않는다(음성이 끝나면 자동 재개).
-    // _lastTickAt은 매 틱 갱신되므로 재개 시 큰 시간 점프가 생기지 않는다.
-    if (_audioHold) {
-      return;
-    }
     final delta = now.difference(previous);
     final scaledDelta = Duration(
       microseconds: (delta.inMicroseconds * _playbackSpeed).round(),
@@ -292,16 +291,9 @@ class MockScenarioController extends ChangeNotifier {
     final scriptLineId = _state.currentScriptLineId;
     if (scriptLineId != null && scriptLineId != _lastScriptLineId) {
       _lastScriptLineId = scriptLineId;
-      final result =
-          onScriptLine?.call(scriptLineId, _state.currentScenarioMessage);
-      if (result is Future) {
-        // 음성이 끝날 때까지 타임라인을 멈춘다(겹침 방지 + 속도 동기).
-        _audioHold = true;
-        result.whenComplete(() {
-          _audioHold = false;
-          _lastTickAt = DateTime.now();
-        });
-      }
+      Future<void>.sync(
+        () => onScriptLine?.call(scriptLineId, _state.currentScenarioMessage),
+      );
     }
 
     if (_state.shouldStopCue) {
@@ -319,6 +311,10 @@ class MockScenarioController extends ChangeNotifier {
 
   void _emitStopCue() {
     Future<void>.sync(() => onStopCue?.call());
+  }
+
+  void _emitStopScriptAudio() {
+    Future<void>.sync(() => onStopScriptAudio?.call());
   }
 
   @override

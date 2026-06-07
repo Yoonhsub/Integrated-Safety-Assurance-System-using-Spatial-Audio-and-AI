@@ -140,6 +140,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       onCueFrame: _handleMockScenarioCueFrame,
       onStopCue: _spatialCueService.stopCue,
       onScriptLine: _handleMockScenarioScriptLine,
+      onStopScriptAudio: _mockScriptAudioService.stop,
     );
 
     _bootstrap();
@@ -1348,15 +1349,28 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
-    if (state.cueType == 'none' || state.cueType == 'success') {
+    final cue = state.cueType;
+    if (cue == 'none' || cue == 'success') {
       await _spatialCueService.stopCue();
+      return;
+    }
+    // 경고(지오펜싱 이탈/차도 접근/놓침)는 버스 거리와 무관하게 고정된 긴박한 간격으로
+    // 중앙·높은 음량으로 울려야 한다. (예전엔 버스 거리 기반 간격이라 경고가 띄엄띄엄·
+    // 엉뚱한 순간에 울렸다.) normal일 때만 목표 버스 위치에 맞춰 동적으로 울린다.
+    if (cue == 'alarm' || cue == 'warning' || cue == 'missed') {
+      await _spatialCueService.updateCue(
+        pan: 0.0,
+        gain: 0.9,
+        intervalMs: cue == 'missed' ? 900 : 420,
+        pattern: cue,
+      );
       return;
     }
     await _spatialCueService.updateCue(
       pan: state.pan,
       gain: state.gain,
       intervalMs: state.beepIntervalMs,
-      pattern: state.cueType,
+      pattern: cue,
     );
   }
 
