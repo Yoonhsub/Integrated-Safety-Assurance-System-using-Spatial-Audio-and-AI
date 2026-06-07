@@ -2,6 +2,7 @@
 
 스크린샷 기반 실버그 재발 방지:
 - "청주대학교"가 정류장명 "청주대학교.뉴시스"로 잡혀 되묻던 문제
+- "청주대"가 "청주대왕약국" 같은 상호명이나 "충북대학교" 추론에 밀리던 문제
 - "충북대학교"가 "충북대학교병원" 부분일치에 밀려 NEEDS_CHOICE로 빠지던 문제
 - "터미널"이 "새터미널약국/터미널꽃집" 상호에 밀려 오확정되던 문제
 - 경로 세그먼트가 "58개 정류장인데 2분 탑승"으로 표시되던 모순
@@ -15,6 +16,8 @@ from app.services.destination_candidate_resolver import (
 )
 from app.services.v3_agent_tools import verify_route_tool
 from app.schemas.v3 import (
+    DestinationCandidate,
+    DestinationCandidateType,
     DestinationResolveResponse,
     DestinationResolveStatus,
     RoutePlanCandidate,
@@ -97,6 +100,69 @@ def test_transit_hub_term_returns_only_known_terminals():
     )
     names = {c.name for c in candidates}
     assert names == {"청주고속버스터미널", "청주시외버스터미널"}
+
+
+class _EmptyStopCatalog:
+    def search_by_name(self, **_):
+        return []
+
+    def find_nearby(self, **_):
+        return []
+
+
+class _MisleadingCheongjuUniversitySearch:
+    def search(self, query, *_, **__):
+        if query == "청주대":
+            return [
+                DestinationCandidate(
+                    name="청주대왕약국",
+                    type=DestinationCandidateType.PLACE,
+                    confidence=0.94,
+                    latitude=CLAT,
+                    longitude=CLNG,
+                    source=FallbackSource.PUBLIC_API,
+                )
+            ]
+        return [
+            DestinationCandidate(
+                name="충북대학교",
+                type=DestinationCandidateType.PLACE,
+                confidence=0.95,
+                latitude=CLAT,
+                longitude=CLNG,
+                source=FallbackSource.PUBLIC_API,
+            )
+        ]
+
+
+def test_cheongju_university_alias_beats_misleading_business_candidate():
+    """'청주대'는 승인된 청주대학교 별칭으로 확정하고 약국 상호명으로 되묻지 않는다."""
+    resolver = DestinationCandidateResolver(
+        stop_catalog=_EmptyStopCatalog(),
+        local_search=_MisleadingCheongjuUniversitySearch(),
+    )
+
+    result = resolver.resolve(heard_text="청주대", live=True)
+
+    assert result.status == DestinationResolveStatus.RESOLVED
+    assert result.topCandidate is not None
+    assert result.topCandidate.name == "청주대학교"
+    assert result.question is None
+
+
+def test_cheongju_university_exact_name_beats_chungbuk_university_candidate():
+    """'청주대학교'는 비슷한 대학명 후보가 있어도 청주대학교로 확정한다."""
+    resolver = DestinationCandidateResolver(
+        stop_catalog=_EmptyStopCatalog(),
+        local_search=_MisleadingCheongjuUniversitySearch(),
+    )
+
+    result = resolver.resolve(heard_text="청주대학교", live=True)
+
+    assert result.status == DestinationResolveStatus.RESOLVED
+    assert result.topCandidate is not None
+    assert result.topCandidate.name == "청주대학교"
+    assert result.question is None
 
 
 def _stop(stop_id: str, name: str) -> RoutePlanStop:

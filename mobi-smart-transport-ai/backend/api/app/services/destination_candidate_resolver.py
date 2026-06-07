@@ -91,6 +91,16 @@ _KNOWN_PLACES: tuple[_KnownPlace, ...] = (
         confidence=0.93,
     ),
     _KnownPlace(
+        name="청주대학교",
+        type=DestinationCandidateType.PLACE,
+        latitude=36.650856501,
+        longitude=127.49519913,
+        aliases=("청주대", "청주 대", "청대"),
+        address="충청북도 청주시 청원구 대성로 298",
+        stop_id="seed-stop-cheongju-univ",
+        confidence=0.96,
+    ),
+    _KnownPlace(
         name="청주고속버스터미널",
         type=DestinationCandidateType.PLACE,
         latitude=36.6262,
@@ -170,6 +180,14 @@ _SEED_STOPS: tuple[_SeedStop, ...] = (
         longitude=127.5005,
         aliases=("상당구청",),
         direction_hint="효촌 방면",
+    ),
+    _SeedStop(
+        stop_id="seed-stop-cheongju-univ",
+        stop_name="청주대학교 정류장",
+        latitude=36.650856501,
+        longitude=127.49519913,
+        aliases=("청주대학교", "청주대", "청대"),
+        direction_hint="청주대학교·내덕동 방면",
     ),
 )
 
@@ -917,6 +935,7 @@ def _clean_destination_text(text: str) -> str:
         cleaned = cleaned.split("아니라", 1)[1].strip()
     patterns = [
         r"(으로|로)?\s*가고\s*싶어.*$",
+        r"(으로|로|에)?\s*가려면.*$",
         r"(으로|로)?\s*가야\s*(하는데|돼|해)?.*$",
         r"(으로|로)?\s*가자.*$",
         r"(으로|로)?\s*가는\s*(법|길|버스|노선).*$",

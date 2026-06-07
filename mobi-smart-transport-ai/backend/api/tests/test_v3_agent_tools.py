@@ -29,6 +29,12 @@ def test_normalize_user_utterance_removes_optional_question_prefix() -> None:
     assert normalized.destination_candidate_text == "성화동 925"
 
 
+def test_normalize_user_utterance_extracts_destination_before_if_going_phrase() -> None:
+    normalized = normalize_user_utterance("청주대에 가려면 어떻게 해요?")
+
+    assert normalized.destination_candidate_text == "청주대"
+
+
 def test_sanitize_agent_reply_removes_mobi_user_address() -> None:
     assert sanitize_agent_reply_tool("그래, 모비야. 내가 안내해줄게.") == "내가 안내해줄게."
 
@@ -59,6 +65,13 @@ def test_classify_agent_intent_treats_destination_guidance_as_route_request() ->
 
     assert result.intent == AgentIntent.FIND_ROUTE
     assert result.explicit_destination == "충북대병원"
+
+
+def test_classify_agent_intent_treats_if_going_phrase_as_route_request() -> None:
+    result = classify_agent_intent("청주대학교 가려면")
+
+    assert result.intent == AgentIntent.FIND_ROUTE
+    assert result.explicit_destination == "청주대학교"
 
 
 def test_classify_agent_intent_keeps_arriving_bus_guidance_as_selection() -> None:

@@ -68,6 +68,25 @@ def test_agent_route_message_includes_boarding_and_alighting_steps() -> None:
     assert message.index("823번") < message.index("충북대학교병원 정류장")
 
 
+def test_agent_converse_resolves_cheongju_university_if_going_phrase() -> None:
+    response = _say(
+        "s-cheongju-univ",
+        "자비스, 청주대에 가려면 어떻게 해요?",
+        originLat=36.6359,
+        originLng=127.4596,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "FIND_ROUTE"
+    assert body["routePlan"]["status"] == "RESOLVED"
+    assert body["routePlan"]["destination"]["topCandidate"]["name"] == "청주대학교"
+    assert body["routePlan"]["recommendedPlan"]["segments"][0]["routeNo"] == "502"
+    assert "혹시" not in body["message"]
+    assert "약국" not in body["message"]
+    assert "충북대학교" not in body["message"]
+
+
 def test_agent_converse_confirmation_followup_uses_pending_route_plan_context() -> None:
     first = _say(
         "s-confirm",

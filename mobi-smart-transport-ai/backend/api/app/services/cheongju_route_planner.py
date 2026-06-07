@@ -288,6 +288,7 @@ def _mock_route_sequences() -> list[RouteSequence]:
                 RouteStopNode("mock-stop-001", "사창사거리 정류장", 2, 36.63594787, 127.4596675),
                 RouteStopNode("seed-stop-cheongju-gym", "청주체육관 정류장", 3, 36.6370, 127.4740),
                 RouteStopNode("seed-stop-cityhall", "청주시청 정류장", 4, 36.6424, 127.4890),
+                RouteStopNode("seed-stop-cheongju-univ", "청주대학교 정류장", 5, 36.650856501, 127.49519913),
             ),
         ),
         RouteSequence(
@@ -295,10 +296,11 @@ def _mock_route_sequences() -> list[RouteSequence]:
             route_id="mock-route-502-east-west",
             source=FallbackSource.MOCK,
             nodes=(
-                RouteStopNode("seed-stop-cityhall-opposite", "청주시청 정류장", 1, 36.6422, 127.4892),
-                RouteStopNode("seed-stop-cheongju-gym-opposite", "청주체육관 정류장", 2, 36.6368, 127.4743),
-                RouteStopNode("mock-stop-001-opposite", "사창사거리 정류장", 3, 36.6350, 127.4610),
-                RouteStopNode("mock-stop-003", "청주고속버스터미널 정류장", 4, 36.6262, 127.4312),
+                RouteStopNode("seed-stop-cheongju-univ", "청주대학교 정류장", 1, 36.650856501, 127.49519913),
+                RouteStopNode("seed-stop-cityhall-opposite", "청주시청 정류장", 2, 36.6422, 127.4892),
+                RouteStopNode("seed-stop-cheongju-gym-opposite", "청주체육관 정류장", 3, 36.6368, 127.4743),
+                RouteStopNode("mock-stop-001-opposite", "사창사거리 정류장", 4, 36.6350, 127.4610),
+                RouteStopNode("mock-stop-003", "청주고속버스터미널 정류장", 5, 36.6262, 127.4312),
             ),
         ),
         RouteSequence(

@@ -122,7 +122,7 @@ def classify_agent_intent(
         return AgentIntentResult(AgentIntent.SELECT_ARRIVAL, normalized)
     if any(
         term in compact
-        for term in ("몇번", "가야", "가고싶", "가자", "가는법", "어떻게가", "타야")
+        for term in ("몇번", "가야", "가려면", "가고싶", "가자", "가는법", "어떻게가", "타야")
     ):
         return AgentIntentResult(
             AgentIntent.FIND_ROUTE,
@@ -739,6 +739,7 @@ def _destination_candidate_text(utterance: str) -> str | None:
         cleaned = cleaned.split("아니라", 1)[1].strip()
     patterns = [
         r"(으로|로)?\s*가고\s*싶어.*$",
+        r"(으로|로|에)?\s*가려면.*$",
         r"(으로|로)?\s*가야\s*(하는데|돼|해)?.*$",
         r"(으로|로)?\s*가자.*$",
         r"(으로|로)?\s*가는\s*(법|길|버스|노선).*$",
