@@ -8,9 +8,18 @@ import '../mock_scenario/mock_script_lines.dart';
 import '../mock_scenario/mock_voice_assets.dart';
 
 class MockScriptAudioService {
-  MockScriptAudioService({AudioPlayer? audioPlayer, FlutterTts? flutterTts})
-    : _audioPlayer = audioPlayer ?? AudioPlayer(),
-      _flutterTts = flutterTts ?? FlutterTts();
+  MockScriptAudioService({
+    AudioPlayer? audioPlayer,
+    FlutterTts? flutterTts,
+    this.webClipPlayer,
+    this.webClipStop,
+  })  : _audioPlayer = audioPlayer ?? AudioPlayer(),
+        _flutterTts = flutterTts ?? FlutterTts();
+
+  /// 웹(특히 iOS)에서 beep와 동일한 AudioContext로 음성 mp3를 재생하는 경로.
+  /// 자산 경로('mock_voice/x.mp3')를 받아 재생 완료 시 true. null이면 audioplayers 사용.
+  final Future<bool> Function(String assetPath)? webClipPlayer;
+  final Future<void> Function()? webClipStop;
 
   final AudioPlayer _audioPlayer;
   final FlutterTts _flutterTts;
@@ -39,8 +48,14 @@ class MockScriptAudioService {
         mockVoiceAssetPathForText(text) ??
         line?.assetPath ??
         mockVoiceAssetPathForScriptId(scriptLineId);
-    if (assetPath != null && await _playAsset(assetPath)) {
-      return;
+    if (assetPath != null) {
+      // 웹: beep와 같은 컨텍스트로 재생(컨텍스트 충돌 회피). 실패 시 audioplayers로 폴백.
+      if (webClipPlayer != null && await webClipPlayer!(assetPath)) {
+        return;
+      }
+      if (await _playAsset(assetPath)) {
+        return;
+      }
     }
 
     await speakText(text);
@@ -75,6 +90,9 @@ class MockScriptAudioService {
     _playbackCompleter = null;
     if (completer != null && !completer.isCompleted) {
       completer.complete();
+    }
+    if (webClipStop != null) {
+      await webClipStop!();
     }
     await _audioPlayer.stop();
     await _flutterTts.stop();

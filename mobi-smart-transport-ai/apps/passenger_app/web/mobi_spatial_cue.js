@@ -181,6 +181,55 @@
     window.addEventListener(ev, unlock, { passive: true });
   });
 
+  // ===== 음성 클립 재생 (beep와 동일한 AudioContext 공유) =====
+  // iOS는 동시에 열린 별도 AudioContext 중 하나를 중단시킨다. 그래서 음성(mp3)을
+  // audioplayers의 별도 컨텍스트가 아니라 beep와 같은 이 컨텍스트에서 재생해 충돌을 없앤다.
+  var voiceGain = null;
+  var voiceSource = null;
+  var clipCache = {};
+
+  function ensureVoiceGain() {
+    var c = ensureContext();
+    if (!c) return null;
+    if (!voiceGain) {
+      voiceGain = c.createGain();
+      voiceGain.gain.value = 1.0;
+      voiceGain.connect(c.destination);
+    }
+    return voiceGain;
+  }
+
+  function stopClip() {
+    if (voiceSource) {
+      try { voiceSource.onended = null; voiceSource.stop(); } catch (e) {}
+      voiceSource = null;
+    }
+  }
+
+  function playClip(url) {
+    return new Promise(function (resolve) {
+      var c = ensureContext();
+      var g = ensureVoiceGain();
+      if (!c || !g) { resolve(false); return; }
+      stopClip();
+      function startBuffer(buf) {
+        if (!buf) { resolve(false); return; }
+        try {
+          var src = c.createBufferSource();
+          src.buffer = buf;
+          src.connect(g);
+          voiceSource = src;
+          src.onended = function () { if (voiceSource === src) voiceSource = null; resolve(true); };
+          src.start(0);
+        } catch (e) { resolve(false); }
+      }
+      if (clipCache[url]) { startBuffer(clipCache[url]); return; }
+      fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
+        c.decodeAudioData(ab, function (buf) { clipCache[url] = buf; startBuffer(buf); }, function () { resolve(false); });
+      }).catch(function () { resolve(false); });
+    });
+  }
+
   window.MobiSpatialCue = {
     prepare: prepare,
     start: start,
@@ -192,6 +241,8 @@
     },
     updateCue: function (pan, gain, intervalMs, pattern) {
       update({ pan: pan, gain: gain, intervalMs: intervalMs, pattern: pattern });
-    }
+    },
+    playClip: playClip,
+    stopClip: stopClip
   };
 })();

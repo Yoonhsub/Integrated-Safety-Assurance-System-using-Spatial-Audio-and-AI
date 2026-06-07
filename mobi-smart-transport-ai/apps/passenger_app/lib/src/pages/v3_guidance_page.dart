@@ -131,7 +131,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService();
     _spatialCueService = SpatialCueService();
-    _mockScriptAudioService = MockScriptAudioService();
+    _mockScriptAudioService = MockScriptAudioService(
+      webClipPlayer: kIsWeb
+          ? (assetPath) => _spatialCueService.playClip('assets/assets/$assetPath')
+          : null,
+      webClipStop: kIsWeb ? _spatialCueService.stopClip : null,
+    );
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
