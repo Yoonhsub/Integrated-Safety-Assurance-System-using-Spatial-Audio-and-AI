@@ -6,6 +6,7 @@
   var panner = null;
   var timer = null;
   var step = 0;
+  var lastBeepAt = 0;
   var active = {
     pan: 0,
     gain: 0.45,
@@ -105,15 +106,31 @@
     oscillator.stop(endAt + 0.02);
   }
 
+  function nowMs() {
+    return window.performance && performance.now
+      ? performance.now()
+      : Date.now();
+  }
+
   function beep() {
     ensureContext();
     tonePlan(active.pattern).forEach(playTone);
     step += 1;
+    lastBeepAt = nowMs();
+  }
+
+  // updateCue가 짧은 주기로 자주 호출돼 setInterval(beep, interval)이 매번 리셋되면
+  // 다음 beep 전에 타이머가 초기화되어 최초 1회만 울리는 문제가 있었다(#57). 짧은 틱으로
+  // 경과 시간만 확인해 interval을 만족할 때만 beep를 울려 반복 재생을 보장한다.
+  function tickBeep() {
+    if (nowMs() - lastBeepAt >= active.intervalMs) {
+      beep();
+    }
   }
 
   function restartTimer() {
     if (timer) window.clearInterval(timer);
-    timer = window.setInterval(beep, active.intervalMs);
+    timer = window.setInterval(tickBeep, 40);
   }
 
   function prepare() {
@@ -130,11 +147,9 @@
 
   function update(options) {
     ensureContext();
-    var previousInterval = active.intervalMs;
     applyState(options);
-    if (timer && previousInterval !== active.intervalMs) {
-      restartTimer();
-    }
+    // restartTimer()를 호출하지 않는다: tickBeep가 interval을 직접 확인하므로
+    // updateCue가 반복돼도 타이머를 리셋하지 않아 beep가 끊기지 않는다(#57).
   }
 
   function stop(resetStep) {
