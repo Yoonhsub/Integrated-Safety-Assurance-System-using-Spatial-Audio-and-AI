@@ -2825,12 +2825,16 @@ class _RealtimeNavCard extends StatelessWidget {
         if (walkPolyline.length >= 2)
           PolylineLayer(
             polylines: [
+              // OSM 타일의 빨간 점선 보행로 위에서도 경로가 또렷이 보이도록
+              // 흰색 케이싱(테두리)을 두르고 선을 더 굵게/진하게 그린다.
               Polyline(
                 points: walkPolyline
                     .map((p) => LatLng(p.latitude, p.longitude))
                     .toList(),
-                color: Colors.green,
-                strokeWidth: 4.0,
+                color: const Color(0xFF1B8E3C),
+                strokeWidth: 7.0,
+                borderColor: Colors.white,
+                borderStrokeWidth: 3.0,
               ),
             ],
           ),
