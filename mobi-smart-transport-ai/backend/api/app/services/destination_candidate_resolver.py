@@ -616,7 +616,10 @@ class DestinationCandidateResolver:
                 DestinationCandidate(
                     name=display_name,
                     type=DestinationCandidateType.STOP,
-                    confidence=0.93 if exact else 0.86,
+                    # 정확히 같은 이름의 정류장은 부분일치(예: 카카오 "충북대학교병원" 0.94)보다
+                    # 우선되도록 0.96으로 둔다. 이래야 "충북대학교"가 단독 top→RESOLVED가 되고,
+                    # 현재 위치가 그곳이면 near-guard(RESOLVED일 때 동작)가 '이미 근처'를 띄운다.
+                    confidence=0.96 if exact else 0.86,
                     latitude=match.latitude,
                     longitude=match.longitude,
                     stopId=match.service_id,
