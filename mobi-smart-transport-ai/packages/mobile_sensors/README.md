@@ -49,6 +49,7 @@ export 'src/beacon_proximity_tracker.dart'; // BeaconProximityTracker, Proximity
 export 'src/proximity_event_stream.dart'; // ProximityEventStreamAdapter
 export 'src/beacon_replay_fixture.dart'; // BeaconReplayFixture, ProximityEventReplayRunner
 export 'src/beacon_scanner.dart';
+export 'src/beacon_ingest_bridge.dart'; // BeaconIngestBridge, BeaconIngestClient
 export 'src/direction_sensor.dart';
 export 'src/bone_conduction_audio_cue.dart';
 export 'src/beacon_audio_cue_factory.dart';
