@@ -598,18 +598,32 @@ class DestinationCandidateResolver:
         except Exception:
             return []
 
-        return [
-            DestinationCandidate(
-                name=match.stop_name,
-                type=DestinationCandidateType.STOP,
-                confidence=0.93 if _normalize(match.stop_name) == _normalize(query) else 0.86,
-                latitude=match.latitude,
-                longitude=match.longitude,
-                stopId=match.service_id,
-                source=FallbackSource.PUBLIC_API,
+        normalized_query = _normalize(query)
+        out: list[DestinationCandidate] = []
+        for match in matches:
+            display_name = match.stop_name
+            # 청주 시내버스 정류장은 "단지.건물"(예: "청주대학교.뉴시스")로 표기된다.
+            # 사용자가 단지명만 말했으면 그 정류장을 단지명과 동일한 목적지로 보고 표시명도
+            # 단지명으로 맞춰, 엉뚱한 건물 꼬리표("청주대학교.뉴시스")로 되묻던 문제를 막는다.
+            prefix_match = False
+            if "." in display_name:
+                prefix = display_name.split(".", 1)[0].strip()
+                if prefix and _normalize(prefix) == normalized_query:
+                    display_name = prefix
+                    prefix_match = True
+            exact = prefix_match or _normalize(match.stop_name) == normalized_query
+            out.append(
+                DestinationCandidate(
+                    name=display_name,
+                    type=DestinationCandidateType.STOP,
+                    confidence=0.93 if exact else 0.86,
+                    latitude=match.latitude,
+                    longitude=match.longitude,
+                    stopId=match.service_id,
+                    source=FallbackSource.PUBLIC_API,
+                )
             )
-            for match in matches
-        ]
+        return out
 
     def _destination_stops_for(
         self,
