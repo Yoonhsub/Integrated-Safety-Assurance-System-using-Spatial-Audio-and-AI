@@ -5,18 +5,25 @@
   var masterGain = null;
   var panner = null;
   var timer = null;
+  var lastBeepAt = 0;
   var step = 0;
   var active = {
     pan: 0,
     gain: 0.45,
     intervalMs: 1200,
-    pattern: 'normal'
+    pattern: 'normal',
   };
 
   function clamp(value, min, max) {
     var n = Number(value);
     if (!Number.isFinite(n)) return min;
     return Math.min(max, Math.max(min, n));
+  }
+
+  function nowMs() {
+    return window.performance && performance.now
+      ? performance.now()
+      : Date.now();
   }
 
   function ensureContext() {
@@ -67,20 +74,21 @@
       case 'alarm':
         return [
           { frequency: 880, durationMs: 110, delayMs: 0, type: 'square' },
-          { frequency: 660, durationMs: 110, delayMs: 160, type: 'square' }
+          { frequency: 660, durationMs: 110, delayMs: 160, type: 'square' },
         ];
       case 'warning':
         return [
-          { frequency: step % 2 === 0 ? 740 : 980, durationMs: 130, delayMs: 0, type: 'triangle' }
+          {
+            frequency: step % 2 === 0 ? 740 : 980,
+            durationMs: 130,
+            delayMs: 0,
+            type: 'triangle',
+          },
         ];
       case 'missed':
-        return [
-          { frequency: 330, durationMs: 260, delayMs: 0, type: 'sine' }
-        ];
+        return [{ frequency: 330, durationMs: 260, delayMs: 0, type: 'sine' }];
       default:
-        return [
-          { frequency: 880, durationMs: 95, delayMs: 0, type: 'sine' }
-        ];
+        return [{ frequency: 880, durationMs: 95, delayMs: 0, type: 'sine' }];
     }
   }
 
@@ -96,7 +104,10 @@
     oscillator.type = tone.type || 'sine';
     oscillator.frequency.setValueAtTime(tone.frequency || 880, startAt);
     envelope.gain.setValueAtTime(0.0001, startAt);
-    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, active.gain), startAt + 0.015);
+    envelope.gain.exponentialRampToValueAtTime(
+      Math.max(0.0001, active.gain),
+      startAt + 0.015,
+    );
     envelope.gain.exponentialRampToValueAtTime(0.0001, endAt);
 
     oscillator.connect(envelope);
@@ -109,11 +120,21 @@
     ensureContext();
     tonePlan(active.pattern).forEach(playTone);
     step += 1;
+    lastBeepAt = nowMs();
+  }
+
+  function tickBeep() {
+    if (nowMs() - lastBeepAt >= active.intervalMs) {
+      beep();
+    }
   }
 
   function restartTimer() {
     if (timer) window.clearInterval(timer);
-    timer = window.setInterval(beep, active.intervalMs);
+
+    // updateCue가 자주 들어와도 타이머가 계속 리셋되지 않도록
+    // 짧은 주기로 현재 interval 조건만 확인한다.
+    timer = window.setInterval(tickBeep, 40);
   }
 
   function prepare() {
@@ -130,11 +151,11 @@
 
   function update(options) {
     ensureContext();
-    var previousInterval = active.intervalMs;
     applyState(options);
-    if (timer && previousInterval !== active.intervalMs) {
-      restartTimer();
-    }
+
+    // 여기서 restartTimer()를 호출하지 않는다.
+    // updateCue가 반복 호출될 때 타이머가 계속 초기화되면
+    // 다음 beep가 울리기 전에 리셋되어 첫 소리만 나게 된다.
   }
 
   function stop(resetStep) {
@@ -150,7 +171,7 @@
       pan: 0,
       gain: 0.9,
       intervalMs: pattern === 'missed' ? 900 : 420,
-      pattern: pattern || 'alarm'
+      pattern: pattern || 'alarm',
     });
   }
 
@@ -179,7 +200,14 @@
   }
   // Flutter 웹이 포인터 이벤트를 가로채(전파 중단) window 리스너가 안 불릴 수 있으므로,
   // document의 'capture' 단계(타깃 도달 전)에 등록해 어떤 탭이든 반드시 unlock이 먼저 실행되게 한다.
-  ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'click', 'keydown'].forEach(function (ev) {
+  [
+    'pointerdown',
+    'touchstart',
+    'touchend',
+    'mousedown',
+    'click',
+    'keydown',
+  ].forEach(function (ev) {
     document.addEventListener(ev, unlock, { capture: true, passive: true });
   });
 
@@ -203,7 +231,10 @@
 
   function stopClip() {
     if (voiceSource) {
-      try { voiceSource.onended = null; voiceSource.stop(); } catch (e) {}
+      try {
+        voiceSource.onended = null;
+        voiceSource.stop();
+      } catch (e) {}
       voiceSource = null;
     }
   }
@@ -212,23 +243,53 @@
     return new Promise(function (resolve) {
       var c = ensureContext();
       var g = ensureVoiceGain();
-      if (!c || !g) { resolve(false); return; }
+      if (!c || !g) {
+        resolve(false);
+        return;
+      }
       stopClip();
       function startBuffer(buf) {
-        if (!buf) { resolve(false); return; }
+        if (!buf) {
+          resolve(false);
+          return;
+        }
         try {
           var src = c.createBufferSource();
           src.buffer = buf;
           src.connect(g);
           voiceSource = src;
-          src.onended = function () { if (voiceSource === src) voiceSource = null; resolve(true); };
+          src.onended = function () {
+            if (voiceSource === src) voiceSource = null;
+            resolve(true);
+          };
           src.start(0);
-        } catch (e) { resolve(false); }
+        } catch (e) {
+          resolve(false);
+        }
       }
-      if (clipCache[url]) { startBuffer(clipCache[url]); return; }
-      fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
-        c.decodeAudioData(ab, function (buf) { clipCache[url] = buf; startBuffer(buf); }, function () { resolve(false); });
-      }).catch(function () { resolve(false); });
+      if (clipCache[url]) {
+        startBuffer(clipCache[url]);
+        return;
+      }
+      fetch(url)
+        .then(function (r) {
+          return r.arrayBuffer();
+        })
+        .then(function (ab) {
+          c.decodeAudioData(
+            ab,
+            function (buf) {
+              clipCache[url] = buf;
+              startBuffer(buf);
+            },
+            function () {
+              resolve(false);
+            },
+          );
+        })
+        .catch(function () {
+          resolve(false);
+        });
     });
   }
 
@@ -242,9 +303,14 @@
       start({ pan: pan, gain: gain, intervalMs: intervalMs, pattern: pattern });
     },
     updateCue: function (pan, gain, intervalMs, pattern) {
-      update({ pan: pan, gain: gain, intervalMs: intervalMs, pattern: pattern });
+      update({
+        pan: pan,
+        gain: gain,
+        intervalMs: intervalMs,
+        pattern: pattern,
+      });
     },
     playClip: playClip,
-    stopClip: stopClip
+    stopClip: stopClip,
   };
 })();
