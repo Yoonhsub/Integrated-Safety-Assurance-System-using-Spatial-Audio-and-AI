@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -16,14 +18,21 @@ class MockScriptAudioService {
   String? _lastScriptLineId;
   String? _lastSpokenText;
 
+  // 현재 재생 중인 클립이 끝날 때까지 기다리기 위한 completer/구독.
+  Completer<void>? _playbackCompleter;
+  StreamSubscription<void>? _completeSub;
+
   String? get lastScriptLineId => _lastScriptLineId;
   String? get lastSpokenText => _lastSpokenText;
 
+  /// 한 줄의 안내 음성을 재생하고 **재생이 끝날 때까지 await**한다.
+  /// 호출자(시나리오 컨트롤러)가 이 Future로 타임라인을 음성 길이에 맞춰 멈췄다 재개한다.
   Future<void> playScript(String scriptLineId, {String? fallbackText}) async {
     final line = mockScriptLineById(scriptLineId);
     final text = fallbackText ?? line?.text ?? scriptLineId;
     _lastScriptLineId = scriptLineId;
     _lastSpokenText = text;
+    // 이전 재생을 확실히 멈춰 두 음성이 겹치지 않게 한다.
     await stop();
 
     final assetPath =
@@ -49,6 +58,8 @@ class MockScriptAudioService {
     }
   }
 
+  /// 기기 TTS 폴백. 자산이 없을 때만 사용되며, awaitSpeakCompletion 덕분에
+  /// 발화가 끝날 때까지 await된다.
   Future<void> speakText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -58,17 +69,40 @@ class MockScriptAudioService {
   }
 
   Future<void> stop() async {
+    _completeSub?.cancel();
+    _completeSub = null;
+    final completer = _playbackCompleter;
+    _playbackCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
     await _audioPlayer.stop();
     await _flutterTts.stop();
   }
 
+  /// 자산(mp3)을 재생하고 **자연 종료(onPlayerComplete)까지 기다린다**.
+  /// 중간에 stop()이 불리면 completer가 완료되어 즉시 반환한다.
   Future<bool> _playAsset(String assetPath) async {
     try {
+      final completer = Completer<void>();
+      _playbackCompleter = completer;
+      _completeSub?.cancel();
+      _completeSub = _audioPlayer.onPlayerComplete.listen((_) {
+        if (!completer.isCompleted) completer.complete();
+      });
       await _audioPlayer.play(AssetSource(assetPath));
+      // 안전장치: 완료 이벤트가 유실돼도 무한 대기하지 않도록 상한을 둔다.
+      await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {},
+      );
       return true;
     } catch (error) {
       debugPrint('Mock voice asset playback failed: $assetPath ($error)');
       return false;
+    } finally {
+      _completeSub?.cancel();
+      _completeSub = null;
     }
   }
 
@@ -82,6 +116,8 @@ class MockScriptAudioService {
     await _flutterTts.setLanguage('ko-KR');
     await _flutterTts.setSpeechRate(0.5);
     await _flutterTts.setPitch(1.0);
+    // speak()가 발화 종료까지 await되도록 설정(폴백 음성도 겹치지 않게).
+    await _flutterTts.awaitSpeakCompletion(true);
     _ttsConfigured = true;
   }
 }
