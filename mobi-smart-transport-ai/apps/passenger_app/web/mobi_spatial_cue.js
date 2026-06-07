@@ -177,8 +177,10 @@
       } catch (e) {}
     }
   }
-  ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(function (ev) {
-    window.addEventListener(ev, unlock, { passive: true });
+  // Flutter 웹이 포인터 이벤트를 가로채(전파 중단) window 리스너가 안 불릴 수 있으므로,
+  // document의 'capture' 단계(타깃 도달 전)에 등록해 어떤 탭이든 반드시 unlock이 먼저 실행되게 한다.
+  ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'click', 'keydown'].forEach(function (ev) {
+    document.addEventListener(ev, unlock, { capture: true, passive: true });
   });
 
   // ===== 음성 클립 재생 (beep와 동일한 AudioContext 공유) =====
