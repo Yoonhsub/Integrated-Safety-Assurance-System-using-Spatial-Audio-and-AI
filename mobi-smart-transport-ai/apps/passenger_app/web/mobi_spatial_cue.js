@@ -155,10 +155,24 @@
   // iOS/Safari 등은 AudioContext가 사용자 제스처 안에서만 resume된다.
   // 타이머에서 호출되는 start/update의 resume()은 차단되므로, 첫 사용자 제스처
   // (예: 시나리오 재생 탭)에 컨텍스트를 생성·resume해 beep가 들리도록 잠금 해제한다.
+  var _kicked = false;
   function unlock() {
     var c = ensureContext();
-    if (c && c.state === 'suspended') {
+    if (!c) return;
+    if (c.state === 'suspended') {
       c.resume().catch(function () {});
+    }
+    // iOS WebKit(Chrome iOS 포함): 제스처 안에서 무음 버퍼를 한 번 재생해야
+    // Web Audio 출력이 실제로 깨어난다.
+    if (!_kicked) {
+      try {
+        var buffer = c.createBuffer(1, 1, 22050);
+        var source = c.createBufferSource();
+        source.buffer = buffer;
+        source.connect(c.destination);
+        source.start(0);
+        _kicked = true;
+      } catch (e) {}
     }
   }
   ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(function (ev) {

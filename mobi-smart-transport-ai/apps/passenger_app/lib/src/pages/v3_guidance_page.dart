@@ -286,7 +286,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// 전체 화면 Live 음성 대화 페이지를 연다(실제 API 모드 전용).
   Future<void> _openLiveVoice() async {
     unawaited(_cueService.prepareLiveGeneratedSpeech());
-    unawaited(_spatialCueService.prepare());
+    // 공간음향 AudioContext는 첫 사용자 제스처(웹 JS unlock)에서 생성·resume한다.
+    // iOS는 제스처 이전에 만든 컨텍스트를 못 쓰게 하므로 사전 prepare()를 호출하지 않는다.
     _activatePendingNavAfterLiveExit = false;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
