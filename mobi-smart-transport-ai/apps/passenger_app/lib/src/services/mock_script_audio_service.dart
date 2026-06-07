@@ -1,7 +1,9 @@
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import '../mock_scenario/mock_script_lines.dart';
+import '../mock_scenario/mock_voice_assets.dart';
 
 class MockScriptAudioService {
   MockScriptAudioService({AudioPlayer? audioPlayer, FlutterTts? flutterTts})
@@ -24,11 +26,12 @@ class MockScriptAudioService {
     _lastSpokenText = text;
     await stop();
 
-    if (line != null) {
-      try {
-        await _audioPlayer.play(AssetSource(line.assetPath));
-        return;
-      } catch (_) {}
+    final assetPath =
+        mockVoiceAssetPathForText(text) ??
+        line?.assetPath ??
+        mockVoiceAssetPathForScriptId(scriptLineId);
+    if (assetPath != null && await _playAsset(assetPath)) {
+      return;
     }
 
     await speakText(text);
@@ -57,6 +60,16 @@ class MockScriptAudioService {
   Future<void> stop() async {
     await _audioPlayer.stop();
     await _flutterTts.stop();
+  }
+
+  Future<bool> _playAsset(String assetPath) async {
+    try {
+      await _audioPlayer.play(AssetSource(assetPath));
+      return true;
+    } catch (error) {
+      debugPrint('Mock voice asset playback failed: $assetPath ($error)');
+      return false;
+    }
   }
 
   Future<void> dispose() async {

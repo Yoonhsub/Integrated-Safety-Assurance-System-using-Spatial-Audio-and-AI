@@ -138,6 +138,7 @@ ai_vision/runs/
 *.wav
 *.mp3
 *.flac
+!apps/passenger_app/assets/mock_voice/*.mp3
 
 # Allow documentation images if intentionally added
 # !docs/images/*.png
