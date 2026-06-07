@@ -34,7 +34,7 @@ class MockScenarioMath {
     final gain = (0.18 + (closeness * 0.78) + verticalBoost)
         .clamp(0.15, 1.0)
         .toDouble();
-    final beepIntervalMs = (2300 - (gain * 1750)).round().clamp(520, 2300);
+    final beepIntervalMs = (1400 - (gain * 950)).round().clamp(450, 1400);
 
     return MockScenarioMetrics(
       distanceMeters: distanceMeters,
