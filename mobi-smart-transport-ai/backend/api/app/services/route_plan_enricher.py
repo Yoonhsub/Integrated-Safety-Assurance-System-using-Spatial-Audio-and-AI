@@ -229,13 +229,13 @@ def _boarding_instruction(segment: RoutePlanSegment) -> str:
     direction_text = f", {segment.directionHint} 정류장" if segment.directionHint else ""
     first_arrival = min((item.arrivalMinutes for item in segment.arrivals), default=None)
     arrival_text = (
-        f" 현재 약 {first_arrival}분 뒤 도착 예정이야."
+        f" 현재 약 {first_arrival}분 뒤 도착 예정입니다."
         if first_arrival is not None
         else f" {segment.serviceStatus.message}"
         if segment.serviceStatus is not None
         else " 실시간 도착정보는 확인하지 못했어요."
     )
-    return f"{segment.boardStop.stopName}{direction_text}에서 {segment.routeNo}번을 타시면 돼요.{arrival_text}"
+    return f"{segment.boardStop.stopName}{direction_text}에서 {segment.routeNo}번을 타시면 됩니다.{arrival_text}"
 
 
 def _verification_status(matched: int, total: int) -> RoutePlanVerificationStatus:

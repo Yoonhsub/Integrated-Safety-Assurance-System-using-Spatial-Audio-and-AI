@@ -66,7 +66,7 @@ class LiveVoiceController {
   final ValueNotifier<double> shaderMode = ValueNotifier<double>(0.0);
   final ValueNotifier<bool> muted = ValueNotifier<bool>(false);
 
-  static const String _goodbye = '지금 내가 수행할 작업이 없는 것 같아. 언제든 필요하면 불러줘.';
+  static const String _goodbye = '지금 수행할 작업은 없는 것 같습니다. 언제든 필요하면 다시 불러 주세요.';
   static const Duration _inactivityTimeout = Duration(seconds: 12);
   static const Duration _bargeInSustain = Duration(milliseconds: 320);
   static const Duration _tick = Duration(milliseconds: 33);

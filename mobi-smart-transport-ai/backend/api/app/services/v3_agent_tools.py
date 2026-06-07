@@ -175,12 +175,12 @@ def resolve_destination_tool(
         )
     except Exception:
         if trace and event_id:
-            trace.fail(event_id, "목적지 후보를 확인하지 못했어.")
+            trace.fail(event_id, "목적지 후보를 확인하지 못했습니다.")
         raise
     if trace and event_id:
         trace.done(
             event_id,
-            "목적지 후보를 확인했어.",
+            "목적지 후보를 확인했습니다.",
             safe_payload={
                 "query": text,
                 "resolutionStatus": result.status.value,
@@ -280,8 +280,8 @@ def near_destination_guard_tool(
         True,
         distance_meters=distance,
         message=(
-            f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 돼요. "
-            "따로 버스를 타실 필요는 없어요."
+            f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 됩니다. "
+            "따로 버스를 타실 필요는 없습니다."
         ),
     )
     if trace:
@@ -415,12 +415,12 @@ def get_arrivals_tool(
         )
     except Exception:
         if trace and event_id:
-            trace.fail(event_id, "도착정보를 확인하지 못했어.")
+            trace.fail(event_id, "도착정보를 확인하지 못했습니다.")
         raise
     if trace and event_id:
         trace.done(
             event_id,
-            "도착 예정 정보를 확인했어.",
+            "도착 예정 정보를 확인했습니다.",
             safe_payload={
                 "routeNo": route_no,
                 "stopId": stop_id,
@@ -465,12 +465,12 @@ def get_bus_locations_tool(
         result = BusLocationService().get_locations("33010", route_id)
     except Exception:
         if trace and event_id:
-            trace.fail(event_id, "현재 버스 위치를 확인하지 못했어.")
+            trace.fail(event_id, "현재 버스 위치를 확인하지 못했습니다.")
         raise
     if trace and event_id:
         trace.done(
             event_id,
-            "현재 버스 위치를 확인했어.",
+            "현재 버스 위치를 확인했습니다.",
             safe_payload={"routeNo": route_no, "locationCount": len(result.locations)},
         )
     return result
@@ -620,11 +620,11 @@ def _record_route_plan_trace(
         trace.record(
             "ODSAY_ROUTE_SEARCH",
             "ODsay 경로 탐색 실패",
-            "외부 경로 탐색을 완료하지 못해 자체 경로 탐색을 사용했어.",
+            "외부 경로 탐색을 완료하지 못해 자체 경로 탐색을 사용했습니다.",
             status="FAILED",
             provider="ODsay",
             operation="searchPubTransPathT",
-            warning="ODsay 실패로 자체 경로 탐색 fallback을 사용했어.",
+            warning="ODsay 실패로 자체 경로 탐색 fallback을 사용했습니다.",
         )
     else:
         trace.skip(
@@ -677,9 +677,9 @@ def _record_route_plan_trace(
     trace.record(
         "TAGO_ARRIVAL_LOOKUP",
         "도착정보 확인 완료",
-        "승차 정류장의 도착 예정 정보를 확인했어."
+        "승차 정류장의 도착 예정 정보를 확인했습니다."
         if first_arrival
-        else "현재 확인 가능한 도착 예정 정보가 없어.",
+        else "현재 확인 가능한 도착 예정 정보가 없습니다.",
         provider="TAGO",
         operation="getArrivals",
         safe_payload={
@@ -718,7 +718,7 @@ def _invalid_route_plan(plan: RoutePlanResponse, reason: str) -> RoutePlanRespon
             "plans": [],
             "recommendedPlan": None,
             "alternatives": [],
-            "agentMessage": "검증된 버스 경로를 만들지 못했어.",
+            "agentMessage": "검증된 버스 경로를 만들지 못했습니다.",
             "question": "검증된 버스 경로를 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
             "warnings": list(dict.fromkeys([*plan.warnings, f"route verification failed: {reason}"])),
         }

@@ -379,14 +379,14 @@ def _route_plan_stop(
 
 def _summary(plan_type: RoutePlanType, segments: list[RoutePlanSegment], destination: str) -> str:
     if not segments:
-        return f"{destination}까지 계산된 경로가 없어."
+        return f"{destination}까지 계산된 경로가 없습니다."
     if plan_type == RoutePlanType.DIRECT:
         first = segments[0]
-        return f"{first.routeNo}번 직통으로 {first.alightStop.stopName}에서 내려 {destination}까지 가는 경로야."
+        return f"{first.routeNo}번 직통으로 {first.alightStop.stopName}에서 내려 {destination}까지 가는 경로입니다."
     first, second = segments[0], segments[1]
     return (
-        f"{first.routeNo}번을 타고 {first.alightStop.stopName}에서 내려 "
-        f"{second.routeNo}번으로 한 번 갈아탄 뒤 {second.alightStop.stopName}에서 내리는 경로야."
+        f"{first.routeNo}번을 타고 {first.alightStop.stopName}에서 내린 뒤 "
+        f"{second.routeNo}번으로 한 번 갈아타고 {second.alightStop.stopName}에서 내리는 경로예요."
     )
 
 
@@ -394,13 +394,13 @@ def _boarding_instruction(segment: RoutePlanSegment) -> str:
     direction = segment.directionHint or segment.boardStop.directionHint or f"{segment.alightStop.stopName} 방향"
     first_arrival = min((item.arrivalMinutes for item in segment.arrivals), default=None)
     arrival_text = (
-        f" 지금 기준 첫 차는 약 {first_arrival}분 뒤로 조회됐어."
+        f" 지금 기준 첫 차는 약 {first_arrival}분 뒤 도착 예정입니다."
         if first_arrival is not None
         else f" {segment.serviceStatus.message}"
         if segment.serviceStatus is not None
-        else " 첫 차 도착정보는 아직 확인되지 않았어."
+        else " 첫 차 도착정보는 아직 확인되지 않았습니다."
     )
-    return f"{segment.boardStop.stopName}, {direction} 정류장에서 {segment.routeNo}번을 타시면 돼요.{arrival_text}"
+    return f"{segment.boardStop.stopName}, {direction} 정류장에서 {segment.routeNo}번을 타시면 됩니다.{arrival_text}"
 
 
 def _near_destination_message(
@@ -424,7 +424,7 @@ def _near_destination_message(
     if distance > threshold:
         return None
     rounded_distance = max(0, int(round(distance / 10.0) * 10))
-    return f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 돼요. 따로 버스를 타실 필요는 없어요."
+    return f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 됩니다. 따로 버스를 타실 필요는 없습니다."
 
 
 def _walkable_destination_message(
@@ -453,7 +453,7 @@ def _walkable_destination_message(
     minutes = max(1, int(round(distance / 67.0)))  # 보행 약 4km/h 기준
     return (
         f"{candidate.name}까지는 버스보다 걷는 게 빨라요. "
-        f"도보로 약 {rounded}m, {minutes}분 정도 거리예요. 보행 경로로 안내해 드릴게요."
+        f"도보로 약 {rounded}m, {minutes}분 정도 거리입니다. 보행 경로로 안내해 드릴게요."
     )
 
 

@@ -77,9 +77,9 @@ class RouteRanker:
         if no_realtime:
             reason = "다른 후보는 실시간 도착정보가 없어, 도착이 확인된 버스를 우선 추천합니다."
         elif boarding_wait is not None and boarding_wait <= 6:
-            reason = f"탑승 버스가 약 {boarding_wait}분 뒤 도착해 실제로 가장 빨리 탈 수 있어 추천합니다."
+            reason = f"탑승 버스가 약 {boarding_wait}분 뒤 도착 예정이라 실제로 가장 빨리 탈 수 있습니다."
         elif candidate.transferCount == 0:
-            reason = "환승 없이 이동할 수 있어 우선 추천합니다."
+            reason = "환승 없이 이동할 수 있어서 우선 추천합니다."
         elif unknown_arrivals:
             reason = "일부 도착정보를 확인하지 못했지만 이동 조건이 단순한 순서로 추천합니다."
         else:

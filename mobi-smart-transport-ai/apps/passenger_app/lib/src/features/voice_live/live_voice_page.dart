@@ -211,7 +211,7 @@ class _BottomControls extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
-          '잘 안 들리면 마이크를 탭해서 다시 말해줘',
+          '잘 안 들리면 마이크를 탭해서 다시 말씀해 주세요',
           style: TextStyle(color: Colors.white60, fontSize: 12),
         ),
         const SizedBox(height: 10),

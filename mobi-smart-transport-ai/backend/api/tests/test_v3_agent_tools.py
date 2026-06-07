@@ -110,7 +110,7 @@ def test_near_destination_guard_reports_walk_only_for_close_origin() -> None:
     assert result.already_near is True
     assert result.distance_meters is not None
     assert result.distance_meters < 10
-    assert "따로 버스를 타실 필요는 없어" in (result.message or "")
+    assert "따로 버스를 타실 필요는 없습니다" in (result.message or "")
 
 
 def test_service_status_tool_reports_next_bus_after_service_window(monkeypatch) -> None:
@@ -140,7 +140,7 @@ def test_service_status_tool_does_not_claim_shutdown_during_daytime() -> None:
 
     assert status.operatingNow is True
     assert status.reason == "ARRIVAL_INFO_UNAVAILABLE_WITHIN_SERVICE_WINDOW"
-    assert "운행 중인 버스가 없어" not in status.message
+    assert "운행 중인 버스가 없습니다" not in status.message
 
 
 def test_verify_route_tool_removes_arrival_for_another_route() -> None:

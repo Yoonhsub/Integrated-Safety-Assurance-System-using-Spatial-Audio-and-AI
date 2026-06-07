@@ -46,14 +46,14 @@ class V3AgentApiClient {
       final ok = response.statusCode >= 200 && response.statusCode < 300;
       return V3HealthStatus(
         isAvailable: ok,
-        message: ok ? '백엔드 연결 성공' : '백엔드가 ${response.statusCode}를 반환했어.',
+        message: ok ? '백엔드 연결 성공' : '백엔드가 ${response.statusCode}를 반환했습니다.',
       );
     } on TimeoutException {
       return const V3HealthStatus(
-          isAvailable: false, message: '백엔드 연결 시간이 초과됐어.');
+          isAvailable: false, message: '백엔드 연결 시간이 초과됐습니다.');
     } catch (_) {
       return const V3HealthStatus(
-          isAvailable: false, message: '백엔드에 연결할 수 없어.');
+          isAvailable: false, message: '백엔드에 연결할 수 없습니다.');
     }
   }
 
@@ -153,17 +153,17 @@ class V3AgentApiClient {
           .timeout(const Duration(seconds: 15));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw V3ApiException(
-          'Gemini TTS를 사용할 수 없어.',
+          'Gemini TTS를 사용할 수 없습니다.',
           statusCode: response.statusCode,
         );
       }
       return response.bodyBytes;
     } on TimeoutException {
-      throw const V3ApiException('Gemini TTS 연결 시간이 초과됐어.');
+      throw const V3ApiException('Gemini TTS 연결 시간이 초과됐습니다.');
     } on V3ApiException {
       rethrow;
     } catch (_) {
-      throw const V3ApiException('Gemini TTS에 연결할 수 없어.');
+      throw const V3ApiException('Gemini TTS에 연결할 수 없습니다.');
     }
   }
 
@@ -358,11 +358,11 @@ class V3AgentApiClient {
           .timeout(timeout);
       return _decodeResponse(response);
     } on TimeoutException {
-      throw const V3ApiException('API 연결 시간이 초과됐어.');
+      throw const V3ApiException('API 연결 시간이 초과됐습니다.');
     } on V3ApiException {
       rethrow;
     } catch (_) {
-      throw const V3ApiException('API에 연결할 수 없어.');
+      throw const V3ApiException('API에 연결할 수 없습니다.');
     }
   }
 
@@ -381,11 +381,11 @@ class V3AgentApiClient {
           .timeout(customTimeout ?? timeout);
       return _decodeResponse(response);
     } on TimeoutException {
-      throw const V3ApiException('API 연결 시간이 초과됐어.');
+      throw const V3ApiException('API 연결 시간이 초과됐습니다.');
     } on V3ApiException {
       rethrow;
     } catch (_) {
-      throw const V3ApiException('API에 연결할 수 없어.');
+      throw const V3ApiException('API에 연결할 수 없습니다.');
     }
   }
 
@@ -396,7 +396,7 @@ class V3AgentApiClient {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw V3ApiException(
-        _errorMessage(body) ?? 'API가 ${response.statusCode}를 반환했어.',
+        _errorMessage(body) ?? 'API가 ${response.statusCode}를 반환했습니다.',
         statusCode: response.statusCode,
       );
     }

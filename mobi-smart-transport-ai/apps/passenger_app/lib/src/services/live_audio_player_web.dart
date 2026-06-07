@@ -60,7 +60,7 @@ class LiveAudioPlayer {
     socket.onmessage = ((web.MessageEvent event) {
       final data = event.data?.dartify();
       if (data is! String) {
-        fail('Gemini Live API가 알 수 없는 음성 메시지를 보냈어.');
+        fail('Gemini Live API가 알 수 없는 음성 메시지를 보냈습니다.');
         return;
       }
 
@@ -68,11 +68,11 @@ class LiveAudioPlayer {
       try {
         decoded = jsonDecode(data);
       } catch (_) {
-        fail('Gemini Live API 음성 메시지를 해석하지 못했어.');
+        fail('Gemini Live API 음성 메시지를 해석하지 못했습니다.');
         return;
       }
       if (decoded is! Map) {
-        fail('Gemini Live API 음성 메시지 형식이 올바르지 않아.');
+        fail('Gemini Live API 음성 메시지 형식이 올바르지 않습니다.');
         return;
       }
 
@@ -100,16 +100,16 @@ class LiveAudioPlayer {
           break;
         case 'error':
           fail(decoded['message']?.toString() ??
-              'Gemini Live API 음성을 사용할 수 없어.');
+              'Gemini Live API 음성을 사용할 수 없습니다.');
           break;
       }
     }).toJS;
     socket.onerror = ((web.Event _) {
-      fail('Gemini Live API 음성 연결에 실패했어.');
+      fail('Gemini Live API 음성 연결에 실패했습니다.');
     }).toJS;
     socket.onclose = ((web.CloseEvent _) {
       if (!completed.isCompleted) {
-        fail('Gemini Live API 음성 연결이 일찍 종료됐어.');
+        fail('Gemini Live API 음성 연결이 일찍 종료됐습니다.');
       }
     }).toJS;
 
@@ -117,7 +117,7 @@ class LiveAudioPlayer {
       await completed.future.timeout(const Duration(seconds: 20));
     } on TimeoutException {
       throw const LiveAudioPlaybackException(
-        'Gemini Live API 음성 연결 시간이 초과됐어.',
+        'Gemini Live API 음성 연결 시간이 초과됐습니다.',
       );
     } finally {
       if (identical(_socket, socket)) _socket = null;
@@ -138,7 +138,7 @@ class LiveAudioPlayer {
     final browserPlayer = _browserPlayerOrNull();
     if (browserPlayer == null) {
       throw const LiveAudioPlaybackException(
-        '브라우저 Live API 음성 플레이어를 찾지 못했어.',
+        '브라우저 Live API 음성 플레이어를 찾지 못했습니다.',
       );
     }
     return browserPlayer;

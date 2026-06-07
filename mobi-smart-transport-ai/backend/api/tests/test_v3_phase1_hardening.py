@@ -36,7 +36,7 @@ def test_service_status_after_last_bus_reports_next_first_bus(monkeypatch) -> No
     assert status.operatingNow is False
     assert status.reason == "OUTSIDE_SERVICE_WINDOW"
     assert status.nextServiceTime == "05:40"
-    assert "지금 운행 중인 버스가 없어" in status.message
+    assert "지금 운행 중인 버스가 없습니다" in status.message
     assert "05시40분" in status.message
     assert status.scheduleSource == "ENV_ROUTE_OVERRIDE"
 
@@ -54,7 +54,7 @@ def test_service_status_daytime_without_arrivals_is_conservative() -> None:
 
     assert status.operatingNow is True
     assert status.reason == "ARRIVAL_INFO_UNAVAILABLE_WITHIN_SERVICE_WINDOW"
-    assert "운행 중인 버스가 없어" not in status.message
+    assert "운행 중인 버스가 없습니다" not in status.message
     assert "다시 갱신" in status.message
 
 
@@ -105,7 +105,7 @@ def test_live_route_status_exposes_panel_ready_markers_without_inventing_bus_pos
     assert body["arrivals"][0]["routeNo"] == "862"
     assert body["arrivals"][0]["congestion"] is None
     assert body["serviceStatus"]["reason"] == "ARRIVALS_AVAILABLE"
-    assert "현재 버스 위치는 아직 조회되지 않았어." in body["warnings"]
+    assert "현재 버스 위치는 아직 조회되지 않았습니다." in body["warnings"]
 
 
 def test_live_route_status_rejects_partial_coordinates() -> None:
@@ -139,7 +139,7 @@ def test_route_plan_does_not_force_bus_when_already_near_stop_destination() -> N
     body = response.json()
     assert body["status"] == "ALREADY_NEAR_DESTINATION"
     assert body["recommendedPlan"] is None
-    assert "따로 버스를 타실 필요는 없어" in body["agentMessage"]
+    assert "따로 버스를 타실 필요는 없습니다" in body["agentMessage"]
 
 
 def test_route_plan_does_not_force_bus_when_already_near_place_destination() -> None:

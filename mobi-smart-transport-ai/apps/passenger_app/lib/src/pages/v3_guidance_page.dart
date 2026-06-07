@@ -242,7 +242,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         if (!mounted) return;
         setState(() {
           _voiceStatusMessage = recognizedWords.isEmpty
-              ? '목적지를 듣고 있어.'
+              ? '목적지를 듣고 있습니다.'
               : '인식 중: $recognizedWords';
         });
       },
@@ -375,7 +375,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     } on V3ApiException catch (error) {
       return LiveProcessResult(spokenText: error.toString());
     } catch (_) {
-      return const LiveProcessResult(spokenText: '지금은 답하기 어려워. 잠시 후에 다시 말해줄래?');
+      return const LiveProcessResult(spokenText: '지금은 답하기 어렵습니다. 잠시 후에 다시 말씀해 주세요.');
     } finally {
       if (shouldPlanRoute && mounted) {
         setState(() => _isRoutePlanning = false);
@@ -1187,10 +1187,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     required V3RouteRecommendResponse recommendation,
   }) {
     if (preparation.position == null) {
-      return '현재 위치를 사용할 수 없어 검증된 목적지 후보만 조회했습니다.';
+      return '현재 위치를 사용할 수 없어서 검증된 목적지 후보만 조회했습니다.';
     }
     if (!recommendation.usedGemini) {
-      return '현재 위치는 전달했지만 Pro 응답을 사용할 수 없어 검증된 후보만 표시했습니다.';
+      return '현재 위치는 전달했지만 Pro 응답을 사용할 수 없어서 검증된 후보만 표시했습니다.';
     }
     if (!recommendation.mapsGrounded) {
       return 'Google Maps 위치 증빙을 확보하지 못해 위치 기반 최적 경로는 확정하지 않았습니다.';
@@ -1293,7 +1293,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
       final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
       if (stopId == null || routeNo == null) {
-        throw const V3ApiException('먼저 목적지 경로를 선택해줘.');
+        throw const V3ApiException('먼저 목적지 경로를 선택해 주세요.');
       }
       final arrivals = await _client.arrivals(
         stopId: stopId,
@@ -1915,7 +1915,7 @@ class _AgentTraceCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '모비가 실제 데이터를 확인했어',
+                    '모비가 실제 데이터를 확인했습니다',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -1928,7 +1928,7 @@ class _AgentTraceCard extends StatelessWidget {
                 ),
               ],
             ),
-            Text('${events.length}개 단계의 확인 기록이 있어.'),
+            Text('${events.length}개 단계의 확인 기록이 있습니다.'),
             if (expanded) ...[
               if (traceId != null) ...[
                 const SizedBox(height: 4),
@@ -2174,7 +2174,7 @@ class _LocationNeededBanner extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '현재 위치를 확인하지 못했어. 정확한 경로 안내에는 위치가 필요해.',
+              '현재 위치를 확인하지 못했습니다. 정확한 경로 안내에는 위치가 필요합니다.',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             if (detail != null && detail!.isNotEmpty) ...[
@@ -2348,7 +2348,7 @@ class _LiveQuestionMethodsCard extends StatelessWidget {
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 6),
-            const Text('채팅 또는 음성으로 목적지를 알려줘. 모비가 실제 API로 경로를 탐색할게.'),
+            const Text('채팅 또는 음성으로 목적지를 알려 주세요. 모비가 실제 API로 경로를 탐색합니다.'),
             const SizedBox(height: 14),
             SizedBox(
               height: 56,
@@ -2549,8 +2549,8 @@ class _RealtimeNavCard extends StatelessWidget {
         : '약 ${walking.totalDistanceMeters!.round()}m · 약 ${(((walking.totalDurationSeconds ?? 0) / 60).ceil()).clamp(1, 999)}분'
               '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
     final busMsg = (s == null || s.busPositions.isEmpty)
-        ? '현재 버스 위치는 아직 조회되지 않았어.'
-        : '현재 ${s.busPositions.length}대의 버스 위치를 조회했어.';
+        ? '현재 버스 위치는 아직 조회되지 않았습니다.'
+        : '현재 ${s.busPositions.length}대의 버스 위치를 조회했습니다.';
     final updated = s?.lastUpdatedAt;
     final updatedText = updated == null ? '미확인' : _hhmm(updated.toLocal());
 
@@ -4710,4 +4710,3 @@ class _HeadTrackingCard extends StatelessWidget {
   String _angle(double? value) =>
       value == null ? '-' : '${value.toStringAsFixed(1)}°';
 }
-

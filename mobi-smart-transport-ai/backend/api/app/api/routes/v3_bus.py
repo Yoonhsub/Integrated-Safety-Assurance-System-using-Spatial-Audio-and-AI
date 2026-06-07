@@ -457,7 +457,7 @@ def live_route_status(
                     )
                 )
     if not bus_positions:
-        warnings.append("현재 버스 위치는 아직 조회되지 않았어.")
+        warnings.append("현재 버스 위치는 아직 조회되지 않았습니다.")
     if resolved_board is None or resolved_alight is None:
         warnings.append("일부 정류장 좌표를 확인하지 못했어요.")
 

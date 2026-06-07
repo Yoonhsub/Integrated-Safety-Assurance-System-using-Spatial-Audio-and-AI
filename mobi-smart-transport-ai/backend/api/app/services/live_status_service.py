@@ -223,7 +223,7 @@ def get_live_status(
         arrivals = []
         fallback_source = FallbackSource.ERROR
         service_status = evaluate_route_service_status(route_no=route_no, arrivals=[])
-        warnings.append("도착정보를 확인하지 못했어.")
+        warnings.append("도착정보를 확인하지 못했습니다.")
 
     # 2) 좌표 보강
     board_coord, alight_coord = _board_alight_coords(
@@ -255,9 +255,9 @@ def get_live_status(
                     )
                 )
         except Exception:
-            warnings.append("현재 버스 위치 조회에 실패했어.")
+            warnings.append("현재 버스 위치 조회에 실패했습니다.")
     if not bus_positions:
-        warnings.append("현재 버스 위치는 아직 조회되지 않았어.")
+        warnings.append("현재 버스 위치는 아직 조회되지 않았습니다.")
 
     # 4) 보행경로(현재 위치 -> 승차 정류장)
     walking = None
@@ -271,7 +271,7 @@ def get_live_status(
             live=live,
         )
     elif user_lat is None or user_lng is None:
-        warnings.append("현재 위치가 없어 보행경로를 계산하지 못했어.")
+        warnings.append("현재 위치가 없어 보행경로를 계산하지 못했습니다.")
 
     # 5) 하차 정류장 -> 목적지 보행경로
     egress_walking = None

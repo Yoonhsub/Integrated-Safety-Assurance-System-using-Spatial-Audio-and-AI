@@ -16,7 +16,7 @@ class LiveAudioPlayer {
     void Function()? onFirstAudio,
   }) async {
     throw const LiveAudioPlaybackException(
-      'Gemini Live API 스트리밍 재생은 웹에서만 지원돼.',
+      'Gemini Live API 스트리밍 재생은 웹에서만 지원됩니다.',
     );
   }
 

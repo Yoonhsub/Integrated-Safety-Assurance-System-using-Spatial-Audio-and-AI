@@ -127,6 +127,6 @@ def _straight_line_fallback(
             )
         ],
         fallbackUsed=True,
-        message="보행경로를 확인하지 못해 직선거리 기준으로 안내해.",
+        message="보행경로를 확인하지 못해 직선거리 기준으로 안내합니다.",
         updatedAt=utc_now(),
     )

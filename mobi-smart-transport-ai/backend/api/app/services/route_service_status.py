@@ -25,7 +25,7 @@ def evaluate_route_service_status(
         return RoutePlanServiceStatus(
             operatingNow=True,
             reason="ARRIVALS_AVAILABLE",
-            message="현재 도착 예정 버스가 확인됐어요.",
+            message="현재 도착 예정 버스가 확인됐습니다.",
             scheduleSource=source,
         )
 
@@ -43,7 +43,7 @@ def evaluate_route_service_status(
     return RoutePlanServiceStatus(
         operatingNow=False,
         reason="OUTSIDE_SERVICE_WINDOW",
-        message=f"지금 운행 중인 버스가 없어요. 가장 빠른 버스는 {next_label}에 운행할 예정이에요.",
+        message=f"지금 운행 중인 버스가 없습니다. 가장 빠른 버스는 {next_label}에 운행할 예정이에요.",
         nextServiceTime=next_time,
         nextServiceLabel=next_label,
         scheduleSource=source,

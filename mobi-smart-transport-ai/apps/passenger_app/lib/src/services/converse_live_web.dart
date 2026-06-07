@@ -27,7 +27,7 @@ Stream<ConverseEvent> openConverseLive({
   // 무응답으로 영원히 매달리지 않도록 안전 가드.
   guard = Timer(const Duration(seconds: 60), () {
     if (!controller.isClosed) {
-      controller.addError(StateError('대화 응답 시간이 초과됐어.'));
+      controller.addError(StateError('대화 응답 시간이 초과됐습니다.'));
     }
     closeAll();
   });
@@ -67,7 +67,7 @@ Stream<ConverseEvent> openConverseLive({
       case 'error':
         if (!controller.isClosed) {
           controller.addError(
-            StateError(decoded['message']?.toString() ?? '대화 처리에 실패했어.'),
+            StateError(decoded['message']?.toString() ?? '대화 처리에 실패했습니다.'),
           );
         }
         closeAll();
@@ -77,7 +77,7 @@ Stream<ConverseEvent> openConverseLive({
 
   socket.onerror = ((web.Event _) {
     if (!controller.isClosed) {
-      controller.addError(StateError('대화 연결에 실패했어.'));
+      controller.addError(StateError('대화 연결에 실패했습니다.'));
     }
     closeAll();
   }).toJS;

@@ -528,7 +528,7 @@ def _run_converse(
 
     elif intent == AgentIntent.END_CONVERSATION:
         # 종료 의사는 Gemini가 자연어로 판별한다(키워드 매칭 아님).
-        message = "지금 수행할 작업이 없는 것 같아요. 언제든 필요하면 불러 주세요."
+        message = "지금 수행할 작업은 없는 것 같습니다. 언제든 필요하면 다시 불러 주세요."
 
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
         route_plan, message, tts_mode, used_gemini, fallback_source = _handle_route_request(
@@ -544,7 +544,7 @@ def _run_converse(
     elif intent == AgentIntent.QUERY_ARRIVAL:
         selected = _selected_arrival_target(session)
         if selected is None:
-            message = "먼저 목적지 경로를 선택해 주세요. 선택한 경로가 있어야 도착정보를 다시 확인할 수 있어요."
+            message = "먼저 목적지 경로를 선택해 주세요. 선택한 경로가 있어야 도착정보를 다시 확인할 수 있습니다."
             fallback_source = FallbackSource.ERROR
         else:
             route_no, route_id, stop_id, stop_name = selected
@@ -566,7 +566,7 @@ def _run_converse(
                 if route_arrivals:
                     first = min(item.arrivalMinutes for item in route_arrivals)
                     source_label = "실시간" if arrivals_res.fallbackSource == FallbackSource.PUBLIC_API else arrivals_res.fallbackSource.value
-                    message = f"{stop_name} 기준 {route_no}번 첫 번째 버스는 {source_label} 기준 약 {first}분 뒤 도착 예정이에요."
+                    message = f"{stop_name} 기준 {route_no}번 첫 번째 버스는 {source_label} 기준 약 {first}분 뒤 도착 예정입니다."
                 else:
                     status = get_service_status_tool(
                         route_no=route_no,
@@ -586,7 +586,7 @@ def _run_converse(
             if session.target_bus_id is None and session.last_route_plan is None:
                 session.target_bus_id = _default_target_bus_id(session.selected_route_no)
             session.state = GuidanceState.WAITING_FOR_BUS
-            message = "선택한 경로로 안내해 드릴게요. 정류장에 도착하면 대기 범위 감지를 시작할게요."
+            message = "선택한 경로로 안내해 드리겠습니다. 정류장에 도착하면 대기 범위 감지를 시작할게요."
 
     elif intent == AgentIntent.ASK_CAN_BOARD_CURRENT_BUS:
         if live:
@@ -614,7 +614,7 @@ def _run_converse(
                         context_data=context_data,
                         history=history,
                     )
-                    message = dynamic_msg or "아직 타야 할 버스가 오지 않은 것 같아."
+                    message = dynamic_msg or "아직 타야 할 버스가 오지 않은 것 같습니다."
                     used_gemini = bool(dynamic_msg)
                     if used_gemini:
                         fallback_source = FallbackSource.PUBLIC_API
@@ -630,16 +630,16 @@ def _run_converse(
                     ttsMode=TtsMode.LOCAL_TTS,
                     shouldVibrate=True,
                     shouldBeep=True,
-                    message="타야 할 버스가 가까이 왔어요.",
+                    message="타야 할 버스가 가까이 왔습니다.",
                 )
             elif session.last_decision == BeaconDecision.WRONG_BUS_NEAR:
-                message = "아니에요. 지금 가까운 버스는 타야 할 버스가 아니에요. 기다려 주세요."
+                message = "아닙니다. 지금 가까운 버스는 타야 할 버스가 아니에요. 기다려 주세요."
                 cue = V3Cue(
                     type=CueType.WRONG_BUS_NEAR,
                     ttsMode=TtsMode.SAFETY_LOCAL,
                     shouldVibrate=True,
                     shouldBeep=True,
-                    message="잘못된 버스가 가까이 왔어요.",
+                    message="잘못된 버스가 가까이 왔습니다.",
                 )
                 tts_mode = TtsMode.SAFETY_LOCAL
             else:
@@ -651,7 +651,7 @@ def _run_converse(
         session.last_decision = None
         session.nearest_beacon = None
         session.target_bus = None
-        message = "괜찮아요. 다음 버스를 다시 안내해 드릴게요."
+        message = "괜찮습니다. 다음 버스를 다시 안내해 드릴게요."
 
     else:
         contextual_reply = contextual_reply_hint or _contextual_followup_reply(session=session, utterance=utterance)
@@ -714,7 +714,7 @@ def _agent_response(
         trace.done(safety_event, "추측성 표현과 위험한 방향 안내가 없는지 확인했어.")
     else:
         trace.fail(safety_event, "안전하지 않은 표현을 제거하고 보수적인 안내로 바꿨어.")
-        safe_message = "검증된 정보만으로는 지금 안내하기 어려워."
+        safe_message = "검증된 정보만으로는 지금 안내하기 어렵습니다."
     trace.record(
         "FINAL_RESPONSE",
         "최종 안내 생성 완료",
@@ -802,10 +802,10 @@ def _contextual_followup_reply(*, session: V3SessionRecord, utterance: str) -> s
 
     if any(term in compact for term in destination_question_terms):
         if session.selected_destination:
-            return f"현재 목적지는 {session.selected_destination}로 잡혀 있어요."
+            return f"현재 목적지는 {session.selected_destination}로 잡혀 있습니다."
         if session.pending_question:
             return session.pending_question
-        return "아직 목적지가 정해지지 않았어요. 장소명이나 주소를 말씀해 주세요."
+        return "아직 목적지가 정해지지 않았습니다. 장소명이나 주소를 말씀해 주세요."
 
     if compact in {"뭐", "뭔데", "무슨말", "다시", "다시말해줘", "자세히"}:
         if session.pending_question:
@@ -824,7 +824,7 @@ def _selected_route_context_message(session: V3SessionRecord, *, utterance: str)
     if not plan:
         if session.pending_question:
             return session.pending_question
-        return "아직 선택된 경로가 없어요. 먼저 목적지를 말씀해 주세요."
+        return "아직 선택된 경로가 없습니다. 먼저 목적지를 말씀해 주세요."
 
     destination = _safe_str(plan.get("destinationName")) or session.selected_destination or "목적지"
     summary = _safe_str(plan.get("summary"))
@@ -843,11 +843,11 @@ def _selected_route_context_message(session: V3SessionRecord, *, utterance: str)
     direction = _safe_str(first_segment.get("directionHint"))
     arrival_text = _first_arrival_text(first_segment)
 
-    parts = [f"현재 선택된 경로는 {destination} 방향 {route_no}번이에요."]
+    parts = [f"현재 선택된 경로는 {destination} 방향 {route_no}번입니다."]
     if board_name and alight_name:
         parts.append(f"{board_name}에서 타고 {alight_name}에서 내리는 경로예요.")
     elif board_name:
-        parts.append(f"{board_name}에서 타시면 돼요.")
+        parts.append(f"{board_name}에서 타시면 됩니다.")
     if direction:
         parts.append(f"승차 방향은 {direction}로 확인됐어요.")
     if arrival_text:
@@ -889,7 +889,7 @@ def _first_arrival_text(segment: dict) -> str | None:
         return None
     minutes = first.get("arrivalMinutes")
     if isinstance(minutes, int):
-        return f"첫 번째 버스는 약 {minutes}분 뒤 도착 예정이에요."
+        return f"첫 번째 버스는 약 {minutes}분 뒤 도착 예정입니다."
     return None
 
 def _conversation_history_for_gemini(session: V3SessionRecord) -> list[dict]:
@@ -924,12 +924,12 @@ def _local_smalltalk_fallback(session: V3SessionRecord, utterance: str) -> str:
         return session.pending_question
     if session.selected_route_no and session.selected_destination:
         return (
-            f"지금은 {session.selected_destination} 방향 {session.selected_route_no}번 안내를 잡아두고 있어요. "
+            f"지금은 {session.selected_destination} 방향 {session.selected_route_no}번 안내를 잡아두었습니다. "
             "도착정보나 다른 목적지가 필요하면 말씀해 주세요."
         )
     if session.selected_destination:
-        return f"현재 목적지는 {session.selected_destination}로 잡혀 있어요. 경로가 필요하면 '몇 번 버스 타야 돼요?'처럼 물어봐 주세요."
-    return "어디로 갈지 장소나 정류장 이름을 말해주면 버스 경로를 찾아줄게."
+        return f"현재 목적지는 {session.selected_destination}로 잡혀 있습니다. 경로가 필요하면 '몇 번 버스 타야 돼요?'처럼 물어봐 주세요."
+    return "장소나 정류장 이름을 말씀해 주시면 버스 경로를 찾아드리겠습니다."
 
 
 def _infer_destination_confirmation(
@@ -1147,7 +1147,7 @@ def _try_answer_pending_destination(
             trace.record(
                 "PENDING_CHOICE_MATCH",
                 "목적지 확인 취소 완료",
-                "후보 확인을 취소하고 새 목적지를 기다리고 있어.",
+                "후보 확인을 취소하고 새 목적지를 기다리고 있습니다.",
             )
             return _agent_response(
                 trace=trace,
@@ -1355,7 +1355,7 @@ def _deterministic_route_plan_message(route_plan: RoutePlanResponse) -> str:
         message = f"ODsay 경로탐색은 지금 사용할 수 없어서, 청주 버스 공공데이터 기준으로 경로를 계산했어요. {message}"
     if plan.type.value == "ONE_TRANSFER" and len(plan.segments) >= 2:
         second = plan.segments[1]
-        message += f" 이어서 {second.boardStop.stopName}에서 {second.routeNo}번으로 갈아타고 {second.alightStop.stopName}에서 내려."
+        message += f" 이어서 {second.boardStop.stopName}에서 {second.routeNo}번으로 갈아타고 {second.alightStop.stopName}에서 내리시면 됩니다."
     return message
 
 
@@ -1363,12 +1363,12 @@ def _segment_guidance_sentence(segment) -> str:
     board = segment.boardStop.stopName
     alight = segment.alightStop.stopName
     direction = segment.directionHint or segment.boardStop.directionHint
-    message = f"{board}에서 {segment.routeNo}번을 타고 {alight}에서 내려."
+    message = f"{board}에서 {segment.routeNo}번을 타고 {alight}에서 내리시면 됩니다."
     if direction:
         message += f" 승차 방향은 {direction}이에요."
     first_arrival = min((arrival.arrivalMinutes for arrival in segment.arrivals), default=None)
     if first_arrival is not None:
-        message += f" 지금 기준 첫 차는 약 {first_arrival}분 뒤 도착 예정이에요."
+        message += f" 지금 기준 첫 차는 약 {first_arrival}분 뒤 도착 예정입니다."
     elif segment.serviceStatus is not None and segment.serviceStatus.message:
         message += f" {segment.serviceStatus.message}"
     elif segment.arrivalUnknown:

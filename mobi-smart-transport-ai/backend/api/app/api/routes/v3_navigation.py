@@ -119,7 +119,7 @@ def _attach_trace(response: LiveStatusResponse) -> None:
         "버스 위치 확인 완료",
         f"현재 버스 위치 {len(response.busPositions)}건을 확인했어요."
         if response.busPositions
-        else "현재 버스 위치는 아직 조회되지 않았어.",
+        else "현재 버스 위치는 아직 조회되지 않았습니다.",
         provider="TAGO",
         operation="getBusLocations",
         safe_payload={"routeNo": response.routeNo, "locationCount": len(response.busPositions)},

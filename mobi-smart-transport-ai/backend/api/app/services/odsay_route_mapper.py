@@ -156,7 +156,7 @@ def _summary(plan_type: RoutePlanType, segments: list[RoutePlanSegment], destina
 
 def _unverified_boarding_instruction(segment: RoutePlanSegment) -> str:
     return (
-        f"{segment.boardStop.stopName}에서 {segment.routeNo}번을 타시면 돼요. "
+        f"{segment.boardStop.stopName}에서 {segment.routeNo}번을 타시면 됩니다. "
         "정류장 방향과 실시간 도착정보는 아직 확인하지 못했어요."
     )
 
