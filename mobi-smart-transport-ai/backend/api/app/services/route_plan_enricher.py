@@ -83,7 +83,15 @@ class RoutePlanEnricher:
                         "alightingStopNodeId": alighting_node.stop_id,
                         "boardStop": _stop(boarding_node, direction_hint=direction_hint),
                         "alightStop": _stop(alighting_node, direction_hint=None),
-                        "stopCount": max(0, alighting_node.order - boarding_node.order),
+                        # ODsay stationCount(주행시간 sectionTime과 일관된 구간 정류장 수)를
+                        # 보존한다. TAGO 노드 order 차이는 노선이 같은 이름의 정류장을 양방향/
+                        # 순환으로 여러 번 지날 때 엉뚱하게 커져(예: 7개 구간이 31로) 주행시간과
+                        # 모순됐다. ODsay 값이 없을 때만 TAGO order 차이로 보완한다.
+                        "stopCount": (
+                            segment.stopCount
+                            if segment.stopCount > 0
+                            else max(0, alighting_node.order - boarding_node.order)
+                        ),
                         "directionHint": direction_hint,
                         "arrivals": arrivals,
                         "arrivalSource": arrival_source,

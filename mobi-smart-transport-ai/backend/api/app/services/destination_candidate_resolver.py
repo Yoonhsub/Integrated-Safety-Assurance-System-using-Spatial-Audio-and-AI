@@ -279,13 +279,23 @@ class KakaoLocalSearchProvider:
                 prefix = name.split(".", 1)[0].strip()
                 if prefix and _normalize(prefix) == normalized_query:
                     name = prefix
-            # 이름 유사도로 신뢰도를 매겨 '정확히 같은 이름'이 부분 일치보다 우선되게 한다.
-            # (모든 카카오 결과를 0.90으로 고정하면 "충북대학교"가 "충북대학교병원"이나
-            # "청주대학교.뉴시스" 같은 부분 일치를 이기지 못해 불필요한 재확인/오안내가 떴다.)
-            confidence = round(
-                max(0.85, _alias_score(normalized_query, _normalize(name), is_primary=True)),
-                2,
-            )
+            # 이름 유사도로 신뢰도를 매긴다. '정확히 같은 이름' > '검색어로 시작' >
+            # '검색어가 중간/끝에 낀 약한 일치' 순. (모든 카카오 결과를 0.90으로 고정하면
+            # "충북대학교"가 "충북대학교병원"에 밀리고, "터미널"이 "새터미널약국" 같은 상호명에
+            # 밀려 엉뚱하게 확정되던 문제가 났다.)
+            name_norm = _normalize(name)
+            if normalized_query and name_norm == normalized_query:
+                confidence = 0.99
+            elif normalized_query and name_norm.startswith(normalized_query):
+                confidence = 0.94
+            elif normalized_query and normalized_query in name_norm:
+                # 상호 중간/끝에 검색어가 낀 약한 일치(예: "터미널"⊂"새터미널약국")는
+                # 알려진 거점·정확일치보다 낮춰 엉뚱한 상호 확정/후보 혼입을 막는다.
+                confidence = 0.85
+            else:
+                confidence = round(
+                    max(0.80, SequenceMatcher(None, normalized_query, name_norm).ratio()), 2
+                )
             candidates.append(
                 DestinationCandidate(
                     name=name,

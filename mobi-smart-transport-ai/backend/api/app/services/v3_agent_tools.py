@@ -374,10 +374,10 @@ def verify_route_tool(plan: RoutePlanResponse) -> RoutePlanResponse:
                 and arrival.stopId == segment.boardStop.stopId
             ]
             segment.arrivalUnknown = not segment.arrivals
-            segment.estimatedMinutes = min(
-                (arrival.arrivalMinutes for arrival in segment.arrivals),
-                default=None,
-            )
+            # ⚠️ estimatedMinutes는 '주행 시간'(승차→하차)이다. 과거엔 여기서
+            # min(arrival.arrivalMinutes)=다음 버스 도착까지 카운트다운으로 덮어써서
+            # "58개 정류장인데 2분 탑승" 같은 모순이 났다. 도착 카운트다운은 segment.arrivals
+            # /arrival 요약에 이미 있으니, ODsay sectionTime으로 채워진 주행시간은 보존한다.
             segment.serviceStatus = get_service_status_tool(
                 route_no=segment.routeNo,
                 arrivals=segment.arrivals,
