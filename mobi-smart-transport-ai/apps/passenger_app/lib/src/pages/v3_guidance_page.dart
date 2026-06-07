@@ -15,6 +15,7 @@ import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
+import '../services/head_tracking_service.dart';
 import '../services/mock_script_audio_service.dart';
 import '../services/spatial_cue_service.dart';
 import '../services/v3_agent_api_client.dart';
@@ -62,6 +63,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
   late final SpatialCueService _spatialCueService;
+  late final HeadTrackingService _headTrackingService;
   late final MockScriptAudioService _mockScriptAudioService;
   late final VoiceGuideService _voiceGuideService;
   late final TextEditingController _utteranceController;
@@ -79,9 +81,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   String? _errorMessage;
   bool _isBusy = false;
   bool _isRoutePlanning = false;
-  bool _useMockHeadTracking = false;
+  bool _useHeadTracking = false;
   HeadTrackingDebugSnapshot _headTracking =
       HeadTrackingDebugSnapshot.disabled();
+  Timer? _headTrackingTimer;
   Timer? _liveRouteTimer;
   V3LiveStatus? _liveStatus;
   Position? _lastRoutePosition;
@@ -131,6 +134,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService();
     _spatialCueService = SpatialCueService();
+    _headTrackingService = HeadTrackingService();
     _mockScriptAudioService = MockScriptAudioService();
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
@@ -140,7 +144,6 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       onCueFrame: _handleMockScenarioCueFrame,
       onStopCue: _spatialCueService.stopCue,
       onScriptLine: _handleMockScenarioScriptLine,
-      onStopScriptAudio: _mockScriptAudioService.stop,
     );
 
     _bootstrap();
@@ -155,12 +158,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   void dispose() {
     _liveRouteTimer?.cancel();
     _betterRouteTimer?.cancel();
+    _headTrackingTimer?.cancel();
     _voiceGuideService.cancelListening();
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _mockScenarioController.dispose();
     _cueService.dispose();
     _spatialCueService.dispose();
+    unawaited(_headTrackingService.disconnect());
     _mockScriptAudioService.dispose();
     super.dispose();
   }
@@ -325,9 +330,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       if (_isNavNegative(text)) {
         _pendingNavPlan = null;
         _pendingNavPosition = null;
-        return const LiveProcessResult(
-          spokenText: _navStartDeclinedMessage,
-        );
+        return const LiveProcessResult(spokenText: _navStartDeclinedMessage);
       }
       _pendingNavPlan = null;
       _pendingNavPosition = null;
@@ -384,7 +387,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     } on V3ApiException catch (error) {
       return LiveProcessResult(spokenText: error.toString());
     } catch (_) {
-      return const LiveProcessResult(spokenText: '지금은 답하기 어렵습니다. 잠시 후에 다시 말씀해 주세요.');
+      return const LiveProcessResult(
+        spokenText: '지금은 답하기 어렵습니다. 잠시 후에 다시 말씀해 주세요.',
+      );
     } finally {
       if (shouldPlanRoute && mounted) {
         setState(() => _isRoutePlanning = false);
@@ -1349,28 +1354,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
-    final cue = state.cueType;
-    if (cue == 'none' || cue == 'success') {
+    if (state.cueType == 'none' || state.cueType == 'success') {
       await _spatialCueService.stopCue();
-      return;
-    }
-    // 경고(지오펜싱 이탈/차도 접근/놓침)는 버스 거리와 무관하게 고정된 긴박한 간격으로
-    // 중앙·높은 음량으로 울려야 한다. (예전엔 버스 거리 기반 간격이라 경고가 띄엄띄엄·
-    // 엉뚱한 순간에 울렸다.) normal일 때만 목표 버스 위치에 맞춰 동적으로 울린다.
-    if (cue == 'alarm' || cue == 'warning' || cue == 'missed') {
-      await _spatialCueService.updateCue(
-        pan: 0.0,
-        gain: 0.9,
-        intervalMs: cue == 'missed' ? 900 : 420,
-        pattern: cue,
-      );
       return;
     }
     await _spatialCueService.updateCue(
       pan: state.pan,
       gain: state.gain,
       intervalMs: state.beepIntervalMs,
-      pattern: cue,
+      pattern: state.cueType,
     );
   }
 
@@ -1704,13 +1696,79 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     });
   }
 
-  void _toggleMockHeadTracking(bool value) {
+  Future<void> _toggleHeadTracking(bool value) async {
+    _headTrackingTimer?.cancel();
+    _headTrackingTimer = null;
+
+    if (!value) {
+      await _headTrackingService.disconnect();
+      await _spatialCueService.setHeadTracking(enabled: false);
+      if (!mounted) return;
+      setState(() {
+        _useHeadTracking = false;
+        _headTracking = HeadTrackingDebugSnapshot.disabled();
+      });
+      return;
+    }
+
     setState(() {
-      _useMockHeadTracking = value;
-      _headTracking = value
-          ? HeadTrackingDebugSnapshot.mock(yaw: 12.5, pitch: -3.2, roll: 1.8)
-          : HeadTrackingDebugSnapshot.disabled();
+      _useHeadTracking = true;
+      _headTracking = const HeadTrackingDebugSnapshot(
+        statusLabel: 'connecting WT901BLE',
+        isAvailable: false,
+        sourceLabel: 'WT901BLE Web Bluetooth',
+      );
     });
+
+    final snapshot = await _headTrackingService.connect();
+    if (!mounted) return;
+    _applyHeadTrackingSnapshot(snapshot);
+
+    if (!_shouldKeepHeadTrackingPolling(snapshot)) {
+      setState(() => _useHeadTracking = false);
+      await _spatialCueService.setHeadTracking(enabled: false);
+      return;
+    }
+
+    _headTrackingTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _pollHeadTracking(),
+    );
+  }
+
+  void _pollHeadTracking() {
+    if (!mounted) return;
+    final snapshot = _headTrackingService.snapshot();
+    _applyHeadTrackingSnapshot(snapshot);
+    if (!_shouldKeepHeadTrackingPolling(snapshot)) {
+      _headTrackingTimer?.cancel();
+      _headTrackingTimer = null;
+      setState(() => _useHeadTracking = false);
+      unawaited(_spatialCueService.setHeadTracking(enabled: false));
+    }
+  }
+
+  bool _shouldKeepHeadTrackingPolling(HeadTrackingDebugSnapshot snapshot) {
+    if (snapshot.isAvailable) return true;
+    final status = snapshot.statusLabel.toLowerCase();
+    return status.contains('waiting') || status.contains('connected');
+  }
+
+  void _applyHeadTrackingSnapshot(HeadTrackingDebugSnapshot snapshot) {
+    setState(() => _headTracking = snapshot);
+    unawaited(
+      _spatialCueService.setHeadTracking(
+        enabled: snapshot.isAvailable,
+        yaw: snapshot.yaw,
+        pitch: snapshot.pitch,
+        roll: snapshot.roll,
+      ),
+    );
+  }
+
+  void _resetHeadTrackingZero() {
+    _headTrackingService.resetZero();
+    _applyHeadTrackingSnapshot(_headTrackingService.snapshot());
   }
 
   @override
@@ -1907,8 +1965,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       latestBeaconDecision: _lastBeaconDecision,
                       latestGeofenceMessage: _latestGeofenceMessage,
                       headTracking: _headTracking,
-                      useMockHeadTracking: _useMockHeadTracking,
-                      onToggleMockHeadTracking: _toggleMockHeadTracking,
+                      useHeadTracking: _useHeadTracking,
+                      onToggleHeadTracking: (value) =>
+                          unawaited(_toggleHeadTracking(value)),
+                      onResetHeadTrackingZero: _resetHeadTrackingZero,
                       apiBaseUrl: _apiBaseUrl,
                       healthMessage: _healthStatus?.message ?? '확인 전',
                       sessionState: _sessionState,
@@ -3980,8 +4040,9 @@ class _DebugExpansionPanel extends StatelessWidget {
     required this.latestGeofenceMessage,
     // Head Tracking
     required this.headTracking,
-    required this.useMockHeadTracking,
-    required this.onToggleMockHeadTracking,
+    required this.useHeadTracking,
+    required this.onToggleHeadTracking,
+    required this.onResetHeadTrackingZero,
     // Debug Panel
     required this.apiBaseUrl,
     required this.healthMessage,
@@ -4015,8 +4076,9 @@ class _DebugExpansionPanel extends StatelessWidget {
   final String? latestGeofenceMessage;
 
   final HeadTrackingDebugSnapshot headTracking;
-  final bool useMockHeadTracking;
-  final ValueChanged<bool> onToggleMockHeadTracking;
+  final bool useHeadTracking;
+  final ValueChanged<bool> onToggleHeadTracking;
+  final VoidCallback onResetHeadTrackingZero;
 
   final String apiBaseUrl;
   final String healthMessage;
@@ -4075,8 +4137,9 @@ class _DebugExpansionPanel extends StatelessWidget {
           ],
           _HeadTrackingCard(
             snapshot: headTracking,
-            enabled: useMockHeadTracking,
-            onChanged: onToggleMockHeadTracking,
+            enabled: useHeadTracking,
+            onChanged: onToggleHeadTracking,
+            onResetZero: onResetHeadTrackingZero,
           ),
           const SizedBox(height: 12),
           V3DebugPanel(
@@ -4732,26 +4795,96 @@ class _RoutePlanningPreparation {
   final Position? position;
 }
 
+class _HeadTrackingChip extends StatelessWidget {
+  const _HeadTrackingChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      label: Text('$label: $value'),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
 class _HeadTrackingCard extends StatelessWidget {
   const _HeadTrackingCard({
     required this.snapshot,
     required this.enabled,
     required this.onChanged,
+    required this.onResetZero,
   });
 
   final HeadTrackingDebugSnapshot snapshot;
   final bool enabled;
   final ValueChanged<bool> onChanged;
+  final VoidCallback onResetZero;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: SwitchListTile(
-        value: enabled,
-        onChanged: onChanged,
-        title: const Text('Optional Head Tracking Debug'),
-        subtitle: Text(
-          'status=${snapshot.statusLabel}, yaw=${_angle(snapshot.yaw)}, pitch=${_angle(snapshot.pitch)}, roll=${_angle(snapshot.roll)}',
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SwitchListTile(
+              value: enabled,
+              onChanged: onChanged,
+              title: const Text('WT901BLE Head Tracking'),
+              subtitle: Text(
+                'status=${snapshot.statusLabel}, source=${snapshot.sourceLabel ?? '-'}',
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _HeadTrackingChip(label: 'yaw', value: _angle(snapshot.yaw)),
+                  _HeadTrackingChip(
+                    label: 'pitch',
+                    value: _angle(snapshot.pitch),
+                  ),
+                  _HeadTrackingChip(
+                    label: 'roll',
+                    value: _angle(snapshot.roll),
+                  ),
+                  _HeadTrackingChip(
+                    label: 'packet',
+                    value: snapshot.packetType ?? '-',
+                  ),
+                  if (snapshot.deviceName != null)
+                    _HeadTrackingChip(
+                      label: 'device',
+                      value: snapshot.deviceName!,
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: enabled ? onResetZero : null,
+                    icon: const Icon(Icons.explore_outlined),
+                    label: const Text('Reset zero'),
+                  ),
+                ],
+              ),
+            ),
+            if (snapshot.rawHex != null) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'raw=${snapshot.rawHex}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );

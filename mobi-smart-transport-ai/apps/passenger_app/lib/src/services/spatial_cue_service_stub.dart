@@ -27,6 +27,13 @@ class SpatialCueService {
     }
   }
 
+  Future<void> setHeadTracking({
+    required bool enabled,
+    double? yaw,
+    double? pitch,
+    double? roll,
+  }) async {}
+
   Future<void> dispose() async {
     await stopCue();
   }

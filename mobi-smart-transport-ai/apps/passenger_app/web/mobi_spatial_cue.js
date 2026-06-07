@@ -12,6 +12,13 @@
     intervalMs: 1200,
     pattern: 'normal'
   };
+  var head = {
+    enabled: false,
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    effectivePan: 0
+  };
 
   function clamp(value, min, max) {
     var n = Number(value);
@@ -29,7 +36,8 @@
 
       if (typeof ctx.createStereoPanner === 'function') {
         panner = ctx.createStereoPanner();
-        panner.pan.value = active.pan;
+        panner.pan.value = correctedPan();
+        head.effectivePan = panner.pan.value;
         masterGain.connect(panner);
         panner.connect(ctx.destination);
       } else {
@@ -41,6 +49,27 @@
       ctx.resume().catch(function () {});
     }
     return ctx;
+  }
+
+  function normalize180(value) {
+    var out = Number(value);
+    if (!Number.isFinite(out)) return 0;
+    out = ((out + 180) % 360 + 360) % 360 - 180;
+    return out === -180 ? 180 : out;
+  }
+
+  function correctedPan() {
+    if (!head.enabled) return active.pan;
+    var baseAzimuth = active.pan * 90;
+    var relativeAzimuth = normalize180(baseAzimuth - head.yaw);
+    return clamp(Math.sin(relativeAzimuth * Math.PI / 180), -1, 1);
+  }
+
+  function applyPan() {
+    head.effectivePan = correctedPan();
+    if (panner && panner.pan) {
+      panner.pan.setTargetAtTime(head.effectivePan, ctx.currentTime, 0.015);
+    }
   }
 
   function applyState(options) {
@@ -57,9 +86,7 @@
     if (masterGain) {
       masterGain.gain.setTargetAtTime(active.gain, ctx.currentTime, 0.015);
     }
-    if (panner && panner.pan) {
-      panner.pan.setTargetAtTime(active.pan, ctx.currentTime, 0.015);
-    }
+    if (panner && panner.pan) applyPan();
   }
 
   function tonePlan(pattern) {
@@ -152,12 +179,36 @@
     });
   }
 
+  function setHeadOrientation(yaw, pitch, roll, enabled) {
+    head.enabled = enabled === true;
+    head.yaw = normalize180(yaw || 0);
+    head.pitch = Number.isFinite(Number(pitch)) ? Number(pitch) : 0;
+    head.roll = Number.isFinite(Number(roll)) ? Number(roll) : 0;
+    if (panner && panner.pan) applyPan();
+  }
+
+  function getState() {
+    return {
+      pan: active.pan,
+      effectivePan: head.effectivePan,
+      gain: active.gain,
+      intervalMs: active.intervalMs,
+      pattern: active.pattern,
+      headTrackingEnabled: head.enabled,
+      headYaw: head.yaw,
+      headPitch: head.pitch,
+      headRoll: head.roll
+    };
+  }
+
   window.MobiSpatialCue = {
     prepare: prepare,
     start: start,
     update: update,
     stop: stop,
     alarm: alarm,
+    setHeadOrientation: setHeadOrientation,
+    getState: getState,
     startCue: function (pan, gain, intervalMs, pattern) {
       start({ pan: pan, gain: gain, intervalMs: intervalMs, pattern: pattern });
     },

@@ -18,6 +18,12 @@ extension type _MobiSpatialCue._(JSObject _) implements JSObject {
   );
   external void stop();
   external void alarm(JSString pattern);
+  external void setHeadOrientation(
+    JSNumber yaw,
+    JSNumber pitch,
+    JSNumber roll,
+    JSBoolean enabled,
+  );
 }
 
 extension type _MobiWindow._(JSObject _) implements JSObject {
@@ -87,6 +93,22 @@ class SpatialCueService {
       api.prepare();
       api.alarm(pattern.toJS);
       _active = true;
+    } catch (_) {}
+  }
+
+  Future<void> setHeadTracking({
+    required bool enabled,
+    double? yaw,
+    double? pitch,
+    double? roll,
+  }) async {
+    try {
+      _api?.setHeadOrientation(
+        (yaw ?? 0).toJS,
+        (pitch ?? 0).toJS,
+        (roll ?? 0).toJS,
+        enabled.toJS,
+      );
     } catch (_) {}
   }
 

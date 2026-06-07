@@ -35,9 +35,9 @@ class V3DebugPanel extends StatelessWidget {
           children: [
             Text(
               'Debug Panel',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             _DebugRow(label: 'API base', value: baseUrl),
@@ -45,33 +45,68 @@ class V3DebugPanel extends StatelessWidget {
             _DebugRow(label: 'sessionId', value: state?.sessionId ?? '-'),
             _DebugRow(label: 'state', value: state?.state ?? '-'),
             _DebugRow(label: 'wakeWord', value: state?.wakeWord ?? '-'),
-            _DebugRow(label: 'destination', value: state?.selectedDestination ?? '-'),
+            _DebugRow(
+              label: 'destination',
+              value: state?.selectedDestination ?? '-',
+            ),
             _DebugRow(label: 'routeNo', value: state?.selectedRouteNo ?? '-'),
             _DebugRow(label: 'stopId', value: state?.selectedStopId ?? '-'),
             _DebugRow(label: 'targetBusId', value: state?.targetBusId ?? '-'),
-            _DebugRow(label: 'geofenceArmed', value: '${state?.geofenceArmed ?? false}'),
+            _DebugRow(
+              label: 'geofenceArmed',
+              value: '${state?.geofenceArmed ?? false}',
+            ),
             _DebugRow(label: 'lastDecision', value: state?.lastDecision ?? '-'),
-            _DebugRow(label: 'nearestBeacon', value: _mapSummary(state?.nearestBeacon)),
+            _DebugRow(
+              label: 'nearestBeacon',
+              value: _mapSummary(state?.nearestBeacon),
+            ),
             _DebugRow(label: 'targetBus', value: _mapSummary(state?.targetBus)),
-            _DebugRow(label: 'agentIntent', value: lastAgentResponse?.intent ?? '-'),
-            _DebugRow(label: 'agentTtsMode', value: lastAgentResponse?.ttsMode ?? '-'),
-            _DebugRow(label: 'agentFallback', value: lastAgentResponse?.fallbackSource ?? '-'),
-            _DebugRow(label: 'arrivalsFallback', value: lastArrivals?.fallbackSource ?? '-'),
-            _DebugRow(label: 'arrivalsCount', value: '${lastArrivals?.arrivals.length ?? 0}'),
-            _DebugRow(label: 'beaconDecision', value: lastBeaconDecision?.decision ?? '-'),
+            _DebugRow(
+              label: 'agentIntent',
+              value: lastAgentResponse?.intent ?? '-',
+            ),
+            _DebugRow(
+              label: 'agentTtsMode',
+              value: lastAgentResponse?.ttsMode ?? '-',
+            ),
+            _DebugRow(
+              label: 'agentFallback',
+              value: lastAgentResponse?.fallbackSource ?? '-',
+            ),
+            _DebugRow(
+              label: 'arrivalsFallback',
+              value: lastArrivals?.fallbackSource ?? '-',
+            ),
+            _DebugRow(
+              label: 'arrivalsCount',
+              value: '${lastArrivals?.arrivals.length ?? 0}',
+            ),
+            _DebugRow(
+              label: 'beaconDecision',
+              value: lastBeaconDecision?.decision ?? '-',
+            ),
             _DebugRow(label: 'activeCue', value: activeCueType ?? '-'),
             const Divider(height: 24),
             Text(
               'Head Tracking Debug',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             _DebugRow(label: 'status', value: headTracking.statusLabel),
+            _DebugRow(label: 'source', value: headTracking.sourceLabel ?? '-'),
+            _DebugRow(label: 'device', value: headTracking.deviceName ?? '-'),
+            _DebugRow(label: 'packet', value: headTracking.packetType ?? '-'),
             _DebugRow(label: 'yaw', value: _angle(headTracking.yaw)),
             _DebugRow(label: 'pitch', value: _angle(headTracking.pitch)),
             _DebugRow(label: 'roll', value: _angle(headTracking.roll)),
+            _DebugRow(
+              label: 'updatedAt',
+              value: headTracking.updatedAt?.toIso8601String() ?? '-',
+            ),
+            _DebugRow(label: 'rawHex', value: headTracking.rawHex ?? '-'),
             Text(
               '헤드트래킹은 현재 debug 표시만 담당하고, 탑승 가능 판단은 백엔드 비컨/rule engine이 담당합니다.',
               style: Theme.of(context).textTheme.bodySmall,
@@ -96,7 +131,8 @@ class V3DebugPanel extends StatelessWidget {
     ].join(' · ');
   }
 
-  String _angle(double? value) => value == null ? '-' : '${value.toStringAsFixed(1)}°';
+  String _angle(double? value) =>
+      value == null ? '-' : '${value.toStringAsFixed(1)}°';
 }
 
 class _DebugRow extends StatelessWidget {

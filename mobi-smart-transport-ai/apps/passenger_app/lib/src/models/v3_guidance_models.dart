@@ -1142,7 +1142,8 @@ class V3BeaconDecisionResponse {
   }
 }
 
-class HeadTrackingDebugSnapshot {
+/*
+class _LegacyHeadTrackingDebugSnapshot {
   const HeadTrackingDebugSnapshot({
     required this.statusLabel,
     required this.isAvailable,
@@ -1178,6 +1179,72 @@ class HeadTrackingDebugSnapshot {
       pitch: pitch,
       roll: roll,
       updatedAt: DateTime.now(),
+    );
+  }
+}
+
+*/
+class HeadTrackingDebugSnapshot {
+  const HeadTrackingDebugSnapshot({
+    required this.statusLabel,
+    required this.isAvailable,
+    this.yaw,
+    this.pitch,
+    this.roll,
+    this.updatedAt,
+    this.sourceLabel,
+    this.deviceName,
+    this.packetType,
+    this.rawHex,
+  });
+
+  final String statusLabel;
+  final bool isAvailable;
+  final double? yaw;
+  final double? pitch;
+  final double? roll;
+  final DateTime? updatedAt;
+  final String? sourceLabel;
+  final String? deviceName;
+  final String? packetType;
+  final String? rawHex;
+
+  factory HeadTrackingDebugSnapshot.disabled() {
+    return const HeadTrackingDebugSnapshot(
+      statusLabel: 'optional sensor disconnected',
+      isAvailable: false,
+      sourceLabel: 'none',
+    );
+  }
+
+  factory HeadTrackingDebugSnapshot.mock({
+    double yaw = 0,
+    double pitch = 0,
+    double roll = 0,
+  }) {
+    return HeadTrackingDebugSnapshot(
+      statusLabel: 'debug mock',
+      isAvailable: true,
+      yaw: yaw,
+      pitch: pitch,
+      roll: roll,
+      updatedAt: DateTime.now(),
+      sourceLabel: 'mock',
+    );
+  }
+
+  factory HeadTrackingDebugSnapshot.fromJson(Map<String, dynamic> json) {
+    return HeadTrackingDebugSnapshot(
+      statusLabel: _stringValue(json['statusLabel'], fallback: 'unknown'),
+      isAvailable: json['isAvailable'] == true,
+      yaw: _nullableDouble(json['yaw']),
+      pitch: _nullableDouble(json['pitch']),
+      roll: _nullableDouble(json['roll']),
+      updatedAt: _dateTimeValue(json['updatedAt']),
+      sourceLabel: _nullableString(json['sourceLabel']),
+      deviceName: _nullableString(json['deviceName']),
+      packetType: _nullableString(json['packetType']),
+      rawHex: _nullableString(json['rawHex']),
     );
   }
 }
