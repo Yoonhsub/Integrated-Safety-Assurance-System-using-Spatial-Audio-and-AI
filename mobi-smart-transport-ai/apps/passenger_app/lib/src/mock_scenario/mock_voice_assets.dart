@@ -55,7 +55,7 @@ const Map<String, String> mockVoiceAssetByText = <String, String>{
   '비콘 신호가 약해졌습니다. 마지막 확인 방향은 왼쪽 전방입니다.': 'mock_voice/signal_lost__1c6cff80.mp3',
   '비콘 신호가 정상입니다. 목표 버스가 왼쪽에서 접근합니다.':
       'mock_voice/bus_approaching__609629a9.mp3',
-  '새 목표 513번 버스가 오른쪽에서 접근합니다.': 'mock_voice/target_bus_confirmed__accb249b.mp3',
+  '새 목표 513번 버스가 왼쪽에서 접근합니다.': 'mock_voice/target_bus_confirmed_left.mp3',
   '신호 복구 후 탑승 완료.': 'mock_voice/boarded_success__fd161a33.mp3',
   '신호가 회복되었습니다. 목표 버스가 정차했습니다.': 'mock_voice/bus_stopped__9e5735dd.mp3',
   '안전 구역 안으로 복귀했습니다. 다시 버스 접근을 안내합니다.':
