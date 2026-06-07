@@ -9,7 +9,7 @@ import 'live_voice_controller.dart';
 import 'voice_turn_state.dart';
 
 /// 전체 화면 Live 음성 대화 페이지.
-/// 검은 배경 + 하단 오로라 + 자동 turn-taking(3초 무음) + 5줄 rolling 자막.
+/// 검은 배경 + 하단 오로라 + 마이크 버튼 기반 turn-taking + 5줄 rolling 자막.
 class LiveVoicePage extends StatefulWidget {
   const LiveVoicePage({
     super.key,
@@ -28,8 +28,10 @@ class LiveVoicePage extends StatefulWidget {
   final Future<void> Function() stopAudio;
 
   /// Live 세션 종료 시 호출. [navigated]이 true면 길 안내 동의로 인한 전환.
-  final void Function(List<LiveCaptionLine> sessionLog,
-      {required bool navigated}) onExit;
+  final void Function(
+    List<LiveCaptionLine> sessionLog, {
+    required bool navigated,
+  }) onExit;
 
   @override
   State<LiveVoicePage> createState() => _LiveVoicePageState();
@@ -197,10 +199,7 @@ class _TopStatus extends StatelessWidget {
 }
 
 class _BottomControls extends StatelessWidget {
-  const _BottomControls({
-    required this.onMicTap,
-    required this.onClose,
-  });
+  const _BottomControls({required this.onMicTap, required this.onClose});
 
   final VoidCallback onMicTap;
   final VoidCallback onClose;
@@ -211,7 +210,7 @@ class _BottomControls extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
-          '잘 안 들리면 마이크를 탭해서 다시 말씀해 주세요',
+          '에이전트에게 말을 걸려면 마이크 버튼을 눌러 주세요.',
           style: TextStyle(color: Colors.white60, fontSize: 12),
         ),
         const SizedBox(height: 10),

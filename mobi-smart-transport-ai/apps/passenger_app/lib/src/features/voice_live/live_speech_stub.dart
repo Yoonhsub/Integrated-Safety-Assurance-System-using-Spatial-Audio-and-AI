@@ -9,6 +9,7 @@ class LiveSpeechRecognizer {
   void Function(String state)? _onState;
   String _locale = 'ko_KR';
   bool _ready = false;
+  bool _active = false;
 
   bool get isContinuous => false;
   bool get supported => true;
@@ -27,11 +28,13 @@ class LiveSpeechRecognizer {
       onError: (_) => _onState?.call('error'),
     );
     if (!_ready) return false;
+    _active = true;
     _listen();
     return true;
   }
 
   void _listen() {
+    if (!_ready || !_active) return;
     _speech.listen(
       localeId: _locale,
       pauseFor: const Duration(seconds: 3),
@@ -46,16 +49,23 @@ class LiveSpeechRecognizer {
     );
   }
 
-  // 네이티브 경로에는 에코 전사 이슈가 없어 no-op.
-  void setActive(bool active) {}
+  void setActive(bool active) {
+    _active = active;
+    if (!active && _speech.isListening) {
+      _speech.cancel();
+    }
+  }
 
   bool resume() {
-    if (!_ready || _speech.isListening) return _ready;
+    if (!_ready) return false;
+    _active = true;
+    if (_speech.isListening) return true;
     _listen();
     return true;
   }
 
   Future<void> stop() async {
+    _active = false;
     try {
       await _speech.cancel();
     } catch (_) {}

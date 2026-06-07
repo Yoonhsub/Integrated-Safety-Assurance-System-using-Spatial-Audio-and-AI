@@ -32,10 +32,9 @@ typedef LiveSpeak = Future<void> Function(String text, {VoidCallback? onStart});
 
 /// LiveVoicePage의 상태 머신·turn-taking·오디오 레벨·자막을 관리한다.
 ///
-/// 음성 인식은 [LiveSpeechRecognizer]를 쓴다. 웹은 **연속(continuous) 인식**으로
-/// 세션을 한 번만 시작하고 턴 사이에 멈추지 않아, iOS/인앱 브라우저의 무제스처
-/// 재시작 차단으로 두 번째 턴부터 인식이 씹히던 문제를 없앤다. 발화 종료는
-/// 인식기의 final 결과로 판정한다(고정 3초 대기 아님).
+/// 음성 인식은 [LiveSpeechRecognizer]를 쓴다. 첫 진입 때만 자동으로 듣기를 시작하고,
+/// 이후 사용자 발화는 마이크 버튼 탭으로만 열린다. 웹은 세션을 유지하되 비듣기
+/// 상태에서는 STT 입력을 일시 정지해 에이전트 음성이나 주변 소리가 전달되지 않게 한다.
 class LiveVoiceController {
   LiveVoiceController({
     required this.captions,
@@ -60,15 +59,15 @@ class LiveVoiceController {
   final VoiceAudioLevel _audioLevel;
   final PcmAudioLevelAnalyzer _analyzer = PcmAudioLevelAnalyzer();
 
-  final ValueNotifier<VoiceTurnState> state =
-      ValueNotifier<VoiceTurnState>(VoiceTurnState.idle);
+  final ValueNotifier<VoiceTurnState> state = ValueNotifier<VoiceTurnState>(
+    VoiceTurnState.idle,
+  );
   final ValueNotifier<double> level = ValueNotifier<double>(0.0);
   final ValueNotifier<double> shaderMode = ValueNotifier<double>(0.0);
   final ValueNotifier<bool> muted = ValueNotifier<bool>(false);
 
   static const String _goodbye = '지금 수행할 작업은 없는 것 같습니다. 언제든 필요하면 다시 불러 주세요.';
   static const Duration _inactivityTimeout = Duration(seconds: 12);
-  static const Duration _bargeInSustain = Duration(milliseconds: 320);
   static const Duration _tick = Duration(milliseconds: 33);
   static const Duration _speechRecoveryTick = Duration(seconds: 1);
   static const Duration _partialCommitDelay = Duration(milliseconds: 750);
@@ -80,26 +79,17 @@ class LiveVoiceController {
   Timer? _inactivityTimer;
   Timer? _partialCommitTimer;
   bool _isCommitting = false;
+  bool _isInterrupting = false;
   bool _disposed = false;
   bool _navigateRequested = false;
   bool _ending = false;
   String _partial = '';
   DateTime? _listeningSince;
-
-  // 보정(주변 소음) — barge-in 임계 산정용.
-  bool _calibrated = false;
-  double _calibAccum = 0.0;
-  int _calibSamples = 0;
-  DateTime? _startedAt;
-  double _noiseFloor = 0.02;
-  double _speechThreshold = 0.08;
-  DateTime? _bargeStartedAt;
-  bool _bargingIn = false;
+  int _turnGeneration = 0;
 
   Future<void> start() async {
     _disposed = false;
     await _audioLevel.startMic();
-    _startedAt = DateTime.now();
     _levelTimer ??= Timer.periodic(_tick, (_) => _onTick());
     _speechRecoveryTimer ??= Timer.periodic(
       _speechRecoveryTick,
@@ -127,19 +117,43 @@ class LiveVoiceController {
     _recognizer.setActive(next == VoiceTurnState.listening);
   }
 
-  // 사용자가 마이크 버튼을 탭하면 듣기를 (재)개한다. 자동 재시작이 막힌 환경에서
-  // 사용자 제스처로 복구하는 경로.
+  // 사용자가 마이크 버튼을 탭하면 듣기를 (재)개한다. 에이전트가 말하는 중이면
+  // 현재 TTS를 끊고 사용자 발화 턴을 연다.
   void handleMicTap() {
     if (_disposed || _ending) return;
+    unawaited(_startManualListening());
+  }
+
+  Future<void> _startManualListening() async {
+    if (_disposed || _ending || _isInterrupting) return;
+    // 추론 중에는 이전 사용자 발화를 처리하고 있으므로 새 입력을 열지 않는다.
+    if (state.value == VoiceTurnState.thinking) return;
+
     if (muted.value) muted.value = false;
-    _listeningSince = DateTime.now();
-    if (state.value != VoiceTurnState.listening) {
-      _setState(VoiceTurnState.listening);
+    if (state.value == VoiceTurnState.speaking) {
+      _isInterrupting = true;
+      _turnGeneration++;
+      _isCommitting = false;
+      captions.commitFinal(speaker: Speaker.agent, text: '…(말 중단됨)');
+      try {
+        await stopAudio();
+      } catch (_) {
+      } finally {
+        _isInterrupting = false;
+      }
+      if (_disposed || _ending) return;
     }
+
+    _partialCommitTimer?.cancel();
+    _inactivityTimer?.cancel();
+    _partial = '';
+    _setState(VoiceTurnState.listening);
+    _listeningSince = DateTime.now();
     // 사용자 제스처 컨텍스트에서 마이크를 복구한다(iOS의 AudioContext suspend/WS 종료 회복).
     _recognizer.setActive(true);
     final ok = _recognizer.resume();
     if (!ok) unawaited(_startRecognition());
+    _resetInactivityTimer();
   }
 
   Future<void> setMuted(bool value) async {
@@ -150,13 +164,14 @@ class LiveVoiceController {
     }
   }
 
-  // ---- 프레임 틱: 오로라 레벨 + barge-in ----
+  // ---- 프레임 틱: 오로라 레벨 ----
 
   void _onTick() {
     if (_disposed) return;
-    final mic = muted.value ? 0.0 : _audioLevel.micLevel();
+    final mic = state.value == VoiceTurnState.listening && !muted.value
+        ? _audioLevel.micLevel()
+        : 0.0;
     final out = _audioLevel.outputLevel();
-    _calibrate(mic);
 
     double target;
     switch (state.value) {
@@ -176,26 +191,6 @@ class LiveVoiceController {
       attack: 0.5,
       release: 0.045,
     );
-
-    if (_ending) return;
-    if (state.value == VoiceTurnState.speaking && _calibrated && !muted.value) {
-      _vadBargeIn(mic, out);
-    } else {
-      _bargeStartedAt = null;
-    }
-  }
-
-  void _calibrate(double mic) {
-    if (_calibrated || _startedAt == null) return;
-    _calibAccum += mic;
-    _calibSamples += 1;
-    if (DateTime.now().difference(_startedAt!) >=
-            const Duration(milliseconds: 600) &&
-        _calibSamples > 0) {
-      _noiseFloor = (_calibAccum / _calibSamples).clamp(0.0, 0.2);
-      _speechThreshold = math.max(0.06, _noiseFloor * 2.6 + 0.02);
-      _calibrated = true;
-    }
   }
 
   double _boost(double rms) {
@@ -211,36 +206,6 @@ class LiveVoiceController {
       final wait = remain > 200 ? 200 : remain.ceil();
       await Future.delayed(Duration(milliseconds: wait));
     }
-  }
-
-  void _vadBargeIn(double mic, double output) {
-    final loudEnough = mic >= _speechThreshold * 1.8 + 0.04;
-    final overAi = mic >= output * 1.6 + 0.05;
-    if (loudEnough && overAi) {
-      _bargeStartedAt ??= DateTime.now();
-      if (DateTime.now().difference(_bargeStartedAt!) >= _bargeInSustain) {
-        _bargeStartedAt = null;
-        _triggerBargeIn();
-      }
-    } else {
-      _bargeStartedAt = null;
-    }
-  }
-
-  Future<void> _triggerBargeIn() async {
-    if (_bargingIn || _ending || _disposed) return;
-    _bargingIn = true;
-    captions.commitFinal(speaker: Speaker.agent, text: '…(말 중단됨)');
-    try {
-      await stopAudio();
-    } catch (_) {}
-    if (_disposed || _ending) return;
-    _partial = '';
-    _setState(VoiceTurnState.listening);
-    _listeningSince = DateTime.now();
-    if (!_recognizer.resume()) unawaited(_startRecognition());
-    _resetInactivityTimer();
-    _bargingIn = false;
   }
 
   // ---- 인식 콜백 ----
@@ -273,7 +238,9 @@ class LiveVoiceController {
     if (s == 'listening') return;
     if (s == 'ready' || s == 'recovering') return;
     if (s == 'closed' || s == 'resumeBlocked' || s.startsWith('error')) {
-      _recoverRecognitionIfNeeded(force: true);
+      if (state.value == VoiceTurnState.listening) {
+        _recoverRecognitionIfNeeded(force: true);
+      }
       return;
     }
     if (s == 'ended' || s == 'notListening' || s == 'done') {
@@ -287,6 +254,7 @@ class LiveVoiceController {
 
   void _recoverRecognitionIfNeeded({bool force = false}) {
     if (_disposed || _ending) return;
+    if (state.value != VoiceTurnState.listening) return;
     if (!force && !_recognizer.needsRecovery) return;
     final ok = _recognizer.resume();
     if (!ok) unawaited(_startRecognition());
@@ -343,6 +311,7 @@ class LiveVoiceController {
     if (_disposed || _isCommitting) return;
     final spoken = text.trim();
     if (spoken.isEmpty) return;
+    final turnGeneration = ++_turnGeneration;
     _isCommitting = true;
     _inactivityTimer?.cancel();
     _partialCommitTimer?.cancel();
@@ -359,7 +328,7 @@ class LiveVoiceController {
           }
         },
       );
-      if (_disposed) return;
+      if (_disposed || turnGeneration != _turnGeneration) return;
 
       final reply = result.spokenText.trim();
       if (result.endSession) _ending = true;
@@ -387,24 +356,24 @@ class LiveVoiceController {
           await speak(reply, onStart: showAgentCaption);
         } catch (_) {}
       }
+      if (_disposed || turnGeneration != _turnGeneration) return;
       showAgentCaption();
       await _drainPlayback();
-      if (_disposed) return;
+      if (_disposed || turnGeneration != _turnGeneration) return;
       if (result.endSession) {
         onEnd();
         return;
       }
       if (_ending) return;
-      // 다시 듣기. 연속 인식은 계속 돌고 있으므로 상태만 전환하고 잔여 결과를
-      // 잠깐 무시한다. 비연속은 명시적으로 재개한다.
+      // 에이전트가 말한 뒤에는 자동으로 다시 듣지 않는다. 다음 사용자 발화는
+      // 마이크 버튼 탭으로만 열리며, 그 전까지 STT 입력은 일시 정지된다.
       _partial = '';
-      _setState(VoiceTurnState.listening);
-      _listeningSince = DateTime.now();
-      // AI 발화 후 멈췄을 수 있는 마이크를 복구(컨텍스트 재개 + WS 재연결 + 버퍼 리셋).
-      if (!_recognizer.resume()) unawaited(_startRecognition());
-      _resetInactivityTimer();
+      _listeningSince = null;
+      _setState(VoiceTurnState.idle);
     } finally {
-      _isCommitting = false;
+      if (turnGeneration == _turnGeneration) {
+        _isCommitting = false;
+      }
     }
   }
 
