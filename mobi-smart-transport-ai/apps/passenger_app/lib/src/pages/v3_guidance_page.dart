@@ -61,6 +61,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   late final TextEditingController _utteranceController;
   late final MockScenarioController _mockScenarioController;
 
+  Timer? _beaconLatestTimer;
+  V3BeaconLatestResponse? _latestBeacon;
+  String? _latestBeaconError;
+  DateTime? _latestBeaconUpdatedAt;
+  bool _isBeaconLatestPolling = false;
   V3HealthStatus? _healthStatus;
   V3GuidanceState? _sessionState;
   V3AgentResponse? _lastAgentResponse;
@@ -138,10 +143,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     if (kIsWeb) startWebGeoWatch();
     // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
     _ensureLocation(forceRequest: true);
+    _startBeaconLatestPolling();
   }
 
   @override
   void dispose() {
+    _stopBeaconLatestPolling();
     _liveRouteTimer?.cancel();
     _betterRouteTimer?.cancel();
     _voiceGuideService.cancelListening();
@@ -154,6 +161,53 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     super.dispose();
   }
   
+  void _startBeaconLatestPolling() {
+  if (_isBeaconLatestPolling) return;
+
+  _isBeaconLatestPolling = true;
+  _pollBeaconLatestOnce();
+
+  _beaconLatestTimer = Timer.periodic(
+    const Duration(seconds: 2),
+    (_) => _pollBeaconLatestOnce(),
+  );
+}
+
+void _stopBeaconLatestPolling() {
+  _beaconLatestTimer?.cancel();
+  _beaconLatestTimer = null;
+  _isBeaconLatestPolling = false;
+}
+
+Future<void> _pollBeaconLatestOnce() async {
+  try {
+    final latest = await _client.fetchBeaconLatest(
+      sessionId: _sessionId,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _latestBeacon = latest;
+      _latestBeaconError = null;
+      _latestBeaconUpdatedAt = DateTime.now();
+    });
+  } on V3ApiException catch (error) {
+    if (!mounted) return;
+
+    setState(() {
+      _latestBeaconError = error.toString();
+      _latestBeaconUpdatedAt = DateTime.now();
+    });
+  } catch (_) {
+    if (!mounted) return;
+
+    setState(() {
+      _latestBeaconError = '비컨 최신 상태를 불러올 수 없습니다.';
+      _latestBeaconUpdatedAt = DateTime.now();
+    });
+  }
+}
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
@@ -1860,6 +1914,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       lastArrivals: _lastArrivals,
                       activeCueType: _cueService.activeCueType,
                     ),
+                    _BeaconLatestStatusCard(
+                      latest: _latestBeacon,
+                      error: _latestBeaconError,
+                      updatedAt: _latestBeaconUpdatedAt,
+                    ),
+                    const SizedBox(height: 12),
                   ],
                 ],
               ),
@@ -4709,5 +4769,161 @@ class _HeadTrackingCard extends StatelessWidget {
 
   String _angle(double? value) =>
       value == null ? '-' : '${value.toStringAsFixed(1)}°';
+}
+
+class _BeaconLatestStatusCard extends StatelessWidget {
+  const _BeaconLatestStatusCard({
+    required this.latest,
+    required this.error,
+    required this.updatedAt,
+  });
+
+  final V3BeaconLatestResponse? latest;
+  final String? error;
+  final DateTime? updatedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = error != null && error!.isNotEmpty;
+    final titleColor = hasError ? const Color(0xFFC62828) : const Color(0xFF263238);
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: hasError ? const Color(0xFFFFCDD2) : const Color(0xFFE0E0E0),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Semantics(
+          label: '비컨 최신 상태 카드',
+          hint: '비컨 latest API polling 결과를 표시합니다.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '비컨 최신 상태',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: titleColor,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (hasError) ...[
+                Text(
+                  error!,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFFC62828),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ] else if (latest == null) ...[
+                const Text(
+                  '비컨 최신 상태를 불러오는 중입니다.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF607D8B),
+                  ),
+                ),
+              ] else ...[
+                _BeaconLatestRow(label: 'status', value: latest!.status),
+                _BeaconLatestRow(label: 'message', value: latest!.message),
+                _BeaconLatestRow(
+                  label: 'beaconId',
+                  value: latest!.beaconId ?? '-',
+                ),
+                _BeaconLatestRow(
+                  label: 'busId',
+                  value: latest!.busId ?? '-',
+                ),
+                _BeaconLatestRow(
+                  label: 'distance',
+                  value: latest!.distanceMeters == null
+                      ? '-'
+                      : '${latest!.distanceMeters!.toStringAsFixed(1)} m',
+                ),
+                _BeaconLatestRow(
+                  label: 'direction',
+                  value: latest!.directionLabel ?? '-',
+                ),
+                _BeaconLatestRow(
+                  label: 'pan',
+                  value: latest!.pan?.toStringAsFixed(2) ?? '-',
+                ),
+                _BeaconLatestRow(
+                  label: 'gain',
+                  value: latest!.gain?.toStringAsFixed(2) ?? '-',
+                ),
+                _BeaconLatestRow(
+                  label: 'cueType',
+                  value: latest!.cueType ?? latest!.cue.type,
+                ),
+              ],
+              if (updatedAt != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '마지막 갱신: ${updatedAt!.hour.toString().padLeft(2, '0')}:'
+                  '${updatedAt!.minute.toString().padLeft(2, '0')}:'
+                  '${updatedAt!.second.toString().padLeft(2, '0')}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF78909C),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BeaconLatestRow extends StatelessWidget {
+  const _BeaconLatestRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 4,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF607D8B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 6,
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF263238),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
