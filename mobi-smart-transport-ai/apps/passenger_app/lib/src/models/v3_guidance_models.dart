@@ -1142,6 +1142,81 @@ class V3BeaconDecisionResponse {
   }
 }
 
+class V3BeaconLatestResponse {
+  const V3BeaconLatestResponse({
+    required this.status,
+    required this.message,
+    required this.cue,
+    required this.raw,
+    this.eventId,
+    this.beaconId,
+    this.busId,
+    this.routeId,
+    this.stopId,
+    this.distanceMeters,
+    this.directionLabel,
+    this.pan,
+    this.gain,
+    this.intervalMs,
+    this.cueType,
+    this.shouldSpeak = false,
+    this.shouldPlaySpatialCue = false,
+    this.updatedAt,
+  });
+
+  final String status;
+  final String message;
+  final V3Cue cue;
+  final Map<String, dynamic> raw;
+
+  final String? eventId;
+  final String? beaconId;
+  final String? busId;
+  final String? routeId;
+  final String? stopId;
+  final double? distanceMeters;
+  final String? directionLabel;
+  final double? pan;
+  final double? gain;
+  final int? intervalMs;
+  final String? cueType;
+  final bool shouldSpeak;
+  final bool shouldPlaySpatialCue;
+  final DateTime? updatedAt;
+
+  bool get hasSpatialCue =>
+      shouldPlaySpatialCue && pan != null && gain != null && intervalMs != null;
+
+  factory V3BeaconLatestResponse.fromJson(Map<String, dynamic> json) {
+    final cue = V3Cue.fromJson(_mapValue(json['cue']));
+    final cueType = _nullableString(json['cueType']) ?? cue.type;
+
+    return V3BeaconLatestResponse(
+      status: _stringValue(json['status'], fallback: 'UNKNOWN'),
+      message: _stringValue(
+        json['message'] ?? cue.message,
+        fallback: '비컨 최신 상태 메시지가 없습니다.',
+      ),
+      cue: cue,
+      raw: Map<String, dynamic>.from(json),
+      eventId: _nullableString(json['eventId']),
+      beaconId: _nullableString(json['beaconId']),
+      busId: _nullableString(json['busId']),
+      routeId: _nullableString(json['routeId']),
+      stopId: _nullableString(json['stopId']),
+      distanceMeters: _nullableDouble(json['distanceMeters']),
+      directionLabel: _nullableString(json['directionLabel']),
+      pan: _nullableDouble(json['pan']),
+      gain: _nullableDouble(json['gain']),
+      intervalMs: _nullableInt(json['intervalMs']),
+      cueType: cueType,
+      shouldSpeak: json['shouldSpeak'] == true,
+      shouldPlaySpatialCue: json['shouldPlaySpatialCue'] == true,
+      updatedAt: _dateTimeValue(json['updatedAt']),
+    );
+  }
+}
+
 class HeadTrackingDebugSnapshot {
   const HeadTrackingDebugSnapshot({
     required this.statusLabel,

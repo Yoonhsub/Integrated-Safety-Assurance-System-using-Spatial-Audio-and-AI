@@ -348,6 +348,19 @@ class V3AgentApiClient {
     return V3BeaconDecisionResponse.fromJson(json);
   }
 
+  Future<V3BeaconLatestResponse> fetchBeaconLatest({
+  String? sessionId,
+}) async {
+  final query = <String, String>{};
+
+  if (sessionId != null && sessionId.isNotEmpty) {
+    query['sessionId'] = sessionId;
+  }
+
+  final json = await _getJson('/beacon/latest', query);
+  return V3BeaconLatestResponse.fromJson(json);
+}
+
   Future<Map<String, dynamic>> _getJson(
     String path,
     Map<String, String> queryParameters,
