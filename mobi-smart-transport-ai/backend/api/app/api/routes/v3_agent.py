@@ -662,7 +662,10 @@ def _run_converse(
             fallback_source = FallbackSource.CACHE if session.selected_plan or session.recommended_plan else FallbackSource.MOCK
         else:
             gemini_reply = generate_optional_reply(
-                utterance=utterance, wake_word=wake_word, history=history
+                utterance=utterance,
+                wake_word=wake_word,
+                history=history,
+                pending_question=session.pending_question,
             )
             if gemini_reply:
                 message = gemini_reply

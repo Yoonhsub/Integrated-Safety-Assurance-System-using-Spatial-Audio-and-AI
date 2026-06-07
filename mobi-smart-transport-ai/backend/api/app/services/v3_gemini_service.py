@@ -193,11 +193,29 @@ def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict
 
 
 def generate_optional_reply(
-    *, utterance: str, wake_word: str, history: list[dict] | None = None
+    *,
+    utterance: str,
+    wake_word: str,
+    history: list[dict] | None = None,
+    pending_question: str | None = None,
 ) -> str | None:
-    """Return a short non-safety reply when Gemini is configured and available."""
+    """Return a short non-safety reply when Gemini is configured and available.
+
+    ``pending_question``: 직전에 에이전트가 사용자에게 한 목적지 확인/선택 질문. 사용자가
+    그 안에 나온 장소 이름의 뜻을 되물을 때, 일반 상식(뉴스사·통신사 등)으로 새지 않고
+    '그건 청주의 목적지 후보'라고 맥락에 맞게 설명하도록 모델에 컨텍스트를 준다.
+    """
 
     model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
+    pending_context = (
+        (
+            f' 방금 네가 사용자에게 한 목적지 확인 질문은 "{pending_question}"였어. '
+            "사용자가 그 질문에 나온 장소 이름이 뭐냐고 되물으면, 그건 청주 안의 한 장소(목적지 후보)라고 "
+            "설명하고 거기로 안내할지 다시 물어. 뉴스통신사·회사 같은 무관한 뜻으로 설명하지 마."
+        )
+        if pending_question
+        else ""
+    )
     reply = _generate(
         model=model,
         system_instruction=(
@@ -205,7 +223,11 @@ def generate_optional_reply(
             "한국어 반말로 짧고 명확하게 답해. "
             "이전 대화 맥락을 기억하고 이어서 자연스럽게 답해. "
             "실시간 버스 도착 시간, 버스 탑승 가능 여부, 위치 안전 여부를 추측하지 마. "
-            "그런 요청에는 앱의 안전 안내와 버스 조회 버튼을 사용하라고 답해."
+            "그런 요청에는 앱의 안전 안내와 버스 조회 버튼을 사용하라고 답해. "
+            "버스 안내·길찾기와 무관한 일반 상식이나 사실 질문(뉴스·인물·용어 정의 등)에는 "
+            "백과사전처럼 길게 답하지 말고, '그건 내가 잘 몰라. 난 버스 길안내를 도와줄게'처럼 "
+            "짧게 답한 뒤 목적지 안내로 돌아와."
+            + pending_context
         ),
         prompt=utterance,
         max_output_tokens=120,

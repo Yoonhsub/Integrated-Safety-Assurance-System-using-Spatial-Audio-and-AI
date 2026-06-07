@@ -252,6 +252,7 @@ class KakaoLocalSearchProvider:
         except Exception:
             return []
 
+        normalized_query = _normalize(query)
         candidates: list[DestinationCandidate] = []
         for doc in documents:
             try:
@@ -271,11 +272,25 @@ class KakaoLocalSearchProvider:
                 continue
             if not name:
                 continue
+            # 카카오는 캠퍼스/단지 시설을 "단지.건물"(예: "청주대학교.뉴시스")로 표기한다.
+            # 사용자가 단지명만 말했다면 건물 꼬리표를 떼어 단지명으로 정규화해, 엉뚱한
+            # 건물 POI("청주대학교.뉴시스")가 목적지로 잡혀 되묻던 문제를 막는다.
+            if "." in name:
+                prefix = name.split(".", 1)[0].strip()
+                if prefix and _normalize(prefix) == normalized_query:
+                    name = prefix
+            # 이름 유사도로 신뢰도를 매겨 '정확히 같은 이름'이 부분 일치보다 우선되게 한다.
+            # (모든 카카오 결과를 0.90으로 고정하면 "충북대학교"가 "충북대학교병원"이나
+            # "청주대학교.뉴시스" 같은 부분 일치를 이기지 못해 불필요한 재확인/오안내가 떴다.)
+            confidence = round(
+                max(0.85, _alias_score(normalized_query, _normalize(name), is_primary=True)),
+                2,
+            )
             candidates.append(
                 DestinationCandidate(
                     name=name,
                     type=DestinationCandidateType.PLACE,
-                    confidence=0.90,
+                    confidence=confidence,
                     latitude=lat,
                     longitude=lng,
                     address=str(doc.get("road_address_name") or doc.get("address_name") or "") or None,
@@ -404,9 +419,18 @@ class DestinationCandidateResolver:
         elif exact_top_name and top.confidence >= 0.90:
             status = DestinationResolveStatus.RESOLVED
         elif len(close_choices) >= 1 and top.confidence < 0.94:
-            status = DestinationResolveStatus.NEEDS_CHOICE
-            names = " / ".join(item.name for item in [top, *close_choices[:2]])
-            question = f"{names} 중 어디로 갈까?"
+            # 같은 표시 이름이 서로 다른 source/stopId로 들어와 "충북대학교 / 충북대학교"처럼
+            # 중복 노출되던 문제를 막기 위해 표시 이름 기준으로 한 번 더 중복을 제거한다.
+            choice_names: list[str] = []
+            for item in [top, *close_choices]:
+                if item.name not in choice_names:
+                    choice_names.append(item.name)
+            if len(choice_names) <= 1:
+                # 실질 후보가 하나뿐이면 되묻지 않고 확정한다.
+                status = DestinationResolveStatus.RESOLVED
+            else:
+                status = DestinationResolveStatus.NEEDS_CHOICE
+                question = f"{' / '.join(choice_names[:3])} 중 어디로 갈까?"
         elif top.confidence < _RESOLVED_THRESHOLD or _normalize(top.name) != normalized and top.confidence < 0.95:
             status = DestinationResolveStatus.NEEDS_CONFIRMATION
             # 받침 유무에 따라 '이/가'가 달라지는 문제를 피하려고 조사 없이 묻는다.
