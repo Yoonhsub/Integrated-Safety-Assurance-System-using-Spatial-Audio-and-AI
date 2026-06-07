@@ -24,14 +24,17 @@ class MockScenarioMath {
     required Offset busPosition,
   }) {
     final normalizedDistance = (busPosition - userPosition).distance;
-    final distanceMeters = normalizedDistance * 20.0;
+    final distanceMeters = normalizedDistance * 22.0;
 
     final dx = busPosition.dx - userPosition.dx;
-    final pan = (dx * 2.0).clamp(-1.0, 1.0).toDouble();
-
-    final gain = (1.0 - (distanceMeters / 20.0)).clamp(0.15, 1.0).toDouble();
-
-    final beepIntervalMs = (2400 - (gain * 1800)).round().clamp(600, 2400);
+    final dy = busPosition.dy - userPosition.dy;
+    final pan = (dx * 2.2).clamp(-1.0, 1.0).toDouble();
+    final closeness = (1.0 - (distanceMeters / 20.0)).clamp(0.0, 1.0);
+    final verticalBoost = dy < -0.10 ? 0.08 : 0.0;
+    final gain = (0.18 + (closeness * 0.78) + verticalBoost)
+        .clamp(0.15, 1.0)
+        .toDouble();
+    final beepIntervalMs = (2300 - (gain * 1750)).round().clamp(520, 2300);
 
     return MockScenarioMetrics(
       distanceMeters: distanceMeters,
@@ -43,14 +46,8 @@ class MockScenarioMath {
   }
 
   static String directionLabelFromPan(double pan) {
-    if (pan <= -0.35) {
-      return '왼쪽';
-    }
-
-    if (pan >= 0.35) {
-      return '오른쪽';
-    }
-
+    if (pan <= -0.35) return '왼쪽';
+    if (pan >= 0.35) return '오른쪽';
     return '중앙';
   }
 
@@ -62,4 +59,3 @@ class MockScenarioMath {
     return (userPosition - stopPosition).distance > radius;
   }
 }
-

@@ -1,0 +1,56 @@
+{
+  "name": "real_beacon_ab_ingest_samples",
+  "purpose": "Sample payloads for the #52/#53 real BLE A/B beacon collector bridge.",
+  "backendEndpoint": "/api/v3/beacon/ingest",
+  "sessionId": "demo-session",
+  "deviceId": "android-collector-01",
+  "routeNo": "502",
+  "beacons": [
+    {
+      "label": "target_candidate",
+      "macAddress": "C3:00:00:5C:B9:47",
+      "beaconId": "same-uuid-major-minor",
+      "expectedDecisionWhenNear": "TARGET_BUS_NEAR",
+      "notes": "Set as BEACON_TARGET_MACS on the backend unless the field scan proves a different target mapping."
+    },
+    {
+      "label": "wrong_candidate",
+      "macAddress": "C3:00:00:5C:B9:48",
+      "beaconId": "same-uuid-major-minor",
+      "expectedDecisionWhenNear": "WRONG_BUS_NEAR",
+      "notes": "Same UUID/major/minor as the target candidate; backend must distinguish by MAC or equivalent stable identifier."
+    }
+  ],
+  "ingestSamples": [
+    {
+      "sessionId": "demo-session",
+      "deviceId": "android-collector-01",
+      "beaconId": "same-uuid-major-minor",
+      "macAddress": "C3:00:00:5C:B9:47",
+      "busId": "BUS_502_TARGET",
+      "routeNo": "502",
+      "rssi": -55,
+      "distanceMeters": 2.0,
+      "source": "REAL_BLE",
+      "timestamp": "2026-06-07T00:00:00+09:00"
+    },
+    {
+      "sessionId": "demo-session",
+      "deviceId": "android-collector-01",
+      "beaconId": "same-uuid-major-minor",
+      "macAddress": "C3:00:00:5C:B9:48",
+      "busId": "BUS_502_OTHER",
+      "routeNo": "502",
+      "rssi": -58,
+      "distanceMeters": 2.0,
+      "source": "REAL_BLE",
+      "timestamp": "2026-06-07T00:00:01+09:00"
+    }
+  ],
+  "fieldVerificationChecklist": [
+    "Confirm whether FlutterBluePlus exposes C3:00:00:5C:B9:47 and C3:00:00:5C:B9:48 as device.remoteId.str on the Android device.",
+    "If advertisedName is non-empty, inject a BeaconIdResolver that returns result.device.remoteId.str so MAC remains available.",
+    "Record 10 near/mid/far RSSI samples per beacon before final calibration.",
+    "Keep backend BEACON_TARGET_MACS aligned with the target_candidate macAddress."
+  ]
+}
