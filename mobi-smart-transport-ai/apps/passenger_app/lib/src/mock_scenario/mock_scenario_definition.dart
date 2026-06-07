@@ -58,8 +58,6 @@ class MockScenarioKeyframe {
 
 const _stop = Offset(0.50, 0.48);
 const _wait = Offset(0.50, 0.76);
-const _nearDoor = Offset(0.58, 0.58);
-const _boarded = Offset(0.62, 0.42);
 const _radius = 0.32;
 
 const List<MockScenarioDefinition> mockScenarioDefinitions =
@@ -121,7 +119,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 16176),
         phase: MockScenarioPhase.boardingPrompt,
-        userPosition: _nearDoor,
+        userPosition: Offset(0.548, 0.56),
         stopPosition: _stop,
         targetBusPosition: Offset(0.548, 0.44),
         busMoving: false,
@@ -137,7 +135,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 20376),
         phase: MockScenarioPhase.boarded,
-        userPosition: _boarded,
+        userPosition: Offset(0.548, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.548, 0.44),
         busMoving: false,
@@ -197,7 +195,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 14760),
         phase: MockScenarioPhase.boardingPrompt,
-        userPosition: Offset(0.61, 0.51),
+        userPosition: Offset(0.556, 0.56),
         stopPosition: _stop,
         targetBusPosition: Offset(0.556, 0.44),
         secondaryBusPosition: Offset(0.36, 0.37),
@@ -215,7 +213,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 19200),
         phase: MockScenarioPhase.boarded,
-        userPosition: Offset(0.64, 0.42),
+        userPosition: Offset(0.556, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.556, 0.44),
         secondaryBusPosition: Offset(0.36, 0.37),
@@ -295,7 +293,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 17472),
         phase: MockScenarioPhase.boardingPrompt,
-        userPosition: Offset(0.55, 0.60),
+        userPosition: Offset(0.54, 0.56),
         stopPosition: _stop,
         targetBusPosition: Offset(0.54, 0.444),
         busMoving: false,
@@ -311,7 +309,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 23352),
         phase: MockScenarioPhase.boarded,
-        userPosition: Offset(0.60, 0.44),
+        userPosition: Offset(0.54, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.54, 0.444),
         busMoving: false,
@@ -599,7 +597,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 18672),
         phase: MockScenarioPhase.boarded,
-        userPosition: Offset(0.58, 0.46),
+        userPosition: Offset(0.532, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.532, 0.44),
         busMoving: false,
@@ -659,7 +657,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 12000),
         phase: MockScenarioPhase.boardingPrompt,
-        userPosition: Offset(0.61, 0.51),
+        userPosition: Offset(0.548, 0.56),
         stopPosition: _stop,
         targetBusPosition: Offset(0.548, 0.44),
         busMoving: false,
@@ -675,7 +673,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 17000),
         phase: MockScenarioPhase.boarded,
-        userPosition: Offset(0.62, 0.43),
+        userPosition: Offset(0.548, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.548, 0.44),
         busMoving: false,
@@ -753,7 +751,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 17216),
         phase: MockScenarioPhase.boardingPrompt,
-        userPosition: Offset(0.61, 0.55),
+        userPosition: Offset(0.556, 0.56),
         stopPosition: _stop,
         targetBusPosition: Offset(0.556, 0.44),
         busMoving: false,
@@ -769,7 +767,7 @@ const List<MockScenarioDefinition> mockScenarioDefinitions =
       MockScenarioKeyframe(
         at: Duration(milliseconds: 23264),
         phase: MockScenarioPhase.boarded,
-        userPosition: Offset(0.64, 0.43),
+        userPosition: Offset(0.556, 0.5),
         stopPosition: _stop,
         targetBusPosition: Offset(0.556, 0.44),
         busMoving: false,
