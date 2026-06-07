@@ -48,6 +48,11 @@ class V3GuidancePage extends StatefulWidget {
 class _V3GuidancePageState extends State<V3GuidancePage> {
   static const String _routePlanningMessage =
       '요청하신 내용을 응답하기 위해 경로를 계산 중입니다. 잠시만 기다려 주세요.';
+  static const String _navStartPrompt =
+      "이 경로로 안내를 시작할까요? '그래'라고 답하시면 길 안내를 시작하겠습니다.";
+  static const String _navStartAcceptedMessage = '좋습니다. 길 안내를 시작하겠습니다.';
+  static const String _navStartDeclinedMessage =
+      '알겠습니다. 안내는 시작하지 않겠습니다. 다른 목적지를 말씀해 주세요.';
 
   static final String _apiBaseUrl = resolveApiBaseUrl();
 
@@ -110,7 +115,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   V3RoutePlanResponse? _betterRoutePlan;
   String? _declinedRouteKey;
 
-  // 경로를 찾은 뒤 사용자에게 "안내해줄까?"를 물어 두고, 사용자가 동의("그래")할 때까지
+  // 경로를 찾은 뒤 사용자에게 안내 시작 여부를 물어 두고, 사용자가 동의("그래")할 때까지
   // 보행 내비게이션을 자동 활성화하지 않는다(채팅·음성 공통).
   V3RoutePlanResponse? _pendingNavPlan;
   Position? _pendingNavPosition;
@@ -304,11 +309,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final fixedMockResponse = await _fixedMockLiveResponse(text);
     if (fixedMockResponse != null) return fixedMockResponse;
 
-    // 경로를 찾은 뒤 "안내해줄까?"에 대한 응답을 먼저 해석한다.
+    // 경로를 찾은 뒤 안내 시작 여부에 대한 응답을 먼저 해석한다.
     if (_pendingNavPlan != null) {
       if (_isNavAffirmative(text)) {
         return const LiveProcessResult(
-          spokenText: '좋아, 길 안내를 시작할게.',
+          spokenText: _navStartAcceptedMessage,
           navigateNow: true,
         );
       }
@@ -316,7 +321,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _pendingNavPlan = null;
         _pendingNavPosition = null;
         return const LiveProcessResult(
-          spokenText: '알겠어. 안내는 시작하지 않을게. 다른 목적지를 말해도 돼.',
+          spokenText: _navStartDeclinedMessage,
         );
       }
       _pendingNavPlan = null;
@@ -367,8 +372,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           );
         }
         return LiveProcessResult(
-          spokenText:
-              "${response.message} 이 경로로 안내를 시작할까? '그래'라고 답하면 길 안내를 시작할게.",
+          spokenText: "${response.message} $_navStartPrompt",
         );
       }
       return LiveProcessResult(spokenText: response.message);
@@ -460,18 +464,18 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       });
     }
 
-    // 경로를 찾은 뒤 "안내해줄까?"에 대한 사용자 응답을 먼저 해석한다.
+    // 경로를 찾은 뒤 안내 시작 여부에 대한 사용자 응답을 먼저 해석한다.
     if (_pendingNavPlan != null) {
       if (_isNavAffirmative(text)) {
         final plan = _pendingNavPlan!;
         final pos = _pendingNavPosition;
         _pendingNavPlan = null;
         _pendingNavPosition = null;
-        _addAgentLog('좋아, 길 안내를 시작할게.', fromChat: fromChat);
+        _addAgentLog(_navStartAcceptedMessage, fromChat: fromChat);
         if (_isLiveMode) {
-          unawaited(_speakAgentMessage('좋아, 길 안내를 시작할게.'));
+          unawaited(_speakAgentMessage(_navStartAcceptedMessage));
         } else {
-          await _speakAgentMessage('좋아, 길 안내를 시작할게.');
+          await _speakAgentMessage(_navStartAcceptedMessage);
         }
         await _activateLiveRoutePanel(plan, pos);
         return;
@@ -479,9 +483,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       if (_isNavNegative(text)) {
         _pendingNavPlan = null;
         _pendingNavPosition = null;
-        const cancelMsg = '알겠어. 안내는 시작하지 않을게. 다른 목적지를 말해도 돼.';
-        _addAgentLog(cancelMsg, fromChat: fromChat);
-        await _speakAgentMessage(cancelMsg);
+        _addAgentLog(_navStartDeclinedMessage, fromChat: fromChat);
+        await _speakAgentMessage(_navStartDeclinedMessage);
         return;
       }
       // 동의·거절이 아니면 새 요청으로 보고 대기 상태를 해제한다.
@@ -552,7 +555,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         final autoStartNav = hasNavPlan && _isExplicitNavStartRequest(text);
         final askConsent = _isLiveMode && hasNavPlan && !autoStartNav;
         final agentText = askConsent
-            ? "${response.message} 이 경로로 안내를 시작할까? '그래'라고 답하면 길 안내를 시작할게."
+            ? "${response.message} $_navStartPrompt"
             : response.message;
         setState(() {
           _lastAgentResponse = response;
@@ -660,9 +663,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       '좋아요',
       '시작',
       '안내해줘',
+      '안내해주세요',
       '안내시작',
       '해줘',
+      '해주세요',
       '부탁해',
+      '부탁드려요',
       '가자',
       '오케이',
       'ok',
@@ -673,6 +679,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       '안내',
       '시작해',
       '시작해줘',
+      '시작해주세요',
       '맞아',
       '맞아요',
       '그래줘',
@@ -685,7 +692,18 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   bool _isExplicitNavStartRequest(String text) {
     final compact = _consentCompact(text);
-    const triggers = ['안내해줘', '안내해', '길안내', '안내시작', '시작해줘', '시작해', '출발', '가자'];
+    const triggers = [
+      '안내해줘',
+      '안내해주세요',
+      '안내해',
+      '길안내',
+      '안내시작',
+      '시작해줘',
+      '시작해주세요',
+      '시작해',
+      '출발',
+      '가자',
+    ];
     return triggers.any(compact.contains);
   }
 
@@ -1520,7 +1538,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   Future<void> _startGuidance() async {
     await _playScriptLine('mock_start');
-    await _sendUtterance('응, 선택한 경로로 안내해줘.');
+    await _sendUtterance('네, 선택한 경로로 안내해 주세요.');
   }
 
   Future<void> _mockGeofence(String event) async {
@@ -2186,9 +2204,9 @@ class _LocationNeededBanner extends StatelessWidget {
             ],
             const SizedBox(height: 6),
             const Text(
-              '• 카카오톡·인스타그램 같은 앱 안의 브라우저는 위치를 막는 경우가 많아. '
-              '우측 상단 메뉴에서 Safari/Chrome 같은 기본 브라우저로 열면 위치가 잡혀.\n'
-              '• 기본 브라우저에서는 주소창 옆 위치 아이콘에서 접근을 허용해줘.',
+              '• 카카오톡·인스타그램 같은 앱 안의 브라우저는 위치를 막는 경우가 많습니다. '
+              '우측 상단 메뉴에서 Safari/Chrome 같은 기본 브라우저로 열면 위치가 잡혀요.\n'
+              '• 기본 브라우저에서는 주소창 옆 위치 아이콘에서 접근을 허용해 주세요.',
             ),
             const SizedBox(height: 8),
             Align(

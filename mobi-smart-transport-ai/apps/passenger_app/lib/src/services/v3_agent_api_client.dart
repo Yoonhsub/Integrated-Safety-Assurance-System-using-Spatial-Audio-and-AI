@@ -401,7 +401,7 @@ class V3AgentApiClient {
       );
     }
     if (body == null) {
-      throw const V3ApiException('API 응답 형식이 JSON object가 아니야.');
+      throw const V3ApiException('API 응답 형식이 JSON object가 아닙니다.');
     }
     return body;
   }

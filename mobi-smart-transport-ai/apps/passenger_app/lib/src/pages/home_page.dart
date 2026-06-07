@@ -305,7 +305,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('띠링. 목적지를 말해줘.')),
+      const SnackBar(content: Text('띠링. 목적지를 말씀해 주세요.')),
     );
   }
 
