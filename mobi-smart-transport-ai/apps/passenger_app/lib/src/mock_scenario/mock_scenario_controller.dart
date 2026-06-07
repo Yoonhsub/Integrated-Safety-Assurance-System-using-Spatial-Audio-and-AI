@@ -1,216 +1,312 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'mock_scenario_definition.dart';
 import 'mock_scenario_math.dart';
-import 'mock_scenario_phase.dart';
 import 'mock_scenario_state.dart';
 
+typedef MockScenarioCueFrame = FutureOr<void> Function(MockScenarioState state);
+typedef MockScenarioStopCue = FutureOr<void> Function();
+typedef MockScenarioScriptLine = FutureOr<void> Function(
+    String scriptLineId, String fallbackMessage);
+
 class MockScenarioController extends ChangeNotifier {
-  MockScenarioState _state = MockScenarioState.initial();
+  MockScenarioController({this.onCueFrame, this.onStopCue, this.onScriptLine})
+      : _state = MockScenarioState.initial(
+          scenario: mockScenarioDefinitions.first,
+        ) {
+    _state = _buildState(isPlaying: false);
+  }
+
+  static const Duration _tickInterval = Duration(milliseconds: 33);
+  static const Duration _cueFrameInterval = Duration(milliseconds: 90);
+
+  final MockScenarioCueFrame? onCueFrame;
+  final MockScenarioStopCue? onStopCue;
+  final MockScenarioScriptLine? onScriptLine;
+
+  final List<MockScenarioDefinition> scenarios = mockScenarioDefinitions;
+
+  MockScenarioDefinition _scenario = mockScenarioDefinitions.first;
+  MockScenarioState _state;
+  Timer? _timer;
+  DateTime? _lastTickAt;
+  Duration _elapsed = Duration.zero;
+  Duration _lastCueFrameAt = Duration(milliseconds: -1000);
+  String? _lastScriptLineId;
+  double _playbackSpeed = 1.0;
 
   MockScenarioState get state => _state;
+  MockScenarioDefinition get selectedScenario => _scenario;
+  double get playbackSpeed => _playbackSpeed;
 
-  void reset() {
-    _state = MockScenarioState.initial();
+  void selectScenario(String scenarioId) {
+    final next = scenarios.firstWhere(
+      (scenario) => scenario.id == scenarioId,
+      orElse: () => _scenario,
+    );
+    if (next.id == _scenario.id) return;
+    _timer?.cancel();
+    _timer = null;
+    _scenario = next;
+    _elapsed = Duration.zero;
+    _lastTickAt = null;
+    _lastScriptLineId = null;
+    _lastCueFrameAt = Duration(milliseconds: -1000);
+    _state = _buildState(isPlaying: false, shouldStopCue: true);
+    notifyListeners();
+    _emitStopCue();
+  }
+
+  void setPlaybackSpeed(double speed) {
+    _playbackSpeed = speed.clamp(0.5, 2.0).toDouble();
+    _state = _state.copyWith(playbackSpeed: _playbackSpeed);
     notifyListeners();
   }
 
-  void arriveAtStop() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.atStopGeofenceArmed,
-      userPosition: _state.stopPosition,
-      geofenceArmed: true,
-      geofenceReleased: false,
-      isUserOutsideGeofence: false,
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'arrive_at_stop',
-      currentScenarioMessage: '정류장 안전 구역에 도착했습니다.',
-    );
-
-    _refreshMetrics();
+  void play() {
+    if (_timer != null) return;
+    if (_elapsed >= _scenario.duration) {
+      _elapsed = Duration.zero;
+      _lastScriptLineId = null;
+    }
+    _lastTickAt = DateTime.now();
+    _timer = Timer.periodic(_tickInterval, _handleTick);
+    _state = _buildState(isPlaying: true);
+    notifyListeners();
+    _emitFrameSideEffects(forceCue: true);
   }
 
-  void startTargetBusApproach() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.busApproaching,
-      targetBusPosition: const Offset(0.18, 0.35),
-      busMoving: true,
-      busStopped: false,
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'target_bus_approaching',
-      currentScenarioMessage: '탑승 대상 버스가 왼쪽 방향에서 접근 중입니다.',
-    );
-
-    _refreshMetrics();
+  void pause() {
+    if (_timer == null) return;
+    _timer?.cancel();
+    _timer = null;
+    _lastTickAt = null;
+    _state = _buildState(isPlaying: false);
+    notifyListeners();
+    _emitStopCue();
   }
 
-  void moveBusLeftToRight() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.busMovingLeftToRight,
-      targetBusPosition: const Offset(0.72, 0.35),
-      busMoving: true,
-      busStopped: false,
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'target_bus_moving',
-      currentScenarioMessage: '탑승 대상 버스가 왼쪽에서 오른쪽으로 이동 중입니다.',
-    );
-
-    _refreshMetrics();
+  void togglePlayPause() {
+    if (_state.isPlaying) {
+      pause();
+    } else {
+      play();
+    }
   }
 
-  void stopBus() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.busStopped,
-      targetBusPosition: const Offset(0.62, 0.45),
-      busMoving: false,
-      busStopped: true,
-      geofenceReleased: true,
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'bus_stopped',
-      currentScenarioMessage: '버스가 정차했습니다. 출입문 방향 안내를 시작합니다.',
-    );
-
-    _refreshMetrics();
+  void reset() {
+    _timer?.cancel();
+    _timer = null;
+    _elapsed = Duration.zero;
+    _lastTickAt = null;
+    _lastScriptLineId = null;
+    _lastCueFrameAt = Duration(milliseconds: -1000);
+    _state = _buildState(isPlaying: false, shouldStopCue: true);
+    notifyListeners();
+    _emitStopCue();
   }
 
-  void userApproachesBus() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.userApproachingBus,
-      userPosition: const Offset(0.58, 0.55),
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'user_approaching_bus',
-      currentScenarioMessage: '사용자가 버스 출입문 방향으로 접근하고 있습니다.',
-    );
-
-    _refreshMetrics();
+  void restart() {
+    reset();
+    play();
   }
 
-  void showBoardingPrompt() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.boardingPrompt,
-      userPosition: const Offset(0.61, 0.50),
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'boarding_prompt',
-      currentScenarioMessage: '출입문 근처입니다. 안전하게 탑승하세요.',
+  void nextScenario() {
+    final currentIndex = scenarios.indexWhere(
+      (scenario) => scenario.id == _scenario.id,
     );
-
-    _refreshMetrics();
+    final nextIndex = (currentIndex + 1) % scenarios.length;
+    selectScenario(scenarios[nextIndex].id);
   }
 
-  void confirmBoarded() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.boarded,
-      userPosition: _state.targetBusPosition,
-      busMoving: false,
-      busStopped: true,
-      cueType: 'success',
-      shouldPlayCue: false,
-      shouldStopCue: true,
-      currentScriptLineId: 'boarding_success',
-      currentScenarioMessage: '탑승이 완료되었습니다.',
+  void previousScenario() {
+    final currentIndex = scenarios.indexWhere(
+      (scenario) => scenario.id == _scenario.id,
     );
-
-    _refreshMetrics();
+    final previousIndex =
+        (currentIndex - 1 + scenarios.length) % scenarios.length;
+    selectScenario(scenarios[previousIndex].id);
   }
 
-    void userLeavesGeofence() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.geofenceWarning,
-      userPosition: const Offset(0.86, 0.82),
-      geofenceArmed: true,
-      geofenceReleased: false,
-      isUserOutsideGeofence: true,
-      cueType: 'alarm',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'geofence_warning',
-      currentScenarioMessage: '정류장 안전 구역을 벗어났습니다. 안내음 방향을 따라 복귀하세요.',
+  void _handleTick(Timer timer) {
+    final now = DateTime.now();
+    final previous = _lastTickAt ?? now;
+    _lastTickAt = now;
+    final delta = now.difference(previous);
+    final scaledDelta = Duration(
+      microseconds: (delta.inMicroseconds * _playbackSpeed).round(),
     );
+    _elapsed += scaledDelta;
 
-    _refreshMetrics();
+    final isComplete = _elapsed >= _scenario.duration;
+    if (isComplete) {
+      _elapsed = _scenario.duration;
+      _timer?.cancel();
+      _timer = null;
+      _lastTickAt = null;
+    }
+
+    _state = _buildState(isPlaying: !isComplete, shouldStopCue: isComplete);
+    notifyListeners();
+    _emitFrameSideEffects(forceCue: isComplete);
+
+    if (isComplete) {
+      _emitStopCue();
+    }
   }
 
-  void userReturnsToGeofence() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.atStopGeofenceArmed,
-      userPosition: _state.stopPosition,
-      geofenceArmed: true,
-      geofenceReleased: false,
-      isUserOutsideGeofence: false,
-      cueType: 'normal',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'return_to_geofence',
-      currentScenarioMessage: '정류장 안전 구역 안으로 복귀했습니다.',
-    );
-
-    _refreshMetrics();
-  }
-
-  void wrongBusApproaches() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.wrongBusWarning,
-      wrongBusPosition: const Offset(0.78, 0.35),
-      cueType: 'warning',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'wrong_bus_warning',
-      currentScenarioMessage: '탑승 대상이 아닌 버스가 접근 중입니다. 현재 안내 대상 버스가 아닙니다.',
-    );
-
-    _refreshMetrics();
-  }
-
-  void confirmMissedBus() {
-    _state = _state.copyWith(
-      phase: MockScenarioPhase.missedBus,
-      targetBusPosition: const Offset(0.95, 0.30),
-      busMoving: true,
-      busStopped: false,
-      geofenceReleased: false,
-      cueType: 'missed',
-      shouldPlayCue: true,
-      shouldStopCue: false,
-      currentScriptLineId: 'missed_bus',
-      currentScenarioMessage: '탑승 대상 버스를 놓쳤습니다. 다음 버스 안내를 기다려주세요.',
-    );
-
-    _refreshMetrics();
-  }
-
-  void _refreshMetrics() {
+  MockScenarioState _buildState({
+    required bool isPlaying,
+    bool shouldStopCue = false,
+  }) {
+    final frame = _interpolatedFrame(_elapsed);
     final metrics = MockScenarioMath.calculate(
-      userPosition: _state.userPosition,
-      busPosition: _state.targetBusPosition,
+      userPosition: frame.userPosition,
+      busPosition: frame.targetBusPosition,
     );
-
     final isOutsideGeofence = MockScenarioMath.isOutsideGeofence(
-      userPosition: _state.userPosition,
-      stopPosition: _state.stopPosition,
-      radius: _state.geofenceRadius,
+      userPosition: frame.userPosition,
+      stopPosition: frame.stopPosition,
+      radius: frame.geofenceRadius,
     );
+    final progress = _scenario.duration.inMilliseconds == 0
+        ? 1.0
+        : (_elapsed.inMilliseconds / _scenario.duration.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble();
 
-    _state = _state.copyWith(
+    return MockScenarioState(
+      scenarioId: _scenario.id,
+      scenarioTitle: _scenario.title,
+      scenarioSummary: _scenario.summary,
+      elapsed: _elapsed,
+      totalDuration: _scenario.duration,
+      progress: progress,
+      playbackSpeed: _playbackSpeed,
+      isPlaying: isPlaying,
+      phase: frame.phase,
+      userPosition: frame.userPosition,
+      stopPosition: frame.stopPosition,
+      targetBusPosition: frame.targetBusPosition,
+      secondaryBusPosition: frame.secondaryBusPosition,
+      targetBusLabel: frame.targetBusLabel,
+      secondaryBusLabel: frame.secondaryBusLabel,
+      busMoving: frame.busMoving,
+      busStopped: frame.busStopped,
+      geofenceArmed: frame.geofenceArmed,
+      geofenceReleased: frame.geofenceReleased,
+      geofenceRadius: frame.geofenceRadius,
+      isUserOutsideGeofence: isOutsideGeofence,
       distanceMeters: metrics.distanceMeters,
       directionLabel: metrics.directionLabel,
       pan: metrics.pan,
       gain: metrics.gain,
       beepIntervalMs: metrics.beepIntervalMs,
-      isUserOutsideGeofence: isOutsideGeofence,
+      cueType: frame.cueType,
+      shouldPlayCue: frame.cueType != 'none' && frame.cueType != 'success',
+      shouldStopCue: shouldStopCue || frame.cueType == 'success',
+      currentScriptLineId: frame.scriptLineId,
+      currentScenarioMessage: frame.message,
     );
+  }
 
-    notifyListeners();
+  MockScenarioKeyframe _interpolatedFrame(Duration elapsed) {
+    final frames = _scenario.keyframes;
+    if (elapsed <= frames.first.at) return frames.first;
+    if (elapsed >= frames.last.at) return frames.last;
+
+    var previous = frames.first;
+    var next = frames.last;
+    for (var index = 0; index < frames.length - 1; index += 1) {
+      final a = frames[index];
+      final b = frames[index + 1];
+      if (elapsed >= a.at && elapsed <= b.at) {
+        previous = a;
+        next = b;
+        break;
+      }
+    }
+
+    final segmentMs = next.at.inMilliseconds - previous.at.inMilliseconds;
+    final localMs = elapsed.inMilliseconds - previous.at.inMilliseconds;
+    final t = segmentMs <= 0 ? 1.0 : (localMs / segmentMs).clamp(0.0, 1.0);
+
+    return MockScenarioKeyframe(
+      at: elapsed,
+      phase: previous.phase,
+      userPosition: Offset.lerp(previous.userPosition, next.userPosition, t)!,
+      stopPosition: Offset.lerp(previous.stopPosition, next.stopPosition, t)!,
+      targetBusPosition: Offset.lerp(
+        previous.targetBusPosition,
+        next.targetBusPosition,
+        t,
+      )!,
+      secondaryBusPosition: _lerpNullableOffset(
+        previous.secondaryBusPosition,
+        next.secondaryBusPosition,
+        t,
+      ),
+      busMoving: previous.busMoving,
+      busStopped: previous.busStopped,
+      geofenceArmed: previous.geofenceArmed,
+      geofenceReleased: previous.geofenceReleased,
+      geofenceRadius: _lerpDouble(
+        previous.geofenceRadius,
+        next.geofenceRadius,
+        t,
+      ),
+      cueType: previous.cueType,
+      message: previous.message,
+      targetBusLabel: previous.targetBusLabel,
+      secondaryBusLabel: previous.secondaryBusLabel,
+      scriptLineId: previous.scriptLineId,
+    );
+  }
+
+  Offset? _lerpNullableOffset(Offset? a, Offset? b, double t) {
+    if (a == null && b == null) return null;
+    if (a == null) return t < 0.15 ? null : b;
+    if (b == null) return t > 0.85 ? null : a;
+    return Offset.lerp(a, b, t);
+  }
+
+  double _lerpDouble(double a, double b, double t) {
+    return a + ((b - a) * t);
+  }
+
+  void _emitFrameSideEffects({bool forceCue = false}) {
+    final scriptLineId = _state.currentScriptLineId;
+    if (scriptLineId != null && scriptLineId != _lastScriptLineId) {
+      _lastScriptLineId = scriptLineId;
+      Future<void>.sync(
+        () => onScriptLine?.call(scriptLineId, _state.currentScenarioMessage),
+      );
+    }
+
+    if (_state.shouldStopCue) {
+      _emitStopCue();
+      return;
+    }
+
+    if (!_state.shouldPlayCue) return;
+    final cueDue =
+        forceCue || _state.elapsed - _lastCueFrameAt >= _cueFrameInterval;
+    if (!cueDue) return;
+    _lastCueFrameAt = _state.elapsed;
+    Future<void>.sync(() => onCueFrame?.call(_state));
+  }
+
+  void _emitStopCue() {
+    Future<void>.sync(() => onStopCue?.call());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _timer = null;
+    _emitStopCue();
+    super.dispose();
   }
 }
-

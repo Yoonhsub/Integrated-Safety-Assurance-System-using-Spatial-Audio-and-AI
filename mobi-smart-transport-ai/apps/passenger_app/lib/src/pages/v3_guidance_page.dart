@@ -28,6 +28,7 @@ import '../mock_scenario/mock_scenario_control_panel.dart';
 import '../mock_scenario/mock_scenario_controller.dart';
 import '../mock_scenario/mock_scenario_metrics_panel.dart';
 import '../mock_scenario/mock_scenario_stage.dart';
+import '../mock_scenario/mock_scenario_state.dart';
 
 class V3GuidancePage extends StatefulWidget {
   const V3GuidancePage({
@@ -130,7 +131,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
     );
-    _mockScenarioController = MockScenarioController();
+    _mockScenarioController = MockScenarioController(
+      onCueFrame: _handleMockScenarioCueFrame,
+      onStopCue: _spatialCueService.stopCue,
+      onScriptLine: _handleMockScenarioScriptLine,
+    );
 
     _bootstrap();
     // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
@@ -147,13 +152,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _voiceGuideService.cancelListening();
     _utteranceController.dispose();
     _bodyScrollController.dispose();
+    _mockScenarioController.dispose();
     _cueService.dispose();
     _spatialCueService.dispose();
     _mockScriptAudioService.dispose();
-    _mockScenarioController.dispose();
     super.dispose();
   }
-  
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
@@ -1325,6 +1329,26 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _mockScriptAudioService.stop();
   }
 
+  Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
+    if (state.cueType == 'none' || state.cueType == 'success') {
+      await _spatialCueService.stopCue();
+      return;
+    }
+    await _spatialCueService.updateCue(
+      pan: state.pan,
+      gain: state.gain,
+      intervalMs: state.beepIntervalMs,
+      pattern: state.cueType,
+    );
+  }
+
+  Future<void> _handleMockScenarioScriptLine(
+    String scriptLineId,
+    String fallbackMessage,
+  ) async {
+    await _playScriptLine(scriptLineId, fallbackMessage: fallbackMessage);
+  }
+
   Future<void> _playScriptLine(
     String scriptLineId, {
     String? fallbackMessage,
@@ -1769,11 +1793,11 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                     _NavStoppedNotice(),
                   ],
                   if (!_isLiveMode) ...[
-                      const SizedBox(height: 12),
-                      _MockScenarioSimulationCard(
-                        controller: _mockScenarioController,
-                      ),
-                      const SizedBox(height: 12),
+                    const SizedBox(height: 12),
+                    _MockScenarioSimulationCard(
+                      controller: _mockScenarioController,
+                    ),
+                    const SizedBox(height: 12),
                     _ArrivalCard(
                       routeRecommendation: _lastRouteRecommendation,
                       routePlan: _lastRoutePlan,
@@ -2118,9 +2142,7 @@ class _HeroStatusCard extends StatelessWidget {
 }
 
 class _MockScenarioSimulationCard extends StatelessWidget {
-  const _MockScenarioSimulationCard({
-    required this.controller,
-  });
+  const _MockScenarioSimulationCard({required this.controller});
 
   final MockScenarioController controller;
 
@@ -2134,11 +2156,11 @@ class _MockScenarioSimulationCard extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            MockScenarioControlPanel(controller: controller),
+            const SizedBox(height: 12),
             MockScenarioStage(state: state),
             const SizedBox(height: 12),
             MockScenarioMetricsPanel(state: state),
-            const SizedBox(height: 12),
-            MockScenarioControlPanel(controller: controller),
           ],
         );
       },
@@ -2825,16 +2847,12 @@ class _RealtimeNavCard extends StatelessWidget {
         if (walkPolyline.length >= 2)
           PolylineLayer(
             polylines: [
-              // OSM 타일의 빨간 점선 보행로 위에서도 경로가 또렷이 보이도록
-              // 흰색 케이싱(테두리)을 두르고 선을 더 굵게/진하게 그린다.
               Polyline(
                 points: walkPolyline
                     .map((p) => LatLng(p.latitude, p.longitude))
                     .toList(),
-                color: const Color(0xFF1B8E3C),
-                strokeWidth: 7.0,
-                borderColor: Colors.white,
-                borderStrokeWidth: 3.0,
+                color: Colors.green,
+                strokeWidth: 4.0,
               ),
             ],
           ),
@@ -4710,4 +4728,3 @@ class _HeadTrackingCard extends StatelessWidget {
   String _angle(double? value) =>
       value == null ? '-' : '${value.toStringAsFixed(1)}°';
 }
-
