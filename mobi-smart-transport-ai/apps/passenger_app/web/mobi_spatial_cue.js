@@ -37,7 +37,7 @@
         masterGain.connect(ctx.destination);
       }
     }
-    if (ctx.state === 'suspended') {
+    if (ctx.state !== 'running') {
       ctx.resume().catch(function () {});
     }
     return ctx;
@@ -106,6 +106,7 @@
   }
 
   function beep() {
+    ensureContext();
     tonePlan(active.pattern).forEach(playTone);
     step += 1;
   }
@@ -128,6 +129,7 @@
   }
 
   function update(options) {
+    ensureContext();
     var previousInterval = active.intervalMs;
     applyState(options);
     if (timer && previousInterval !== active.intervalMs) {

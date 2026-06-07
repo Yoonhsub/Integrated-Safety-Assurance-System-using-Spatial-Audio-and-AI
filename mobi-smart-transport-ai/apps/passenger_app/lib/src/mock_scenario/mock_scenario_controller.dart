@@ -188,6 +188,9 @@ class MockScenarioController extends ChangeNotifier {
             .clamp(0.0, 1.0)
             .toDouble();
 
+    // 지오펜스 밖으로 나가면 키프레임 cueType(고정 시각)과 무관하게 즉시 경고를 울린다.
+    // (보간 중 사용자가 키프레임보다 먼저 원을 벗어나도 지각 없이 경고)
+    final cueType = isOutsideGeofence ? 'alarm' : frame.cueType;
     return MockScenarioState(
       scenarioId: _scenario.id,
       scenarioTitle: _scenario.title,
@@ -215,9 +218,9 @@ class MockScenarioController extends ChangeNotifier {
       pan: metrics.pan,
       gain: metrics.gain,
       beepIntervalMs: metrics.beepIntervalMs,
-      cueType: frame.cueType,
-      shouldPlayCue: frame.cueType != 'none' && frame.cueType != 'success',
-      shouldStopCue: shouldStopCue || frame.cueType == 'success',
+      cueType: cueType,
+      shouldPlayCue: cueType != 'none' && cueType != 'success',
+      shouldStopCue: shouldStopCue || cueType == 'success',
       currentScriptLineId: frame.scriptLineId,
       currentScenarioMessage: frame.message,
     );
