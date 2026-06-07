@@ -139,7 +139,7 @@ def test_route_plan_does_not_force_bus_when_already_near_stop_destination() -> N
     body = response.json()
     assert body["status"] == "ALREADY_NEAR_DESTINATION"
     assert body["recommendedPlan"] is None
-    assert "따로 버스를 탈 필요는 없어" in body["agentMessage"]
+    assert "따로 버스를 타실 필요는 없어" in body["agentMessage"]
 
 
 def test_route_plan_does_not_force_bus_when_already_near_place_destination() -> None:

@@ -161,7 +161,7 @@ def test_beacon_wrong_bus_target_mid_target_near_and_session_persistence() -> No
     assert ask_wrong.status_code == 200
     assert ask_wrong.json()["intent"] == "ASK_CAN_BOARD_CURRENT_BUS"
     assert ask_wrong.json()["ttsMode"] == "SAFETY_LOCAL"
-    assert "아니야" in ask_wrong.json()["message"]
+    assert "아니에요" in ask_wrong.json()["message"]
 
     near = client.post(
         "/mock/beacons",
@@ -184,7 +184,7 @@ def test_beacon_wrong_bus_target_mid_target_near_and_session_persistence() -> No
 
     ask_yes = _say("s1", "자비스, 지금 앞에 온 버스 타도 돼?")
     assert ask_yes.status_code == 200
-    assert "응" in ask_yes.json()["message"]
+    assert "네" in ask_yes.json()["message"]
 
 
 def test_beacon_empty_mid_and_rssi_tie_break() -> None:

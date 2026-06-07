@@ -26,21 +26,21 @@ def mock_geofence(payload: MockGeofenceRequest) -> MockGeofenceResponse:
     event = payload.event.strip().upper()
 
     cue = V3Cue(type=CueType.NONE, ttsMode=TtsMode.NONE)
-    message = "정류장 대기 범위 상태를 확인했어."
+    message = "정류장 대기 범위 상태를 확인했어요."
 
     if event == "ARRIVED_AT_STOP":
         session.state = GuidanceState.ARRIVED_AT_STOP
         session.geofence_armed = True
-        message = "정류장에 도착했어. 이제 대기 범위 이탈 감지를 시작할게."
+        message = "정류장에 도착했어요. 이제 대기 범위 이탈 감지를 시작할게요."
     elif event == "LEFT_WAITING_AREA":
         if session.geofence_armed:
             cue = V3Cue(
                 type=CueType.GEOFENCE_WARNING,
                 ttsMode=TtsMode.SAFETY_LOCAL,
                 shouldVibrate=True,
-                message="정류장 대기 범위를 벗어났어.",
+                message="정류장 대기 범위를 벗어났어요.",
             )
-            message = "정류장 대기 범위를 벗어났어. 다시 정류장 쪽으로 돌아와."
+            message = "정류장 대기 범위를 벗어났어요. 다시 정류장 쪽으로 돌아와 주세요."
         else:
             message = "아직 정류장 도착 전이라 대기 범위 이탈 경고를 내지 않을게."
     elif event == "DANGER_ZONE":
@@ -49,14 +49,14 @@ def mock_geofence(payload: MockGeofenceRequest) -> MockGeofenceResponse:
             ttsMode=TtsMode.SAFETY_LOCAL,
             shouldVibrate=True,
             shouldBeep=True,
-            message="위험 구역이야.",
+            message="위험 구역이에요.",
         )
-        message = "위험 구역이야. 즉시 안전한 쪽으로 이동해."
+        message = "위험 구역이에요. 즉시 안전한 쪽으로 이동해 주세요."
     elif event == "RETURNED_TO_STOP":
-        cue = V3Cue(type=CueType.NONE, ttsMode=TtsMode.LOCAL_TTS, message="정류장 대기 범위로 돌아왔어.")
+        cue = V3Cue(type=CueType.NONE, ttsMode=TtsMode.LOCAL_TTS, message="정류장 대기 범위로 돌아왔어요.")
         if session.geofence_armed:
             session.state = GuidanceState.WAITING_FOR_BUS
-        message = "정류장 대기 범위로 돌아왔어."
+        message = "정류장 대기 범위로 돌아왔어요."
     session.touch()
     return MockGeofenceResponse(
         sessionId=session.session_id,
@@ -110,9 +110,9 @@ def mock_bus_event(payload: MockBusEventRequest) -> MockGeofenceResponse:
     event = payload.event.strip().upper()
     if event == "BUS_PASSED":
         session.state = GuidanceState.MISSED_BUS
-        message = "버스를 놓친 상태로 기록했어. 다음 버스를 다시 안내할 수 있어."
+        message = "버스를 놓친 상태로 기록했어요. 다음 버스를 다시 안내해 드릴 수 있어요."
     else:
-        message = "버스 이벤트를 기록했어."
+        message = "버스 이벤트를 기록했어요."
     session.touch()
     return MockGeofenceResponse(
         sessionId=session.session_id,
@@ -154,42 +154,42 @@ def _decide_beacon(
         return (
             BeaconDecision.NO_BEACON,
             V3Cue(type=CueType.NONE, ttsMode=TtsMode.NONE),
-            "주변 버스 비컨이 감지되지 않았어.",
+            "주변 버스 비컨이 감지되지 않았어요.",
         )
     if target is None:
         if _is_near(nearest):
             return (
                 BeaconDecision.WRONG_BUS_NEAR,
                 V3Cue(type=CueType.WRONG_BUS_NEAR, ttsMode=TtsMode.SAFETY_LOCAL, shouldVibrate=True, shouldBeep=True),
-                "가까이 온 버스는 타야 할 버스로 확인되지 않았어.",
+                "가까이 온 버스는 타야 할 버스로 확인되지 않았어요.",
             )
         return (
             BeaconDecision.NO_BEACON,
             V3Cue(type=CueType.NONE, ttsMode=TtsMode.NONE),
-            "타야 할 버스 비컨은 아직 감지되지 않았어.",
+            "타야 할 버스 비컨은 아직 감지되지 않았어요.",
         )
     if nearest.busId != target.busId and _is_near(nearest):
         return (
             BeaconDecision.WRONG_BUS_NEAR,
             V3Cue(type=CueType.WRONG_BUS_NEAR, ttsMode=TtsMode.SAFETY_LOCAL, shouldVibrate=True, shouldBeep=True),
-            "가까이 온 버스는 타야 할 버스가 아니야.",
+            "가까이 온 버스는 타야 할 버스가 아니에요.",
         )
     if _is_near(target):
         return (
             BeaconDecision.TARGET_BUS_NEAR,
             V3Cue(type=CueType.TARGET_BUS_NEAR, ttsMode=TtsMode.LOCAL_TTS, shouldVibrate=True, shouldBeep=True),
-            "타야 할 버스가 가까이 왔어.",
+            "타야 할 버스가 가까이 왔어요.",
         )
     if _is_mid(target):
         return (
             BeaconDecision.TARGET_BUS_MID,
             V3Cue(type=CueType.TARGET_BUS_MID, ttsMode=TtsMode.LOCAL_TTS, shouldBeep=True),
-            "타야 할 버스가 접근 중이야.",
+            "타야 할 버스가 접근 중이에요.",
         )
     return (
         BeaconDecision.TARGET_BUS_FAR,
         V3Cue(type=CueType.TARGET_BUS_FAR, ttsMode=TtsMode.LOCAL_TTS),
-        "타야 할 버스가 아직 멀리 있어.",
+        "타야 할 버스가 아직 멀리 있어요.",
     )
 
 

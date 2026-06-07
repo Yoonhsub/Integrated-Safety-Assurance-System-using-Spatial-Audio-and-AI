@@ -107,14 +107,14 @@ class CheongjuRoutePlanner:
                 status=RoutePlanStatus.NOT_FOUND,
                 destination=destination,
                 heard_text=heard_text,
-                question="현재 위치 주변 승차 정류장을 찾지 못했어. 위치 권한을 확인해줘.",
+                question="현재 위치 주변 승차 정류장을 찾지 못했어요. 위치 권한을 확인해 주세요.",
             )
         if not destination.destinationStops:
             return self._empty_response(
                 status=RoutePlanStatus.NOT_FOUND,
                 destination=destination,
                 heard_text=heard_text,
-                question="목적지 주변 하차 정류장을 찾지 못했어. 목적지를 조금 더 정확히 말해줘.",
+                question="목적지 주변 하차 정류장을 찾지 못했어요. 목적지를 조금 더 정확히 말씀해 주세요.",
             )
 
         sequence_live = live if use_live_sequences is None else use_live_sequences
@@ -139,7 +139,7 @@ class CheongjuRoutePlanner:
                     heard_text=heard_text,
                     question=walk_message,
                 )
-        question = None if recommended else "현재 후보 정류장 조합으로 갈 수 있는 직통 또는 1회 환승 경로를 찾지 못했어."
+        question = None if recommended else "현재 후보 정류장 조합으로 갈 수 있는 직통 또는 1회 환승 경로를 찾지 못했어요."
         return RoutePlanResponse(
             status=RoutePlanStatus.RESOLVED if recommended else RoutePlanStatus.NO_ROUTE,
             readiness=RoutePlanReadiness.READY if recommended else RoutePlanReadiness.NO_ROUTE,
@@ -219,7 +219,7 @@ class CheongjuRoutePlanner:
             type=plan_type,
             destinationName=raw.destination_name,
             summary=_summary(plan_type, segments, raw.destination_name),
-            boardingInstruction=_boarding_instruction(segments[0]) if segments else "승차 경로를 찾지 못했어.",
+            boardingInstruction=_boarding_instruction(segments[0]) if segments else "승차 경로를 찾지 못했어요.",
             transferCount=transfer_count,
             totalBusStopCount=sum(segment.stopCount for segment in segments),
             estimatedWalkMeters=round(raw.estimated_walk_meters, 1),
@@ -398,7 +398,7 @@ def _boarding_instruction(segment: RoutePlanSegment) -> str:
         if segment.serviceStatus is not None
         else " 첫 차 도착정보는 아직 확인되지 않았어."
     )
-    return f"{segment.boardStop.stopName}, {direction} 정류장에서 {segment.routeNo}번을 타면 돼.{arrival_text}"
+    return f"{segment.boardStop.stopName}, {direction} 정류장에서 {segment.routeNo}번을 타시면 돼요.{arrival_text}"
 
 
 def _near_destination_message(
@@ -422,7 +422,7 @@ def _near_destination_message(
     if distance > threshold:
         return None
     rounded_distance = max(0, int(round(distance / 10.0) * 10))
-    return f"이미 {candidate.name} 근처야. 도보로 약 {rounded_distance}m 이동하면 돼. 따로 버스를 탈 필요는 없어."
+    return f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 돼요. 따로 버스를 타실 필요는 없어요."
 
 
 def _walkable_destination_message(
@@ -450,8 +450,8 @@ def _walkable_destination_message(
     rounded = max(0, int(round(distance / 10.0) * 10))
     minutes = max(1, int(round(distance / 67.0)))  # 보행 약 4km/h 기준
     return (
-        f"{candidate.name}까지는 버스보다 걷는 게 빨라. "
-        f"도보로 약 {rounded}m, {minutes}분 정도 거리야. 보행 경로로 안내할게."
+        f"{candidate.name}까지는 버스보다 걷는 게 빨라요. "
+        f"도보로 약 {rounded}m, {minutes}분 정도 거리예요. 보행 경로로 안내해 드릴게요."
     )
 
 

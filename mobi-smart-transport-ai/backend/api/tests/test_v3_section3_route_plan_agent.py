@@ -79,11 +79,11 @@ def test_agent_converse_confirmation_followup_uses_pending_route_plan_context() 
     assert first.status_code == 200
     first_body = first.json()
     assert first_body["routePlan"]["status"] == "NEEDS_CONFIRMATION"
-    assert first_body["message"] == "혹시 상당산성 맞아?"
+    assert first_body["message"] == "혹시 상당산성 맞을까요?"
 
     pending = client.get("/guidance/state", params={"sessionId": "s-confirm"}).json()
     assert pending["pendingResolutionStatus"] == "NEEDS_CONFIRMATION"
-    assert pending["pendingQuestion"] == "혹시 상당산성 맞아?"
+    assert pending["pendingQuestion"] == "혹시 상당산성 맞을까요?"
 
     second = _say("s-confirm", "응 맞아")
 
@@ -129,7 +129,7 @@ def test_agent_converse_negative_confirmation_clears_pending_state() -> None:
 
     assert second.status_code == 200
     assert second.json()["routePlan"] is None
-    assert second.json()["message"] == "알겠어. 목적지를 다시 말해줘."
+    assert second.json()["message"] == "알겠어요. 목적지를 다시 말씀해 주세요."
     state = client.get("/guidance/state", params={"sessionId": "s-confirm-no"}).json()
     assert state["pendingResolutionStatus"] is None
 

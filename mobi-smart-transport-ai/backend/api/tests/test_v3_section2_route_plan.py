@@ -85,7 +85,7 @@ def test_route_plan_defers_to_confirmation_question_for_uncertain_destination() 
     body = response.json()
     assert body["status"] == "NEEDS_CONFIRMATION"
     assert body["plans"] == []
-    assert body["question"] == "혹시 상당산성 맞아?"
+    assert body["question"] == "혹시 상당산성 맞을까요?"
 
 
 def test_route_plan_requires_current_location_for_new_destination() -> None:

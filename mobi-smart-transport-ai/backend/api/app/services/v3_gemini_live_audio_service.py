@@ -11,7 +11,7 @@ from urllib.parse import quote
 import websockets
 
 _DEFAULT_LIVE_AUDIO_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-_DEFAULT_LIVE_AUDIO_VOICE = "Sulafat"
+_DEFAULT_LIVE_AUDIO_VOICE = "Kore"
 _LIVE_API_ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
@@ -60,10 +60,14 @@ def live_audio_setup_message(*, model: str, voice: str) -> dict:
                 "parts": [
                     {
                         "text": (
-                            "You are MOBI's Korean transit guidance voice. "
-                            "Read the provided Korean transcript warmly, calmly, and clearly. "
-                            "Do not add, remove, paraphrase, or answer anything. "
-                            "Speak only the provided transcript."
+                            "You are MOBI's Korean transit-guidance voice for a blind passenger. "
+                            "Speak the given Korean transcript like a warm, friendly real person speaking "
+                            "right next to the listener — lively and genuinely human, with natural "
+                            "conversational intonation, natural rhythm, and brief natural pauses. Never flat, "
+                            "monotone, or robotic; let it sound expressive and caring. The transcript is "
+                            "polite Korean (존댓말); keep that warm, respectful, polite tone. "
+                            "Keep it clear and easy to understand. "
+                            "Do not add, remove, paraphrase, translate, or answer anything — speak ONLY the provided transcript."
                         )
                     }
                 ]

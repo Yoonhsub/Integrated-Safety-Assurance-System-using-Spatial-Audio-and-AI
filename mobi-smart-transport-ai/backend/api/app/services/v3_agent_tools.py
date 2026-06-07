@@ -280,8 +280,8 @@ def near_destination_guard_tool(
         True,
         distance_meters=distance,
         message=(
-            f"이미 {candidate.name} 근처야. 도보로 약 {rounded_distance}m 이동하면 돼. "
-            "따로 버스를 탈 필요는 없어."
+            f"이미 {candidate.name} 근처예요. 도보로 약 {rounded_distance}m 이동하시면 돼요. "
+            "따로 버스를 타실 필요는 없어요."
         ),
     )
     if trace:
@@ -719,7 +719,7 @@ def _invalid_route_plan(plan: RoutePlanResponse, reason: str) -> RoutePlanRespon
             "recommendedPlan": None,
             "alternatives": [],
             "agentMessage": "검증된 버스 경로를 만들지 못했어.",
-            "question": "검증된 버스 경로를 만들지 못했어. 잠시 후 다시 시도해줘.",
+            "question": "검증된 버스 경로를 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
             "warnings": list(dict.fromkeys([*plan.warnings, f"route verification failed: {reason}"])),
         }
     )

@@ -157,17 +157,17 @@ class AudioHapticCueService {
   String _defaultMessage(String cueType) {
     switch (cueType) {
       case 'TARGET_BUS_NEAR':
-        return '타야 할 버스가 가까이 왔어.';
+        return '타야 할 버스가 가까이 왔어요.';
       case 'TARGET_BUS_MID':
-        return '타야 할 버스가 접근 중이야.';
+        return '타야 할 버스가 접근 중이에요.';
       case 'TARGET_BUS_FAR':
-        return '타야 할 버스가 아직 멀리 있어.';
+        return '타야 할 버스가 아직 멀리 있어요.';
       case 'WRONG_BUS_NEAR':
-        return '잘못된 버스가 가까이 왔어. 기다려.';
+        return '잘못된 버스가 가까이 왔어요. 기다려 주세요.';
       case 'GEOFENCE_WARNING':
-        return '정류장 대기 범위를 벗어났어.';
+        return '정류장 대기 범위를 벗어났어요.';
       case 'DANGER':
-        return '위험 구역이야. 즉시 이동해.';
+        return '위험 구역이에요. 즉시 이동해 주세요.';
       default:
         return '';
     }

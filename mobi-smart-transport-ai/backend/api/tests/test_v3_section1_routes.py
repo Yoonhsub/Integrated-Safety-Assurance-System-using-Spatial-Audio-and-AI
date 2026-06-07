@@ -81,7 +81,7 @@ def test_agent_tts_returns_generated_wav(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/wav"
-    assert response.headers["x-gemini-tts-voice"] == "Sulafat"
+    assert response.headers["x-gemini-tts-voice"] == "Kore"
     assert response.content == b"RIFFdemo"
 
 
@@ -105,7 +105,7 @@ def test_agent_live_tts_streams_generated_pcm_chunks(monkeypatch) -> None:
         "type": "start",
         "provider": "GEMINI_LIVE_API",
         "model": "gemini-2.5-flash-native-audio-preview-12-2025",
-        "voice": "Sulafat",
+        "voice": "Kore",
         "sampleRate": 24000,
         "channels": 1,
     }

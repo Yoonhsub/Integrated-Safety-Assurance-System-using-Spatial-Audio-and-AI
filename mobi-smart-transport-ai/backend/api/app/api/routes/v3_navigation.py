@@ -65,9 +65,9 @@ def _attach_trace(response: LiveStatusResponse) -> None:
     trace.record(
         "NEARBY_STOP_SEARCH",
         "주변 정류장 검색 완료",
-        f"근처 정류장 {len(response.nearbyStops)}개를 확인했어."
+        f"근처 정류장 {len(response.nearbyStops)}개를 확인했어요."
         if response.nearbyStops
-        else "근처 정류장을 찾지 못했어.",
+        else "근처 정류장을 찾지 못했어요.",
         operation="searchNearbyStops",
         safe_payload={"nearbyCount": len(response.nearbyStops)},
     )
@@ -77,9 +77,9 @@ def _attach_trace(response: LiveStatusResponse) -> None:
         trace.record(
             "TMAP_WALKING_ROUTE",
             "보행경로 확인 완료",
-            "승차 정류장까지 보행경로를 확인했어."
+            "승차 정류장까지 보행경로를 확인했어요."
             if not walking.fallbackUsed
-            else "보행경로 대신 직선거리로 안내했어.",
+            else "보행경로 대신 직선거리로 안내했어요.",
             provider=walking.provider,
             operation="pedestrianRoute",
             safe_payload={
@@ -94,7 +94,7 @@ def _attach_trace(response: LiveStatusResponse) -> None:
         trace.skip(
             "TMAP_WALKING_ROUTE",
             "보행경로 확인",
-            "현재 위치나 승차 정류장 좌표가 없어 보행경로를 생략했어.",
+            "현재 위치나 승차 정류장 좌표가 없어서 보행경로를 생략했어요.",
             provider="TMAP",
             operation="pedestrianRoute",
         )
@@ -103,7 +103,7 @@ def _attach_trace(response: LiveStatusResponse) -> None:
     trace.record(
         "TAGO_ARRIVAL_LOOKUP",
         "도착정보 확인 완료",
-        "승차 정류장 도착 예정 정보를 확인했어." if response.arrivals else "확인 가능한 도착정보가 없어.",
+        "승차 정류장 도착 예정 정보를 확인했어요." if response.arrivals else "확인 가능한 도착정보가 없어요.",
         provider="TAGO",
         operation="getArrivals",
         safe_payload={
@@ -117,7 +117,7 @@ def _attach_trace(response: LiveStatusResponse) -> None:
     trace.record(
         "TAGO_BUS_LOCATION_LOOKUP",
         "버스 위치 확인 완료",
-        f"현재 버스 위치 {len(response.busPositions)}건을 확인했어."
+        f"현재 버스 위치 {len(response.busPositions)}건을 확인했어요."
         if response.busPositions
         else "현재 버스 위치는 아직 조회되지 않았어.",
         provider="TAGO",
@@ -128,7 +128,7 @@ def _attach_trace(response: LiveStatusResponse) -> None:
     trace.record(
         "LIVE_STATUS_REFRESH",
         "실시간 상태 갱신 완료",
-        "지도 패널에 필요한 실시간 정보를 갱신했어.",
+        "지도 패널에 필요한 실시간 정보를 갱신했어요.",
         operation="liveStatusRefresh",
         safe_payload={
             "nextRefreshSeconds": response.nextRefreshSeconds,

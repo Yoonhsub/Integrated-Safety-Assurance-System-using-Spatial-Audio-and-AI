@@ -95,7 +95,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   bool _isAgentTraceExpanded = false;
   bool _isListening = false;
   String? _nextLiveScriptLineId;
-  String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말해줘.';
+  String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말씀해 주세요.';
 
   // 실시간 채팅 상태
   final List<ChatMessage> _chatMessages = [];
@@ -1664,7 +1664,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _lastAgentResponse?.message ??
         _latestGeofenceMessage ??
         _lastBeaconDecision?.message ??
-        'V3 버스 탑승 보조 에이전트가 대기 중이야.';
+        'V3 버스 탑승 보조 에이전트가 대기 중이에요.';
 
     return Scaffold(
       appBar: AppBar(
@@ -2476,7 +2476,7 @@ class _NavStoppedNotice extends StatelessWidget {
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: const Padding(
         padding: EdgeInsets.all(16),
-        child: Text('경로 안내를 취소했어. 보행 내비게이션과 탑승 버스 상세 정보 갱신을 종료했어.'),
+        child: Text('경로 안내를 취소했어요. 보행 내비게이션과 탑승 버스 상세 정보 갱신을 종료했어요.'),
       ),
     );
   }
@@ -2608,7 +2608,7 @@ class _RealtimeNavCard extends StatelessWidget {
                     ),
                   ),
                   child: markers.isEmpty
-                      ? const Center(child: Text('표시할 위치 좌표가 없어.'))
+                      ? const Center(child: Text('표시할 위치 좌표가 없어요.'))
                       : ClipRRect(
                           borderRadius: BorderRadius.circular(12),
                           child: _buildFlutterMap(

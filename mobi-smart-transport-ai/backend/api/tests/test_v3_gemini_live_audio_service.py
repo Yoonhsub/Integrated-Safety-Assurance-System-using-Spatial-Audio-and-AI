@@ -7,7 +7,7 @@ from app.services.v3_gemini_live_audio_service import (
 def test_live_audio_setup_uses_native_audio_model_and_existing_voice() -> None:
     setup = live_audio_setup_message(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
-        voice="Sulafat",
+        voice="Kore",
     )
 
     assert setup == {
@@ -18,7 +18,7 @@ def test_live_audio_setup_uses_native_audio_model_and_existing_voice() -> None:
                 "speechConfig": {
                     "voiceConfig": {
                         "prebuiltVoiceConfig": {
-                            "voiceName": "Sulafat",
+                            "voiceName": "Kore",
                         }
                     }
                 },
@@ -27,10 +27,14 @@ def test_live_audio_setup_uses_native_audio_model_and_existing_voice() -> None:
                 "parts": [
                     {
                         "text": (
-                            "You are MOBI's Korean transit guidance voice. "
-                            "Read the provided Korean transcript warmly, calmly, and clearly. "
-                            "Do not add, remove, paraphrase, or answer anything. "
-                            "Speak only the provided transcript."
+                            "You are MOBI's Korean transit-guidance voice for a blind passenger. "
+                            "Speak the given Korean transcript like a warm, friendly real person speaking "
+                            "right next to the listener — lively and genuinely human, with natural "
+                            "conversational intonation, natural rhythm, and brief natural pauses. Never flat, "
+                            "monotone, or robotic; let it sound expressive and caring. The transcript is "
+                            "polite Korean (존댓말); keep that warm, respectful, polite tone. "
+                            "Keep it clear and easy to understand. "
+                            "Do not add, remove, paraphrase, translate, or answer anything — speak ONLY the provided transcript."
                         )
                     }
                 ]

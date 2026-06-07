@@ -16,7 +16,7 @@ _DEFAULT_PRO_MODEL = "gemini-2.5-pro"
 _DEFAULT_PRO_TTS_MODEL = "gemini-2.5-pro-preview-tts"
 _DEFAULT_FLASH_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 _LEGACY_FLASH_TTS_MODEL = "gemini-2.5-flash-preview-tts"
-_DEFAULT_TTS_VOICE = "Sulafat"
+_DEFAULT_TTS_VOICE = "Kore"
 _MAX_REPLY_LENGTH = 500
 _GROUNDED_TRANSIT_RULE = (
     "너는 교통 정보를 추측하지 않는다. 제공된 routePlan, arrivals, busLocations, "
@@ -220,12 +220,12 @@ def generate_optional_reply(
         model=model,
         system_instruction=(
             f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
-            "한국어 반말로 짧고 명확하게 답해. "
+            "정중한 존댓말(예: -입니다/-요)로 짧고 명확하게 답해. "
             "이전 대화 맥락을 기억하고 이어서 자연스럽게 답해. "
             "실시간 버스 도착 시간, 버스 탑승 가능 여부, 위치 안전 여부를 추측하지 마. "
             "그런 요청에는 앱의 안전 안내와 버스 조회 버튼을 사용하라고 답해. "
             "버스 안내·길찾기와 무관한 일반 상식이나 사실 질문(뉴스·인물·용어 정의 등)에는 "
-            "백과사전처럼 길게 답하지 말고, '그건 내가 잘 몰라. 난 버스 길안내를 도와줄게'처럼 "
+            "백과사전처럼 길게 답하지 말고, '그건 제가 잘 모르겠어요. 버스 길안내를 도와드릴게요'처럼 "
             "짧게 답한 뒤 목적지 안내로 돌아와."
             + pending_context
         ),
@@ -294,7 +294,7 @@ def generate_route_plan_summary(
             "검증된 버스 API 후보만 사용해. 새 버스 번호, 정류장, 도착 시간, 거리, 도보 시간을 만들지 마. "
             "공공 API 정류소 카탈로그 근거는 정류소 위치 확인에만 사용하고 도착 예정 시간으로 해석하지 마. "
             "PUBLIC_API나 CACHE가 아닌 MOCK 정보는 데모 데이터라고 명확히 밝혀. "
-            "한국어로 3문장 이내로 답해."
+            "정중한 존댓말로 3문장 이내로 답해."
         ),
         prompt=(
             f"현재 위치: 위도 {origin_lat}, 경도 {origin_lng}\n"
@@ -352,7 +352,7 @@ def generate_route_plan_reply(
         "arrival이 없거나 첫 segment의 arrivals가 비어 있으면 도착시간을 만들지 말고 확인하지 못했다고 말해. "
         "directionHint가 없으면 임의 방향을 만들지 말고 정류장 표지판을 확인해 달라고 말해. "
         "현재 단계에서는 '건너편 정류장', '오른쪽 정류장', '횡단보도를 건너라'처럼 비전 검증이 필요한 표현을 쓰지 마. "
-        "반드시 한국어 반말 2문장 이내로 답해."
+        "반드시 정중한 존댓말(예: -입니다/-요)로 2문장 이내로 답해."
     )
     reply = _generate(
         model=model,
@@ -438,7 +438,7 @@ def generate_dynamic_response(
     system_instruction = (
         f"너는 시각장애인 승객을 돕는 버스 탑승 보조 에이전트 '{wake_word}'야. "
         f"{_GROUNDED_TRANSIT_RULE}"
-        "한국어 반말로 짧고 명확하게 답해. 절대 구구절절 설명하지 말고 2문장 이내로 말해. "
+        "정중한 존댓말(예: -입니다/-요)로 짧고 명확하게 답해. 절대 구구절절 설명하지 말고 2문장 이내로 말해. "
         "이전 대화 맥락을 기억하고 이어서 자연스럽게 답해. "
         "제공된 실시간 공공 API 데이터(context_data)에 기반해서만 대답하고, 정보가 부족하면 "
         "솔직하게 정보가 없다고 말해."
@@ -448,7 +448,7 @@ def generate_dynamic_response(
         f"사용자 의도: {intent}\n"
         f"사용자 발화: {utterance}\n"
         f"실시간 API 컨텍스트 데이터:\n{context_data}\n\n"
-        "이 데이터를 바탕으로 사용자의 질문에 짧고 명확하게 반말로 대답해줘."
+        "이 데이터를 바탕으로 사용자의 질문에 짧고 명확하게 정중한 존댓말로 대답해줘."
     )
 
     reply = _generate(
@@ -505,8 +505,12 @@ def synthesize_tts_wav(*, text: str) -> bytes | None:
                 "parts": [
                     {
                         "text": (
-                            "Read warmly, calmly, and clearly in Korean. "
-                            "Speak only the following transcript:\n"
+                            "Speak the following Korean text like a warm, friendly real person talking "
+                            "right next to the listener — lively and genuinely human, with natural "
+                            "conversational intonation, natural rhythm, and brief natural pauses. Never flat, "
+                            "monotone, or robotic. The text is polite Korean (존댓말); keep that warm, "
+                            "respectful, polite tone, clear and easy to understand. "
+                            "Speak ONLY this transcript, do not add, change, or answer anything:\n"
                             f"{text}"
                         )
                     }

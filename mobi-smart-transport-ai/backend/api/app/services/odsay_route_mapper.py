@@ -150,14 +150,14 @@ class OdsayRouteMapper:
 def _summary(plan_type: RoutePlanType, segments: list[RoutePlanSegment], destination_name: str) -> str:
     first = segments[0]
     if plan_type == RoutePlanType.DIRECT:
-        return f"ODsay 기준 {first.routeNo}번을 이용해 {destination_name}까지 가는 경로야."
-    return f"ODsay 기준 버스를 갈아타고 {destination_name}까지 가는 경로야."
+        return f"ODsay 기준 {first.routeNo}번을 이용해 {destination_name}까지 가는 경로예요."
+    return f"ODsay 기준 버스를 갈아타고 {destination_name}까지 가는 경로예요."
 
 
 def _unverified_boarding_instruction(segment: RoutePlanSegment) -> str:
     return (
-        f"{segment.boardStop.stopName}에서 {segment.routeNo}번을 타면 돼. "
-        "정류장 방향과 실시간 도착정보는 아직 확인하지 못했어."
+        f"{segment.boardStop.stopName}에서 {segment.routeNo}번을 타시면 돼요. "
+        "정류장 방향과 실시간 도착정보는 아직 확인하지 못했어요."
     )
 
 

@@ -97,7 +97,7 @@ def test_near_destination_guard_reports_walk_only_for_close_origin() -> None:
     assert result.already_near is True
     assert result.distance_meters is not None
     assert result.distance_meters < 10
-    assert "따로 버스를 탈 필요는 없어" in (result.message or "")
+    assert "따로 버스를 타실 필요는 없어" in (result.message or "")
 
 
 def test_service_status_tool_reports_next_bus_after_service_window(monkeypatch) -> None:

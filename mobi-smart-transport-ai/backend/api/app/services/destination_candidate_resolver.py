@@ -382,7 +382,7 @@ class DestinationCandidateResolver:
                 status=DestinationResolveStatus.NOT_FOUND,
                 heardText=heard_text,
                 normalizedText="",
-                question="목적지를 다시 말해줘.",
+                question="목적지를 다시 말씀해 주세요.",
                 fallbackSource=FallbackSource.MOCK,
             )
 
@@ -400,7 +400,7 @@ class DestinationCandidateResolver:
                 status=DestinationResolveStatus.NOT_FOUND,
                 heardText=heard_text,
                 normalizedText=normalized,
-                question=f"{cleaned}{_subject_particle(cleaned)} 아직 찾지 못했어. 장소명이나 주소를 조금 더 정확히 말해줘.",
+                question=f"{cleaned}{_subject_particle(cleaned)} 아직 찾지 못했어요. 장소명이나 주소를 조금 더 정확히 말씀해 주세요.",
                 fallbackSource=FallbackSource.ERROR if live else FallbackSource.MOCK,
             )
 
@@ -443,18 +443,18 @@ class DestinationCandidateResolver:
                 status = DestinationResolveStatus.RESOLVED
             else:
                 status = DestinationResolveStatus.NEEDS_CHOICE
-                question = f"{' / '.join(choice_names[:3])} 중 어디로 갈까?"
+                question = f"{' / '.join(choice_names[:3])} 중 어디로 갈까요?"
         elif top.confidence < _RESOLVED_THRESHOLD or _normalize(top.name) != normalized and top.confidence < 0.95:
             status = DestinationResolveStatus.NEEDS_CONFIRMATION
             # 받침 유무에 따라 '이/가'가 달라지는 문제를 피하려고 조사 없이 묻는다.
-            question = f"혹시 {top.name} 맞아?"
+            question = f"혹시 {top.name} 맞을까요?"
 
         if top.latitude is None or top.longitude is None:
             status = DestinationResolveStatus.NOT_FOUND
-            question = f"{top.name}의 위치 좌표를 확인하지 못했어. 장소명이나 주소를 조금 더 정확히 말해줘."
+            question = f"{top.name}의 위치 좌표를 확인하지 못했어요. 장소명이나 주소를 조금 더 정확히 말씀해 주세요."
         elif not destination_stops:
             status = DestinationResolveStatus.NOT_FOUND
-            question = f"{top.name} 주변 하차 정류장을 찾지 못했어. 목적지를 조금 더 정확히 말해줘."
+            question = f"{top.name} 주변 하차 정류장을 찾지 못했어요. 목적지를 조금 더 정확히 말씀해 주세요."
 
         fallback_source = (
             FallbackSource.PUBLIC_API

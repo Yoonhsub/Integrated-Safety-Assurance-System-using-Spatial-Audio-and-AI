@@ -30,5 +30,5 @@ def get_last_decision(sessionId: str = "demo-session") -> BeaconDecisionResponse
         nearestBeacon=session.nearest_beacon,
         targetBus=session.target_bus,
         cue=_cue_for_decision(decision),
-        message="마지막 비컨 판별 결과야.",
+        message="마지막 비컨 판별 결과예요.",
     )
