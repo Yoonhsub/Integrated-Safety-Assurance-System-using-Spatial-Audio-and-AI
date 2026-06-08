@@ -13,12 +13,14 @@ class MockScriptAudioService {
     FlutterTts? flutterTts,
     this.webClipPlayer,
     this.webClipStop,
-  })  : _audioPlayer = audioPlayer ?? AudioPlayer(),
-        _flutterTts = flutterTts ?? FlutterTts();
+  }) : _audioPlayer = audioPlayer ?? AudioPlayer(),
+       _flutterTts = flutterTts ?? FlutterTts();
 
   /// 웹(특히 iOS)에서 beep와 동일한 AudioContext로 음성 mp3를 재생하는 경로.
-  /// 자산 경로('mock_voice/x.mp3')를 받아 재생 완료 시 true. null이면 audioplayers 사용.
-  final Future<bool> Function(String assetPath)? webClipPlayer;
+  /// 자산 경로('mock_voice/x.mp3')와 공간 파라미터를 받아 재생 완료 시 true.
+  /// null이면 audioplayers 사용.
+  final Future<bool> Function(String assetPath, double pan, double gain)?
+  webClipPlayer;
   final Future<void> Function()? webClipStop;
 
   final AudioPlayer _audioPlayer;
@@ -26,6 +28,8 @@ class MockScriptAudioService {
   bool _ttsConfigured = false;
   String? _lastScriptLineId;
   String? _lastSpokenText;
+  double _lastSpatialPan = 0;
+  double _lastSpatialGain = 1;
 
   // 현재 재생 중인 클립이 끝날 때까지 기다리기 위한 completer/구독.
   Completer<void>? _playbackCompleter;
@@ -36,11 +40,18 @@ class MockScriptAudioService {
 
   /// 한 줄의 안내 음성을 재생하고 **재생이 끝날 때까지 await**한다.
   /// 호출자(시나리오 컨트롤러)가 이 Future로 타임라인을 음성 길이에 맞춰 멈췄다 재개한다.
-  Future<void> playScript(String scriptLineId, {String? fallbackText}) async {
+  Future<void> playScript(
+    String scriptLineId, {
+    String? fallbackText,
+    double spatialPan = 0,
+    double spatialGain = 1,
+  }) async {
     final line = mockScriptLineById(scriptLineId);
     final text = fallbackText ?? line?.text ?? scriptLineId;
     _lastScriptLineId = scriptLineId;
     _lastSpokenText = text;
+    _lastSpatialPan = spatialPan.clamp(-1.0, 1.0).toDouble();
+    _lastSpatialGain = spatialGain.clamp(0.0, 1.3).toDouble();
     // 이전 재생을 확실히 멈춰 두 음성이 겹치지 않게 한다.
     await stop();
 
@@ -50,7 +61,8 @@ class MockScriptAudioService {
         mockVoiceAssetPathForScriptId(scriptLineId);
     if (assetPath != null) {
       // 웹: beep와 같은 컨텍스트로 재생(컨텍스트 충돌 회피). 실패 시 audioplayers로 폴백.
-      if (webClipPlayer != null && await webClipPlayer!(assetPath)) {
+      if (webClipPlayer != null &&
+          await webClipPlayer!(assetPath, _lastSpatialPan, _lastSpatialGain)) {
         return;
       }
       if (await _playAsset(assetPath)) {
@@ -64,7 +76,12 @@ class MockScriptAudioService {
   Future<void> repeatLast() async {
     final id = _lastScriptLineId;
     if (id != null) {
-      await playScript(id, fallbackText: _lastSpokenText);
+      await playScript(
+        id,
+        fallbackText: _lastSpokenText,
+        spatialPan: _lastSpatialPan,
+        spatialGain: _lastSpatialGain,
+      );
       return;
     }
     final text = _lastSpokenText;

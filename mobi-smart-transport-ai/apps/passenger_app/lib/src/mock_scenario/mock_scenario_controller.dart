@@ -4,23 +4,28 @@ import 'package:flutter/material.dart';
 
 import 'mock_scenario_definition.dart';
 import 'mock_scenario_math.dart';
+import 'mock_scenario_phase.dart';
 import 'mock_scenario_state.dart';
 
 typedef MockScenarioCueFrame = FutureOr<void> Function(MockScenarioState state);
 typedef MockScenarioStopCue = FutureOr<void> Function();
-typedef MockScenarioScriptLine = FutureOr<void> Function(
-    String scriptLineId, String fallbackMessage);
+typedef MockScenarioScriptLine =
+    FutureOr<void> Function(
+      String scriptLineId,
+      String fallbackMessage,
+      MockScenarioState state,
+    );
 typedef MockScenarioStopScriptAudio = FutureOr<void> Function();
 
 class MockScenarioController extends ChangeNotifier {
-  MockScenarioController(
-      {this.onCueFrame,
-      this.onStopCue,
-      this.onScriptLine,
-      this.onStopScriptAudio})
-      : _state = MockScenarioState.initial(
-          scenario: mockScenarioDefinitions.first,
-        ) {
+  MockScenarioController({
+    this.onCueFrame,
+    this.onStopCue,
+    this.onScriptLine,
+    this.onStopScriptAudio,
+  }) : _state = MockScenarioState.initial(
+         scenario: mockScenarioDefinitions.first,
+       ) {
     _state = _buildState(isPlaying: false);
   }
 
@@ -173,20 +178,21 @@ class MockScenarioController extends ChangeNotifier {
     bool shouldStopCue = false,
   }) {
     final frame = _interpolatedFrame(_elapsed);
-    final metrics = MockScenarioMath.calculate(
-      userPosition: frame.userPosition,
-      busPosition: frame.targetBusPosition,
-    );
     final isOutsideGeofence = MockScenarioMath.isOutsideGeofence(
       userPosition: frame.userPosition,
       stopPosition: frame.stopPosition,
       radius: frame.geofenceRadius,
     );
+    final cuePosition = _cuePositionForFrame(frame, isOutsideGeofence);
+    final metrics = MockScenarioMath.calculate(
+      userPosition: frame.userPosition,
+      busPosition: cuePosition,
+    );
     final progress = _scenario.duration.inMilliseconds == 0
         ? 1.0
         : (_elapsed.inMilliseconds / _scenario.duration.inMilliseconds)
-            .clamp(0.0, 1.0)
-            .toDouble();
+              .clamp(0.0, 1.0)
+              .toDouble();
 
     // 지오펜스 밖으로 나가면 키프레임 cueType(고정 시각)과 무관하게 즉시 경고를 울린다.
     // (보간 중 사용자가 키프레임보다 먼저 원을 벗어나도 지각 없이 경고)
@@ -295,21 +301,46 @@ class MockScenarioController extends ChangeNotifier {
     if (scriptLineId != null && scriptLineId != _lastScriptLineId) {
       _lastScriptLineId = scriptLineId;
       Future<void>.sync(
-        () => onScriptLine?.call(scriptLineId, _state.currentScenarioMessage),
+        () => onScriptLine?.call(
+          scriptLineId,
+          _state.currentScenarioMessage,
+          _state,
+        ),
       );
     }
 
-    if (_state.shouldStopCue) {
-      _emitStopCue();
-      return;
-    }
-
-    if (!_state.shouldPlayCue) return;
     final cueDue =
         forceCue || _state.elapsed - _lastCueFrameAt >= _cueFrameInterval;
     if (!cueDue) return;
     _lastCueFrameAt = _state.elapsed;
+
+    if (_state.shouldStopCue) {
+      Future<void>.sync(() => onCueFrame?.call(_state));
+      _emitStopCue();
+      return;
+    }
+
+    if (!_state.shouldPlayCue) {
+      Future<void>.sync(() => onCueFrame?.call(_state));
+      return;
+    }
     Future<void>.sync(() => onCueFrame?.call(_state));
+  }
+
+  Offset _cuePositionForFrame(
+    MockScenarioKeyframe frame,
+    bool isOutsideGeofence,
+  ) {
+    if (isOutsideGeofence ||
+        frame.phase == MockScenarioPhase.geofenceWarning ||
+        frame.phase == MockScenarioPhase.dangerWarning) {
+      return frame.stopPosition;
+    }
+    if (frame.phase == MockScenarioPhase.wrongBusWarning ||
+        frame.phase == MockScenarioPhase.routeChanged) {
+      return frame.secondaryBusPosition ?? frame.targetBusPosition;
+    }
+    return frame.targetBusPosition;
   }
 
   void _emitStopCue() {

@@ -231,48 +231,89 @@
   // iOS는 동시에 열린 별도 AudioContext 중 하나를 중단시킨다. 그래서 음성(mp3)을
   // audioplayers의 별도 컨텍스트가 아니라 beep와 같은 이 컨텍스트에서 재생해 충돌을 없앤다.
   var voiceGain = null;
+  var voicePanner = null;
   var voiceSource = null;
+  var voiceResolve = null;
   var clipCache = {};
+  var activeVoice = {
+    pan: 0,
+    gain: 1
+  };
 
-  function ensureVoiceGain() {
+  function ensureVoiceNodes() {
     var c = ensureContext();
     if (!c) return null;
     if (!voiceGain) {
       voiceGain = c.createGain();
       voiceGain.gain.value = 1.0;
-      voiceGain.connect(c.destination);
+      if (typeof c.createStereoPanner === 'function') {
+        voicePanner = c.createStereoPanner();
+        voicePanner.pan.value = activeVoice.pan;
+        voiceGain.connect(voicePanner);
+        voicePanner.connect(c.destination);
+      } else {
+        voicePanner = null;
+        voiceGain.connect(c.destination);
+      }
     }
     return voiceGain;
   }
 
+  function applyVoiceSpatial(options) {
+    options = options || {};
+    if (options.pan !== undefined) activeVoice.pan = clamp(options.pan, -1, 1);
+    if (options.gain !== undefined) activeVoice.gain = clamp(options.gain, 0, 1.3);
+    if (!ctx || !voiceGain) return;
+    voiceGain.gain.setTargetAtTime(activeVoice.gain, ctx.currentTime, 0.025);
+    if (voicePanner && voicePanner.pan) {
+      voicePanner.pan.setTargetAtTime(activeVoice.pan, ctx.currentTime, 0.025);
+    }
+  }
+
   function stopClip() {
+    if (voiceResolve) {
+      var resolve = voiceResolve;
+      voiceResolve = null;
+      resolve(false);
+    }
     if (voiceSource) {
       try { voiceSource.onended = null; voiceSource.stop(); } catch (e) {}
       voiceSource = null;
     }
   }
 
-  function playClip(url) {
+  function playClip(url, pan, gain) {
     return new Promise(function (resolve) {
       var c = ensureContext();
-      var g = ensureVoiceGain();
+      var g = ensureVoiceNodes();
       if (!c || !g) { resolve(false); return; }
       stopClip();
+      voiceResolve = resolve;
+      function finish(ok) {
+        if (voiceResolve === resolve) {
+          voiceResolve = null;
+          resolve(ok);
+        }
+      }
+      applyVoiceSpatial({ pan: pan, gain: gain });
       function startBuffer(buf) {
-        if (!buf) { resolve(false); return; }
+        if (!buf) { finish(false); return; }
         try {
           var src = c.createBufferSource();
           src.buffer = buf;
           src.connect(g);
           voiceSource = src;
-          src.onended = function () { if (voiceSource === src) voiceSource = null; resolve(true); };
+          src.onended = function () {
+            if (voiceSource === src) voiceSource = null;
+            finish(true);
+          };
           src.start(0);
-        } catch (e) { resolve(false); }
+        } catch (e) { finish(false); }
       }
       if (clipCache[url]) { startBuffer(clipCache[url]); return; }
       fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
-        c.decodeAudioData(ab, function (buf) { clipCache[url] = buf; startBuffer(buf); }, function () { resolve(false); });
-      }).catch(function () { resolve(false); });
+        c.decodeAudioData(ab, function (buf) { clipCache[url] = buf; startBuffer(buf); }, function () { finish(false); });
+      }).catch(function () { finish(false); });
     });
   }
 
@@ -287,6 +328,11 @@
     },
     updateCue: function (pan, gain, intervalMs, pattern) {
       update({ pan: pan, gain: gain, intervalMs: intervalMs, pattern: pattern });
+    },
+    updateClipSpatial: function (pan, gain) {
+      ensureContext();
+      ensureVoiceNodes();
+      applyVoiceSpatial({ pan: pan, gain: gain });
     },
     playClip: playClip,
     stopClip: stopClip

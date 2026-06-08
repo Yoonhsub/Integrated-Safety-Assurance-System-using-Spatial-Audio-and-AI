@@ -27,11 +27,18 @@ class SpatialCueService {
     }
   }
 
-  Future<bool> playClip(String url) async => false;
+  Future<bool> playClip(String url, {double pan = 0, double gain = 1}) async =>
+      false;
+
+  Future<void> updateClipSpatial({
+    required double pan,
+    required double gain,
+  }) async {}
 
   Future<void> stopClip() async {}
 
   Future<void> dispose() async {
     await stopCue();
+    await stopClip();
   }
 }

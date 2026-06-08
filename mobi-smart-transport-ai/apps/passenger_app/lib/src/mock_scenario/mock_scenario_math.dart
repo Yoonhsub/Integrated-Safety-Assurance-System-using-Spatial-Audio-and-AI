@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 class MockScenarioMetrics {
@@ -28,13 +30,15 @@ class MockScenarioMath {
 
     final dx = busPosition.dx - userPosition.dx;
     final dy = busPosition.dy - userPosition.dy;
-    final pan = (dx * 2.2).clamp(-1.0, 1.0).toDouble();
-    final closeness = (1.0 - (distanceMeters / 20.0)).clamp(0.0, 1.0);
-    final verticalBoost = dy < -0.10 ? 0.08 : 0.0;
-    final gain = (0.18 + (closeness * 0.78) + verticalBoost)
-        .clamp(0.15, 1.0)
+    final rawPan = (dx * 3.4).clamp(-1.0, 1.0).toDouble();
+    final pan = _intensifyPan(rawPan);
+    final closeness = (1.0 - (distanceMeters / 22.0)).clamp(0.0, 1.0);
+    final verticalBoost = dy < -0.10 ? 0.10 : 0.0;
+    final lateralBoost = rawPan.abs() * 0.08;
+    final gain = (0.24 + (closeness * 0.76) + verticalBoost + lateralBoost)
+        .clamp(0.22, 1.0)
         .toDouble();
-    final beepIntervalMs = (1400 - (gain * 950)).round().clamp(450, 1400);
+    final beepIntervalMs = (1320 - (gain * 980)).round().clamp(320, 1320);
 
     return MockScenarioMetrics(
       distanceMeters: distanceMeters,
@@ -49,6 +53,12 @@ class MockScenarioMath {
     if (pan <= -0.35) return '왼쪽';
     if (pan >= 0.35) return '오른쪽';
     return '중앙';
+  }
+
+  static double _intensifyPan(double pan) {
+    if (pan == 0) return 0;
+    final sign = pan.isNegative ? -1.0 : 1.0;
+    return sign * math.pow(pan.abs(), 0.62).toDouble();
   }
 
   static bool isOutsideGeofence({

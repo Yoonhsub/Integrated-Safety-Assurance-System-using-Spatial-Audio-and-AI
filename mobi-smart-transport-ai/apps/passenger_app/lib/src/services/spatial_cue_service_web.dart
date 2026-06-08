@@ -18,7 +18,12 @@ extension type _MobiSpatialCue._(JSObject _) implements JSObject {
   );
   external void stop();
   external void alarm(JSString pattern);
-  external JSPromise<JSAny?> playClip(JSString url);
+  external JSPromise<JSAny?> playClip(
+    JSString url,
+    JSNumber pan,
+    JSNumber gain,
+  );
+  external void updateClipSpatial(JSNumber pan, JSNumber gain);
   external void stopClip();
 }
 
@@ -94,15 +99,24 @@ class SpatialCueService {
 
   /// 안내 음성 mp3를 beep와 동일한 AudioContext에서 재생하고 완료까지 기다린다.
   /// (iOS 동시 AudioContext 충돌로 음성 재생 중 beep가 멈추던 문제 회피)
-  Future<bool> playClip(String url) async {
+  Future<bool> playClip(String url, {double pan = 0, double gain = 1}) async {
     final api = _api;
     if (api == null) return false;
     try {
-      await api.playClip(url.toJS).toDart;
+      await api.playClip(url.toJS, pan.toJS, gain.toJS).toDart;
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> updateClipSpatial({
+    required double pan,
+    required double gain,
+  }) async {
+    try {
+      _api?.updateClipSpatial(pan.toJS, gain.toJS);
+    } catch (_) {}
   }
 
   Future<void> stopClip() async {
@@ -113,5 +127,6 @@ class SpatialCueService {
 
   Future<void> dispose() async {
     await stopCue();
+    await stopClip();
   }
 }

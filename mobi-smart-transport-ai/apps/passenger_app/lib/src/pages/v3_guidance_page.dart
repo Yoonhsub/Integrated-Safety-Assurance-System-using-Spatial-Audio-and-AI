@@ -131,7 +131,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService();
     _spatialCueService = SpatialCueService();
-    _mockScriptAudioService = MockScriptAudioService();
+    _mockScriptAudioService = MockScriptAudioService(
+      webClipPlayer: (assetPath, pan, gain) => _spatialCueService.playClip(
+        _mockVoiceAssetUrl(assetPath),
+        pan: pan,
+        gain: gain,
+      ),
+      webClipStop: _spatialCueService.stopClip,
+    );
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
@@ -326,9 +333,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       if (_isNavNegative(text)) {
         _pendingNavPlan = null;
         _pendingNavPosition = null;
-        return const LiveProcessResult(
-          spokenText: _navStartDeclinedMessage,
-        );
+        return const LiveProcessResult(spokenText: _navStartDeclinedMessage);
       }
       _pendingNavPlan = null;
       _pendingNavPosition = null;
@@ -385,7 +390,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     } on V3ApiException catch (error) {
       return LiveProcessResult(spokenText: error.toString());
     } catch (_) {
-      return const LiveProcessResult(spokenText: '지금은 답하기 어렵습니다. 잠시 후에 다시 말씀해 주세요.');
+      return const LiveProcessResult(
+        spokenText: '지금은 답하기 어렵습니다. 잠시 후에 다시 말씀해 주세요.',
+      );
     } finally {
       if (shouldPlanRoute && mounted) {
         setState(() => _isRoutePlanning = false);
@@ -1351,24 +1358,27 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
     final cue = state.cueType;
+    final pan = _mockSpatialPan(state);
+    final voiceGain = _mockVoiceGain(state);
+    await _spatialCueService.updateClipSpatial(pan: pan, gain: voiceGain);
+
     if (cue == 'none' || cue == 'success') {
       await _spatialCueService.stopCue();
       return;
     }
-    // 경고(지오펜싱 이탈/차도 접근/놓침)는 버스 거리와 무관하게 고정된 긴박한 간격으로
-    // 중앙·높은 음량으로 울려야 한다. (예전엔 버스 거리 기반 간격이라 경고가 띄엄띄엄·
-    // 엉뚱한 순간에 울렸다.) normal일 때만 목표 버스 위치에 맞춰 동적으로 울린다.
+    // 경고(지오펜싱 이탈/차도 접근/놓침)는 진행 프레임의 안내 대상 방향을 유지하되,
+    // 거리와 무관하게 더 높은 음량과 촘촘한 간격으로 울린다.
     if (cue == 'alarm' || cue == 'warning' || cue == 'missed') {
       await _spatialCueService.updateCue(
-        pan: 0.0,
-        gain: 0.9,
+        pan: pan,
+        gain: _mockAlertGain(state),
         intervalMs: cue == 'missed' ? 900 : 420,
         pattern: cue,
       );
       return;
     }
     await _spatialCueService.updateCue(
-      pan: state.pan,
+      pan: pan,
       gain: state.gain,
       intervalMs: state.beepIntervalMs,
       pattern: cue,
@@ -1378,19 +1388,48 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Future<void> _handleMockScenarioScriptLine(
     String scriptLineId,
     String fallbackMessage,
+    MockScenarioState state,
   ) async {
-    await _playScriptLine(scriptLineId, fallbackMessage: fallbackMessage);
+    await _playScriptLine(
+      scriptLineId,
+      fallbackMessage: fallbackMessage,
+      spatialState: state,
+    );
   }
 
   Future<void> _playScriptLine(
     String scriptLineId, {
     String? fallbackMessage,
+    MockScenarioState? spatialState,
   }) async {
     final line = mockScriptLineById(scriptLineId);
+    final state =
+        spatialState ?? (_isLiveMode ? null : _mockScenarioController.state);
     await _mockScriptAudioService.playScript(
       scriptLineId,
       fallbackText: fallbackMessage ?? line?.text,
+      spatialPan: state == null ? 0 : _mockSpatialPan(state),
+      spatialGain: state == null ? 1 : _mockVoiceGain(state),
     );
+  }
+
+  String _mockVoiceAssetUrl(String assetPath) {
+    final normalized = assetPath.startsWith('assets/')
+        ? assetPath
+        : 'assets/$assetPath';
+    return 'assets/$normalized';
+  }
+
+  double _mockSpatialPan(MockScenarioState state) {
+    return state.pan.clamp(-1.0, 1.0).toDouble();
+  }
+
+  double _mockVoiceGain(MockScenarioState state) {
+    return (0.76 + (state.gain * 0.30)).clamp(0.76, 1.08).toDouble();
+  }
+
+  double _mockAlertGain(MockScenarioState state) {
+    return (0.82 + (state.gain * 0.22)).clamp(0.9, 1.0).toDouble();
   }
 
   Future<void> _applySpatialCue(
