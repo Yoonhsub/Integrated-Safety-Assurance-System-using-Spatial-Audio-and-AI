@@ -11,6 +11,8 @@ class V3DebugPanel extends StatelessWidget {
     required this.lastAgentResponse,
     required this.lastArrivals,
     required this.lastBeaconDecision,
+    required this.latestBeacon,
+    required this.latestBeaconError,
     required this.headTracking,
     required this.activeCueType,
   });
@@ -21,6 +23,8 @@ class V3DebugPanel extends StatelessWidget {
   final V3AgentResponse? lastAgentResponse;
   final V3BusArrivalsResponse? lastArrivals;
   final V3BeaconDecisionResponse? lastBeaconDecision;
+  final V3BeaconLatestResponse? latestBeacon;
+  final String? latestBeaconError;
   final HeadTrackingDebugSnapshot headTracking;
   final String? activeCueType;
 
@@ -59,6 +63,34 @@ class V3DebugPanel extends StatelessWidget {
             _DebugRow(label: 'arrivalsFallback', value: lastArrivals?.fallbackSource ?? '-'),
             _DebugRow(label: 'arrivalsCount', value: '${lastArrivals?.arrivals.length ?? 0}'),
             _DebugRow(label: 'beaconDecision', value: lastBeaconDecision?.decision ?? '-'),
+            _DebugRow(label: 'beaconLatestStatus', value: latestBeacon?.status ?? '-'),
+            _DebugRow(label: 'beaconLatestMessage', value: latestBeacon?.message ?? '-'),
+            _DebugRow(label: 'beaconLatestBeaconId', value: latestBeacon?.beaconId ?? '-'),
+            _DebugRow(label: 'beaconLatestBusId', value: latestBeacon?.busId ?? '-'),
+            _DebugRow(label: 'beaconLatestCueType', value: latestBeacon?.cueType ?? latestBeacon?.cue.type ?? '-'),
+            _DebugRow(
+              label: 'beaconLatestDistance',
+              value: latestBeacon?.distanceMeters == null
+                  ? '-'
+                  : '${latestBeacon!.distanceMeters!.toStringAsFixed(1)}m',
+            ),
+            _DebugRow(
+              label: 'beaconLatestPanGain',
+              value: latestBeacon == null
+                  ? '-'
+                  : 'pan=${latestBeacon!.pan?.toStringAsFixed(2) ?? '-'} · gain=${latestBeacon!.gain?.toStringAsFixed(2) ?? '-'}',
+            ),
+            _DebugRow(
+              label: 'beaconLatestInterval',
+              value: latestBeacon?.intervalMs == null ? '-' : '${latestBeacon!.intervalMs}ms',
+            ),
+            _DebugRow(
+              label: 'beaconLatestFlags',
+              value: latestBeacon == null
+                  ? '-'
+                  : 'speak=${latestBeacon!.shouldSpeak} · beep=${latestBeacon!.cue.shouldBeep} · spatial=${latestBeacon!.shouldPlaySpatialCue}',
+            ),
+            _DebugRow(label: 'beaconLatestError', value: latestBeaconError ?? '-'),
             _DebugRow(label: 'activeCue', value: activeCueType ?? '-'),
             const Divider(height: 24),
             Text(
