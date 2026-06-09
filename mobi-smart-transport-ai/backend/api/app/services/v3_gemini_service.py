@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import contextvars
+import difflib
 import io
 import json
 import os
@@ -11,12 +14,51 @@ import wave
 import httpx
 
 
+# NLU(의도분류·자연어 응답)용 OpenAI 텍스트 모델. 빠름·저렴·JSON·한국어가 중요해 4.1-mini 기본.
+_DEFAULT_OPENAI_NLU_MODEL = "gpt-4.1-mini"
+# 경로 위치 그라운딩(web search)용 모델 — Gemini Maps grounding 대체. 품질 위해 4.1 기본.
+_DEFAULT_OPENAI_GROUNDING_MODEL = "gpt-4.1"
+
+# 요청별 NLU 제공자. converse 라우트가 요청마다 set_nlu_provider로 심는다.
+# "auto"=Gemini 우선→실패 시 OpenAI 폴백, "gemini"=Gemini만, "openai"=OpenAI만.
+_nlu_provider: contextvars.ContextVar[str] = contextvars.ContextVar("nlu_provider", default="auto")
+
+
+def set_nlu_provider(provider: str | None) -> None:
+    """요청 처리 시작 시 NLU 제공자를 설정한다(threadpool 컨텍스트라 요청별 격리)."""
+    _nlu_provider.set(provider if provider in ("auto", "gemini", "openai") else "auto")
+
+
 _DEFAULT_FLASH_MODEL = "gemini-2.5-flash"
 _DEFAULT_PRO_MODEL = "gemini-2.5-pro"
 _DEFAULT_PRO_TTS_MODEL = "gemini-2.5-pro-preview-tts"
 _DEFAULT_FLASH_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 _LEGACY_FLASH_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 _DEFAULT_TTS_VOICE = "Kore"
+# OpenAI TTS는 Gemini가 크레딧/RPM으로 막혀도 음성이 살아있게 하는 1차 경로다.
+# 최상위급 풀사이즈 오디오 모델 gpt-audio + 따뜻한 여성 보이스 marin(Gemini Kore 포지션)을 기본값으로 둔다.
+# gpt-audio 계열은 /audio/speech가 아니라 Chat Completions audio output으로 합성하고,
+# 순수 TTS 모델(gpt-4o-mini-tts 등)은 /audio/speech로 합성한다(모델명으로 자동 분기).
+_DEFAULT_OPENAI_TTS_MODEL = "gpt-audio"
+_DEFAULT_OPENAI_TTS_VOICE = "marin"
+# gpt-audio 계열이 막히거나(크레딧/한도) transcript를 그대로 안 읽고 paraphrase할 때 폴백할 순수 TTS 모델.
+_OPENAI_FALLBACK_TTS_MODEL = "gpt-4o-mini-tts"
+_OPENAI_TTS_INSTRUCTIONS = (
+    "Speak the given Korean text like a warm, friendly real person talking right next to the "
+    "listener — lively and genuinely human, with natural conversational intonation, natural "
+    "rhythm, and brief natural pauses. Never flat, monotone, or robotic. The text is polite "
+    "Korean (존댓말); keep that warm, respectful, polite tone, clear and easy to understand. "
+    "Speak ONLY this transcript, do not add, change, or answer anything."
+)
+# gpt-audio(대화 모델)가 transcript를 그대로 읽도록 강제하는 system 지시.
+_OPENAI_AUDIO_CHAT_SYSTEM = (
+    "You are a Korean text-to-speech engine. Read the user's text aloud EXACTLY and verbatim "
+    "in a warm, friendly, polite Korean (존댓말) voice with natural human intonation. Do not "
+    "add, change, translate, summarize, answer, or comment on anything. Do not add greetings, "
+    "acknowledgements, or filler. Speak only the exact transcript the user gives."
+)
+# 합성 음성이 원문을 그대로 읽었는지 판정하는 유사도 하한(미만이면 버리고 폴백).
+_OPENAI_AUDIO_FIDELITY_MIN = 0.9
 _MAX_REPLY_LENGTH = 500
 _GROUNDED_TRANSIT_RULE = (
     "너는 교통 정보를 추측하지 않는다. 제공된 routePlan, arrivals, busLocations, "
@@ -259,36 +301,48 @@ def generate_route_plan_summary(
     model = _model_from_env("GEMINI_PRO_MODEL", _DEFAULT_PRO_MODEL)
     candidates = "\n".join(f"- {candidate}" for candidate in validated_candidates)
     arrivals = "\n".join(f"- {arrival}" for arrival in arrival_context) or "- 조회된 도착 정보 없음"
-    maps_payload = _generate_payload(
-        model=model,
-        system_instruction="반드시 Google Maps grounding tool을 사용해. 검증되지 않은 거리나 도보 시간을 추측하지 마.",
-        prompt=(
-            f"현재 위치 위도 {origin_lat}, 경도 {origin_lng}에서 "
-            f"{stop_name}까지의 위치 관계를 Google Maps 기반으로 확인해줘."
-        ),
-        max_output_tokens=2048,
-        thinking_budget=128,
-        timeout_seconds=8.0,
-        tools=[{"googleMaps": {}}],
-        tool_config={
-            "retrievalConfig": {
-                "latLng": {
-                    "latitude": origin_lat,
-                    "longitude": origin_lng,
+    provider = _nlu_provider.get()
+    maps_summary: str | None = None
+    maps_sources: list[dict[str, str]] = []
+    used_websearch = False
+    if provider != "openai":
+        maps_payload = _generate_payload(
+            model=model,
+            system_instruction="반드시 Google Maps grounding tool을 사용해. 검증되지 않은 거리나 도보 시간을 추측하지 마.",
+            prompt=(
+                f"현재 위치 위도 {origin_lat}, 경도 {origin_lng}에서 "
+                f"{stop_name}까지의 위치 관계를 Google Maps 기반으로 확인해줘."
+            ),
+            max_output_tokens=2048,
+            thinking_budget=128,
+            timeout_seconds=8.0,
+            tools=[{"googleMaps": {}}],
+            tool_config={
+                "retrievalConfig": {
+                    "latLng": {
+                        "latitude": origin_lat,
+                        "longitude": origin_lng,
+                    }
                 }
-            }
-        },
-    )
-    maps_sources = _maps_sources(
-        maps_payload,
-        origin_lat=origin_lat,
-        origin_lng=origin_lng,
-    ) if maps_payload else []
-    maps_summary = _extract_text(maps_payload) if maps_payload else None
-    if not maps_sources or not maps_summary:
+            },
+        )
+        maps_sources = _maps_sources(
+            maps_payload,
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+        ) if maps_payload else []
+        maps_summary = _extract_text(maps_payload) if maps_payload else None
+    # openai 강제 또는 auto에서 Gemini Maps grounding 실패 시 → OpenAI web search 그라운딩 폴백.
+    if provider == "openai" or (provider == "auto" and not (maps_summary and maps_sources)):
+        ws_summary, ws_sources = _openai_websearch_grounding(
+            stop_name=stop_name, origin_lat=origin_lat, origin_lng=origin_lng
+        )
+        if ws_summary:
+            maps_summary, maps_sources, used_websearch = ws_summary, ws_sources, True
+    if not maps_summary or (not maps_sources and not used_websearch):
         return (
             model,
-            "Google Maps 위치 증빙을 확보하지 못해 현재 위치 기반 최적 경로는 확정하지 않았습니다. "
+            "위치 증빙을 확보하지 못해 현재 위치 기반 최적 경로는 확정하지 않았습니다. "
             "검증된 버스 도착정보를 확인해 주세요.",
             [],
         )
@@ -320,7 +374,13 @@ def generate_route_plan_summary(
     summary = _without_vision_claims(summary)
     if not summary:
         return None
-    return model, summary, maps_sources
+    if used_websearch:
+        result_model = os.getenv("OPENAI_GROUNDING_MODEL", _DEFAULT_OPENAI_GROUNDING_MODEL)
+    elif provider == "openai":
+        result_model = os.getenv("OPENAI_NLU_MODEL", _DEFAULT_OPENAI_NLU_MODEL)
+    else:
+        result_model = model
+    return result_model, summary, maps_sources
 
 
 def generate_route_plan_reply(
@@ -490,8 +550,222 @@ def _remove_mobi_user_address(reply: str) -> str:
     return cleaned
 
 
-def synthesize_tts_wav(*, text: str) -> bytes | None:
-    """Generate warm single-speaker TTS audio and package the PCM as WAV."""
+def _openai_speech_wav(*, text: str, model: str, voice: str, api_key: str) -> bytes | None:
+    """Pure-TTS path (/audio/speech) for verbatim models like gpt-4o-mini-tts."""
+    payload = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "instructions": _OPENAI_TTS_INSTRUCTIONS,
+        "response_format": "wav",
+    }
+    try:
+        response = httpx.post(
+            "https://api.openai.com/v1/audio/speech",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+            timeout=12.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+    audio = response.content
+    return audio if audio else None
+
+
+def _tts_fidelity(requested: str, spoken: str) -> float:
+    """원문과 합성 음성 transcript의 정규화 유사도(0~1). gpt-audio paraphrase 가드용."""
+    def norm(value: str) -> str:
+        return re.sub(r"[\s\W_]+", "", value or "")
+
+    a, b = norm(requested), norm(spoken)
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _openai_audio_chat_wav(*, text: str, model: str, voice: str, api_key: str) -> bytes | None:
+    """Full audio model (gpt-audio*) path via Chat Completions audio output.
+
+    gpt-audio는 대화 모델이라 transcript를 그대로 안 읽고 새는 경우가 있어, 반환된 spoken
+    transcript가 원문과 충분히 일치할 때만 오디오를 채택하고, 아니면 None을 돌려 호출자가
+    순수 TTS로 폴백하게 한다(시각장애인 안내라 버스번호 등 오독은 치명적).
+    """
+    payload = {
+        "model": model,
+        "modalities": ["text", "audio"],
+        "audio": {"voice": voice, "format": "wav"},
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": _OPENAI_AUDIO_CHAT_SYSTEM},
+            {"role": "user", "content": text},
+        ],
+    }
+    try:
+        response = httpx.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+            timeout=20.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+
+    decoded = response.json()
+    if not isinstance(decoded, dict):
+        return None
+    choices = decoded.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return None
+    audio = message.get("audio")
+    if not isinstance(audio, dict):
+        return None
+    encoded = audio.get("data")
+    if not isinstance(encoded, str):
+        return None
+    spoken = audio.get("transcript")
+    if isinstance(spoken, str) and _tts_fidelity(text, spoken) < _OPENAI_AUDIO_FIDELITY_MIN:
+        return None
+    try:
+        return base64.b64decode(encoded, validate=True) or None
+    except binascii.Error:
+        return None
+
+
+async def _openai_realtime_wav_async(*, text: str, model: str, voice: str, api_key: str) -> bytes | None:
+    """gpt-realtime* 모델을 짧은 Realtime websocket 세션으로 1회성 TTS에 쓴다.
+
+    GA shape: beta 헤더 없이 접속 → session.update(output_modalities/audio.output.voice)
+    → input_text 아이템 → response.create → ``response.output_audio.delta``(base64 pcm16
+    24kHz)를 모아 WAV로 포장. 대화 모델이라 paraphrase할 수 있으니 transcript fidelity로 가드한다.
+    """
+    import websockets  # 선택적 의존성: realtime 경로에서만 필요(로컬 import 실패 방지 위해 지연 로딩).
+
+    url = f"wss://api.openai.com/v1/realtime?model={model}"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        ws = await websockets.connect(url, additional_headers=headers, max_size=None)
+    except TypeError:
+        ws = await websockets.connect(url, extra_headers=headers, max_size=None)
+
+    pcm = bytearray()
+    transcript: list[str] = []
+    try:
+        await asyncio.wait_for(ws.recv(), timeout=10.0)  # session.created
+        await ws.send(json.dumps({
+            "type": "session.update",
+            "session": {
+                "type": "realtime",
+                "output_modalities": ["audio"],
+                "audio": {"output": {"voice": voice}},
+                "instructions": _OPENAI_AUDIO_CHAT_SYSTEM,
+            },
+        }))
+        await ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": text}]},
+        }))
+        await ws.send(json.dumps({"type": "response.create"}))
+        while True:
+            raw = await asyncio.wait_for(ws.recv(), timeout=20.0)
+            event = json.loads(raw)
+            event_type = event.get("type", "")
+            if event_type == "response.output_audio.delta":
+                delta = event.get("delta")
+                if isinstance(delta, str):
+                    try:
+                        pcm += base64.b64decode(delta, validate=True)
+                    except binascii.Error:
+                        pass
+            elif event_type == "response.output_audio_transcript.delta":
+                delta = event.get("delta")
+                if isinstance(delta, str):
+                    transcript.append(delta)
+            elif event_type in ("response.done", "error"):
+                break
+    finally:
+        await ws.close()
+
+    if not pcm:
+        return None
+    spoken = "".join(transcript)
+    if spoken and _tts_fidelity(text, spoken) < _OPENAI_AUDIO_FIDELITY_MIN:
+        return None
+    return _pcm_to_wav(bytes(pcm))
+
+
+def _openai_realtime_wav(*, text: str, model: str, voice: str, api_key: str) -> bytes | None:
+    """Sync wrapper: sync 라우트(threadpool, 실행 중 루프 없음)에서 realtime 세션을 돌린다."""
+    try:
+        return asyncio.run(
+            _openai_realtime_wav_async(text=text, model=model, voice=voice, api_key=api_key)
+        )
+    except Exception:
+        return None
+
+
+def _synthesize_openai_tts_wav(*, text: str, model_override: str | None = None) -> bytes | None:
+    """Generate warm female-voice TTS via OpenAI and return WAV bytes.
+
+    Primary TTS path when ``OPENAI_API_KEY`` is set. gpt-realtime* 모델은 Realtime
+    websocket 경로, gpt-audio* 모델은 Chat Completions audio 경로(둘 다 verbatim 가드),
+    순수 TTS 모델은 /audio/speech로 합성한다. 키가 없거나 모든 OpenAI 시도가 실패하면
+    None을 돌려 Gemini로 폴백한다.
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    model = (model_override
+             or os.getenv("OPENAI_TTS_MODEL", _DEFAULT_OPENAI_TTS_MODEL).strip()
+             or _DEFAULT_OPENAI_TTS_MODEL)
+    voice = (os.getenv("OPENAI_TTS_VOICE", _DEFAULT_OPENAI_TTS_VOICE).strip()
+             or _DEFAULT_OPENAI_TTS_VOICE)
+
+    if model.startswith("gpt-realtime"):
+        audio = _openai_realtime_wav(text=text, model=model, voice=voice, api_key=api_key)
+        if audio:
+            return audio
+        # realtime 실패 시 순수 TTS 모델로 verbatim 폴백.
+        return _openai_speech_wav(
+            text=text, model=_OPENAI_FALLBACK_TTS_MODEL, voice=voice, api_key=api_key
+        )
+
+    if model.startswith("gpt-audio"):
+        audio = _openai_audio_chat_wav(text=text, model=model, voice=voice, api_key=api_key)
+        if audio:
+            return audio
+        # paraphrase/실패 시 순수 TTS 모델로 verbatim 폴백.
+        return _openai_speech_wav(
+            text=text, model=_OPENAI_FALLBACK_TTS_MODEL, voice=voice, api_key=api_key
+        )
+
+    return _openai_speech_wav(text=text, model=model, voice=voice, api_key=api_key)
+
+
+def synthesize_tts_wav(
+    *, text: str, provider: str = "auto", model: str | None = None
+) -> bytes | None:
+    """Generate warm single-speaker TTS audio as WAV.
+
+    ``provider``: ``"auto"`` tries OpenAI (gpt-audio full model, falling back to
+    gpt-4o-mini-tts) then Gemini so audio survives if one provider is out of
+    credit or rate-limited. ``"openai"`` uses OpenAI only, ``"gemini"`` uses
+    Gemini only. ``model`` overrides the OpenAI TTS model (e.g. gpt-realtime-2 vs
+    gpt-4o-mini-tts) so the API test page can A/B specific voices.
+    """
+
+    if provider != "gemini":
+        openai_audio = _synthesize_openai_tts_wav(text=text, model_override=model)
+        if openai_audio:
+            return openai_audio
+        if provider == "openai":
+            return None
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -575,16 +849,156 @@ def _generate(
     timeout_seconds: float = 5.0,
     history: list[dict] | None = None,
 ) -> str | None:
-    payload = _generate_payload(
-        model=model,
+    provider = _nlu_provider.get()
+    if provider != "openai":
+        payload = _generate_payload(
+            model=model,
+            system_instruction=system_instruction,
+            prompt=prompt,
+            max_output_tokens=max_output_tokens,
+            thinking_budget=thinking_budget,
+            timeout_seconds=timeout_seconds,
+            history=history,
+        )
+        text = _extract_text(payload) if payload else None
+        if text is not None:
+            return text
+        if provider == "gemini":
+            return None
+    # provider == "openai"(강제) 또는 "auto"에서 Gemini 실패 → OpenAI NLU 폴백.
+    return _openai_generate(
         system_instruction=system_instruction,
         prompt=prompt,
         max_output_tokens=max_output_tokens,
-        thinking_budget=thinking_budget,
-        timeout_seconds=timeout_seconds,
         history=history,
     )
-    return _extract_text(payload) if payload else None
+
+
+def _openai_history(history: list[dict] | None) -> list[dict]:
+    """Gemini history({role:user|model,text})를 OpenAI messages(role:user|assistant)로 변환."""
+    out: list[dict] = []
+    for turn in history or []:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        text = turn.get("text")
+        if role not in {"user", "model"} or not isinstance(text, str) or not text.strip():
+            continue
+        out.append({"role": "assistant" if role == "model" else "user", "content": text.strip()})
+    return out
+
+
+def _openai_generate(
+    *,
+    system_instruction: str,
+    prompt: str,
+    max_output_tokens: int,
+    history: list[dict] | None = None,
+) -> str | None:
+    """OpenAI Chat Completions로 NLU 텍스트를 생성한다(Gemini _generate의 대체/폴백).
+
+    모델은 OPENAI_NLU_MODEL(기본 gpt-4.1-mini). gpt-5 reasoning 계열도 받도록 temperature는
+    보내지 않고 max_completion_tokens를 쓴다. 키 없음/실패 시 None을 돌려 deterministic 폴백.
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    model = (os.getenv("OPENAI_NLU_MODEL", _DEFAULT_OPENAI_NLU_MODEL).strip()
+             or _DEFAULT_OPENAI_NLU_MODEL)
+    messages = [{"role": "system", "content": system_instruction}]
+    messages.extend(_openai_history(history))
+    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_completion_tokens": max_output_tokens,
+    }
+    try:
+        response = httpx.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+            timeout=12.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+
+    decoded = response.json()
+    if not isinstance(decoded, dict):
+        return None
+    choices = decoded.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if not isinstance(content, str):
+        return None
+    content = content.strip()
+    return content[:_MAX_REPLY_LENGTH] if content else None
+
+
+def _openai_websearch_grounding(
+    *, stop_name: str, origin_lat: float, origin_lng: float
+) -> tuple[str | None, list[dict[str, str]]]:
+    """OpenAI web search(Responses API)로 정류장↔현재위치 위치관계를 그라운딩한다.
+
+    Gemini Google Maps grounding의 대체. (요약텍스트, 출처목록[{title,uri}])을 돌려
+    generate_route_plan_summary가 maps_summary/maps_sources 자리에 쓰게 한다. 실패 시 (None, []).
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None, []
+    model = (os.getenv("OPENAI_GROUNDING_MODEL", _DEFAULT_OPENAI_GROUNDING_MODEL).strip()
+             or _DEFAULT_OPENAI_GROUNDING_MODEL)
+    payload = {
+        "model": model,
+        "tools": [{"type": "web_search"}],
+        "input": (
+            f"청주시 '{stop_name}' 버스 정류장과 현재 위치(위도 {origin_lat}, 경도 {origin_lng})의 "
+            "위치 관계와 대략적인 도보 거리·방향을 확인되는 출처 기반으로만 알려줘. "
+            "추측하지 말고, 출처에서 확인 안 되면 모른다고 해."
+        ),
+    }
+    try:
+        response = httpx.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+            timeout=20.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None, []
+
+    decoded = response.json()
+    if not isinstance(decoded, dict):
+        return None, []
+    text_parts: list[str] = []
+    sources: list[dict[str, str]] = []
+    for item in decoded.get("output", []) or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for chunk in item.get("content", []) or []:
+            if not isinstance(chunk, dict) or chunk.get("type") not in ("output_text", "text"):
+                continue
+            text = chunk.get("text")
+            if isinstance(text, str):
+                text_parts.append(text)
+            for ann in chunk.get("annotations", []) or []:
+                if not isinstance(ann, dict) or ann.get("type") != "url_citation":
+                    continue
+                uri = ann.get("url")
+                if not isinstance(uri, str):
+                    continue
+                title = ann.get("title")
+                source = {"title": title if isinstance(title, str) and title else uri, "uri": uri}
+                if source not in sources:
+                    sources.append(source)
+    summary = "".join(text_parts).strip()
+    return (summary or None), sources
 
 
 def _history_contents(history: list[dict] | None) -> list[dict]:

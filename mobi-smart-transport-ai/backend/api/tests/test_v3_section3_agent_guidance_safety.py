@@ -12,8 +12,23 @@ def setup_function() -> None:
     get_firebase_client().clear_mock_store()
 
 
-def _say(session_id: str, utterance: str):
-    return client.post("/agent/converse", json={"sessionId": session_id, "wakeWord": "자비스", "utterance": utterance})
+def _say(
+    session_id: str,
+    utterance: str,
+    *,
+    originLat: float = 36.6262,
+    originLng: float = 127.4312,
+):
+    return client.post(
+        "/agent/converse",
+        json={
+            "sessionId": session_id,
+            "wakeWord": "자비스",
+            "utterance": utterance,
+            "originLat": originLat,
+            "originLng": originLng,
+        },
+    )
 
 
 def _seed_waiting_session(session_id: str = "s1") -> None:
@@ -45,7 +60,7 @@ def test_agent_rule_fallback_wake_route_arrival_select_flow() -> None:
     assert select.json()["state"] == "WAITING_FOR_BUS"
 
     state = client.get("/guidance/state", params={"sessionId": "s1"}).json()
-    assert state["targetBusId"] == "BUS_2"
+    assert state["targetBusId"] == "BUS_502_TERMINAL"
     assert state["geofenceArmed"] is False
 
 
@@ -57,15 +72,20 @@ def test_agent_destination_correction_and_change_are_session_safe() -> None:
     assert correction.json()["intent"] == "CORRECT_DESTINATION"
     state = client.get("/guidance/state", params={"sessionId": "s1"}).json()
     assert state["selectedDestination"] == "사창사거리"
-    assert state["selectedStopId"] == "mock-stop-001"
+    assert state["selectedStopId"] == "mock-stop-003"
 
-    change = _say("s1", "목적지 충북대병원으로 바꿔줘")
+    change = _say(
+        "s1",
+        "목적지 충북대병원으로 바꿔줘",
+        originLat=36.6359,
+        originLng=127.4596,
+    )
     assert change.status_code == 200
     assert change.json()["intent"] == "CHANGE_DESTINATION"
     state = client.get("/guidance/state", params={"sessionId": "s1"}).json()
-    assert state["selectedDestination"] == "충북대병원"
+    assert state["selectedDestination"] == "충북대학교병원"
     assert state["selectedRouteNo"] == "823"
-    assert state["selectedStopId"] == "mock-stop-002"
+    assert state["selectedStopId"] == "mock-stop-001"
     assert state["targetBusId"] is None
 
 

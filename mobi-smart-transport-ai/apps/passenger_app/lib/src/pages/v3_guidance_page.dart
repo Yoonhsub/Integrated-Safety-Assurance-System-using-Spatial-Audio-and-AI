@@ -99,6 +99,10 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   String? _locationError;
   Future<void>? _locationRequest;
   bool _isAgentTraceExpanded = false;
+  // 보이스 모델(테스트 비교용): 'realtime'=gpt-realtime-2, 'mini'=gpt-4o-mini-tts, 'gemini'=Gemini TTS.
+  String _voiceChoice = 'realtime';
+  // NLU(의도분류·자연어 응답) 제공자: 'openai'=GPT, 'gemini'=Gemini.
+  String _nluProvider = 'openai';
   bool _isListening = false;
   String? _nextLiveScriptLineId;
   String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말씀해 주세요.';
@@ -556,6 +560,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             originLat: planningPreparation?.position?.latitude,
             originLng: planningPreparation?.position?.longitude,
             mode: widget.dataMode,
+            nluProvider: _nluProvider,
           );
           planningStatus = _completedPlanningStatus(
             preparation: planningPreparation!,
@@ -746,6 +751,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             mode: widget.dataMode,
             originLat: originLat,
             originLng: originLng,
+            nluProvider: _nluProvider,
           )
           .timeout(const Duration(seconds: 45));
       await for (final event in stream) {
@@ -766,6 +772,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       mode: widget.dataMode,
       originLat: originLat,
       originLng: originLng,
+      nluProvider: _nluProvider,
     );
   }
 
@@ -817,7 +824,17 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
 
     try {
-      final audioBytes = await _client.synthesizeSpeech(text: message);
+      final voiceProvider = _voiceChoice == 'gemini' ? 'gemini' : 'openai';
+      final voiceModel = switch (_voiceChoice) {
+        'realtime' => 'gpt-realtime-2',
+        'mini' => 'gpt-4o-mini-tts',
+        _ => null,
+      };
+      final audioBytes = await _client.synthesizeSpeech(
+        text: message,
+        provider: voiceProvider,
+        model: voiceModel,
+      );
       await _cueService.playGeneratedSpeech(audioBytes);
       return;
     } on V3ApiException {
@@ -844,6 +861,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             originLat: preparation.position?.latitude,
             originLng: preparation.position?.longitude,
             mode: widget.dataMode,
+            nluProvider: _nluProvider,
           );
         } on V3ApiException {
           // 임의 장소명은 새 RoutePlan만으로도 표시 가능하다.
@@ -1889,6 +1907,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       controller: _utteranceController,
                       isBusy: _isBusy,
                       wakeWord: _wakeWord,
+                      voiceChoice: _voiceChoice,
+                      onVoiceChoiceChanged: (value) =>
+                          setState(() => _voiceChoice = value),
+                      nluProvider: _nluProvider,
+                      onNluProviderChanged: (value) =>
+                          setState(() => _nluProvider = value),
                       onSend: () => _sendUtterance(),
                       onQuickAction: (text) => _sendUtterance(text),
                     ),
@@ -3891,6 +3915,10 @@ class _CombinedChatControlCard extends StatelessWidget {
     required this.controller,
     required this.isBusy,
     required this.wakeWord,
+    required this.voiceChoice,
+    required this.onVoiceChoiceChanged,
+    required this.nluProvider,
+    required this.onNluProviderChanged,
     required this.onSend,
     required this.onQuickAction,
   });
@@ -3898,6 +3926,10 @@ class _CombinedChatControlCard extends StatelessWidget {
   final TextEditingController controller;
   final bool isBusy;
   final String wakeWord;
+  final String voiceChoice;
+  final ValueChanged<String> onVoiceChoiceChanged;
+  final String nluProvider;
+  final ValueChanged<String> onNluProviderChanged;
   final VoidCallback onSend;
   final ValueChanged<String> onQuickAction;
 
@@ -3916,6 +3948,69 @@ class _CombinedChatControlCard extends StatelessWidget {
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 64,
+                  child: Text('보이스',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment<String>(
+                            value: 'realtime', label: Text('Realtime')),
+                        ButtonSegment<String>(
+                            value: 'mini', label: Text('Mini-TTS')),
+                        ButtonSegment<String>(
+                            value: 'gemini', label: Text('Gemini')),
+                      ],
+                      selected: <String>{voiceChoice},
+                      showSelectedIcon: false,
+                      onSelectionChanged: isBusy
+                          ? null
+                          : (selection) =>
+                              onVoiceChoiceChanged(selection.first),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 64,
+                  child:
+                      Text('NLU', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                Expanded(
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment<String>(
+                        value: 'openai',
+                        label: Text('GPT'),
+                        icon: Icon(Icons.graphic_eq),
+                      ),
+                      ButtonSegment<String>(
+                        value: 'gemini',
+                        label: Text('Gemini'),
+                        icon: Icon(Icons.auto_awesome),
+                      ),
+                    ],
+                    selected: <String>{nluProvider},
+                    showSelectedIcon: false,
+                    onSelectionChanged: isBusy
+                        ? null
+                        : (selection) =>
+                            onNluProviderChanged(selection.first),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(

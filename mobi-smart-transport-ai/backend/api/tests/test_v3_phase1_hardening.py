@@ -208,7 +208,7 @@ def test_new_destination_replaces_selected_route_context() -> None:
     body = second.json()
     assert "충북대" in body["message"]
     state = client.get("/guidance/state", params={"sessionId": "s-replace"}).json()
-    assert state["selectedDestination"] == "충북대병원"
+    assert state["selectedDestination"] == "충북대학교병원"
     assert state["selectedRouteNo"] == "823"
 
 

@@ -151,6 +151,8 @@ class AgentConverseRequest(StrictApiModel):
     # 현재 위치가 들어오면 에이전트 대화 안에서 바로 RoutePlan까지 계산한다.
     originLat: float | None = Field(default=None, ge=-90, le=90)
     originLng: float | None = Field(default=None, ge=-180, le=180)
+    # NLU(의도분류·자연어 응답) 제공자: auto=Gemini 우선→GPT 폴백, gemini=Gemini만, openai=GPT만.
+    nluProvider: Literal["auto", "gemini", "openai"] = "auto"
 
     @model_validator(mode="after")
     def validate_origin_pair(self) -> "AgentConverseRequest":
@@ -191,6 +193,11 @@ class AgentConverseResponse(StrictApiModel):
 
 class AgentTtsRequest(StrictApiModel):
     text: str = Field(min_length=1, max_length=500, pattern=NON_BLANK_PATTERN)
+    # 보이스 합성 제공자 선택: auto=OpenAI 우선→Gemini 폴백, openai=GPT만, gemini=Gemini만.
+    provider: Literal["auto", "openai", "gemini"] = "auto"
+    # OpenAI 보이스 모델 오버라이드(테스트페이지 비교용): gpt-realtime-2 / gpt-4o-mini-tts 등.
+    # None이면 OPENAI_TTS_MODEL env 사용.
+    model: str | None = Field(default=None, max_length=60)
 
 
 class RouteRecommendation(StrictApiModel):

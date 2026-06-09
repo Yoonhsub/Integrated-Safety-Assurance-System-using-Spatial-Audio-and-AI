@@ -104,6 +104,7 @@ class V3AgentApiClient {
     String? mode,
     double? originLat,
     double? originLng,
+    String? nluProvider,
   }) async {
     final json = await _postJson(
         '/agent/converse',
@@ -114,6 +115,7 @@ class V3AgentApiClient {
           if (mode != null) 'mode': mode,
           if (originLat != null && originLng != null) 'originLat': originLat,
           if (originLat != null && originLng != null) 'originLng': originLng,
+          if (nluProvider != null) 'nluProvider': nluProvider,
         },
         customTimeout: _converseTimeout);
     return V3AgentResponse.fromJson(json);
@@ -128,6 +130,7 @@ class V3AgentApiClient {
     String? mode,
     double? originLat,
     double? originLng,
+    String? nluProvider,
   }) {
     return openConverseLive(
       baseUrl: baseUrl,
@@ -138,19 +141,28 @@ class V3AgentApiClient {
         if (mode != null) 'mode': mode,
         if (originLat != null && originLng != null) 'originLat': originLat,
         if (originLat != null && originLng != null) 'originLng': originLng,
+        if (nluProvider != null) 'nluProvider': nluProvider,
       },
     );
   }
 
-  Future<Uint8List> synthesizeSpeech({required String text}) async {
+  Future<Uint8List> synthesizeSpeech({
+    required String text,
+    String? provider,
+    String? model,
+  }) async {
     try {
       final response = await _client
           .post(
             _buildUri('/agent/tts'),
             headers: const <String, String>{'Content-Type': 'application/json'},
-            body: jsonEncode(<String, Object?>{'text': text}),
+            body: jsonEncode(<String, Object?>{
+              'text': text,
+              if (provider != null) 'provider': provider,
+              if (model != null) 'model': model,
+            }),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw V3ApiException(
           'Gemini TTS를 사용할 수 없습니다.',
@@ -172,6 +184,7 @@ class V3AgentApiClient {
     double? originLat,
     double? originLng,
     String? mode,
+    String? nluProvider,
   }) async {
     final query = <String, String>{
       'destination': destination,
@@ -182,6 +195,9 @@ class V3AgentApiClient {
     }
     if (mode != null) {
       query['mode'] = mode;
+    }
+    if (nluProvider != null) {
+      query['nluProvider'] = nluProvider;
     }
     final json = await _getJson('/bus/route-recommend', query);
     return V3RouteRecommendResponse.fromJson(json);

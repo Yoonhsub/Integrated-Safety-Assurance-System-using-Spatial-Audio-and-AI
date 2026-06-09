@@ -33,7 +33,7 @@ from app.services.destination_candidate_resolver import DestinationCandidateReso
 from app.services.route_service_status import evaluate_route_service_status
 from app.services.route_stop_sequence_cache import RouteStopNode
 from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
-from app.services.v3_gemini_service import generate_route_plan_summary
+from app.services.v3_gemini_service import generate_route_plan_summary, set_nlu_provider
 
 router = APIRouter()
 _service = BusInfoGatewayService()
@@ -279,7 +279,10 @@ def route_recommend(
     originLat: float | None = Query(default=None, ge=-90, le=90),
     originLng: float | None = Query(default=None, ge=-180, le=180),
     mode: DataMode | None = Query(default=None),
+    nluProvider: Literal["auto", "gemini", "openai"] = Query(default="auto"),
 ) -> RouteRecommendResponse:
+    # 경로 요약·위치 그라운딩에 쓸 제공자(Gemini/GPT) 설정 — converse 토글과 일관.
+    set_nlu_provider(nluProvider)
     _validate_origin_pair(originLat, originLng)
     live = _resolve_live(mode)
     canonical = _DESTINATION_ALIASES.get(_key(destination))

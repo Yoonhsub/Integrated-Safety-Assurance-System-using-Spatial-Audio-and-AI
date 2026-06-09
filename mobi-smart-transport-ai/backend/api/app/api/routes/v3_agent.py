@@ -41,6 +41,7 @@ from app.services.v3_gemini_service import (
     generate_dynamic_response,
     generate_optional_reply,
     infer_cheongju_destination,
+    set_nlu_provider,
     synthesize_tts_wav,
 )
 from app.services.v3_gemini_live_audio_service import (
@@ -53,7 +54,29 @@ from app.services.v3_gemini_live_audio_service import (
     open_gemini_stt_session,
     stream_live_audio_pcm,
 )
+from app.services.v3_openai_live_audio_service import (
+    OpenAiLiveAudioUnavailable,
+    extract_openai_input_transcript,
+    open_openai_stt_session,
+    openai_stt_audio_message,
+    openai_stt_stream_end_message,
+    realtime_model,
+    realtime_voice,
+    stream_openai_realtime_pcm,
+)
 from app.services.v3_guidance_store import V3SessionRecord, v3_guidance_store
+
+
+def _live_audio_provider() -> str:
+    """Live 오디오 제공자. LIVE_AUDIO_PROVIDER env: openai|gemini|auto(기본).
+
+    auto = OPENAI_API_KEY가 있으면 OpenAI, 없으면 Gemini. (Gemini Live 실패는 ~5s 지연이라
+    크레딧 소진 상황에선 OpenAI를 우선한다.)
+    """
+    choice = (os.getenv("LIVE_AUDIO_PROVIDER", "auto").strip().lower() or "auto")
+    if choice in ("openai", "gemini"):
+        return choice
+    return "openai" if os.getenv("OPENAI_API_KEY", "").strip() else "gemini"
 
 
 def _is_live_mode() -> bool:
@@ -90,22 +113,33 @@ _DESTINATION_ALIASES: tuple[tuple[str, str], ...] = (
 
 @router.post("/tts", response_class=Response)
 def tts(payload: AgentTtsRequest) -> Response:
-    audio = synthesize_tts_wav(text=payload.text.strip())
+    audio = synthesize_tts_wav(
+        text=payload.text.strip(), provider=payload.provider, model=payload.model
+    )
     if audio is None:
         raise HTTPException(
             status_code=503,
             detail={
                 "error": {
-                    "code": "GEMINI_TTS_UNAVAILABLE",
-                    "message": "Gemini TTS audio could not be generated.",
-                    "detail": {},
+                    "code": "TTS_UNAVAILABLE",
+                    "message": "TTS audio could not be generated.",
+                    "detail": {"provider": payload.provider},
                 }
             },
         )
+    voice = (
+        os.getenv("OPENAI_TTS_VOICE", "marin")
+        if payload.provider in ("auto", "openai")
+        else os.getenv("GEMINI_TTS_VOICE", "Kore")
+    )
     return Response(
         content=audio,
         media_type="audio/wav",
-        headers={"X-Gemini-TTS-Voice": os.getenv("GEMINI_TTS_VOICE", "Kore")},
+        headers={
+            "X-TTS-Provider": payload.provider,
+            "X-TTS-Voice": voice,
+            "X-Gemini-TTS-Voice": os.getenv("GEMINI_TTS_VOICE", "Kore"),
+        },
     )
 
 
@@ -117,43 +151,64 @@ async def tts_live(websocket: WebSocket) -> None:
     try:
         payload = await asyncio.wait_for(websocket.receive_json(), timeout=5)
         request = AgentTtsRequest.model_validate(payload)
-        await websocket.send_json(
-            {
-                "type": "start",
-                "provider": "GEMINI_LIVE_API",
-                "model": live_audio_model(),
-                "voice": live_audio_voice(),
-                "sampleRate": 24000,
-                "channels": 1,
-            }
-        )
-        chunk_count = 0
-        async for chunk in stream_live_audio_pcm(text=request.text.strip()):
-            chunk_count += 1
-            await websocket.send_json(
-                {
-                    "type": "audio",
-                    "data": chunk.data,
-                    "mimeType": chunk.mime_type,
-                }
-            )
-        await websocket.send_json({"type": "done", "chunkCount": chunk_count})
+        text = request.text.strip()
+        # provider 우선순위(openai/gemini). 첫 청크 전 실패하면 다른 제공자로 폴백한다.
+        primary = _live_audio_provider()
+        order = ["openai", "gemini"] if primary == "openai" else ["gemini", "openai"]
+        started = False
+        last_error: Exception | None = None
+        for prov in order:
+            try:
+                if prov == "openai":
+                    stream = stream_openai_realtime_pcm(text=text)
+                    meta = ("OPENAI_REALTIME", realtime_model(), realtime_voice())
+                else:
+                    stream = stream_live_audio_pcm(text=text)
+                    meta = ("GEMINI_LIVE_API", live_audio_model(), live_audio_voice())
+                chunk_count = 0
+                async for chunk in stream:
+                    if not started:
+                        await websocket.send_json(
+                            {
+                                "type": "start",
+                                "provider": meta[0],
+                                "model": meta[1],
+                                "voice": meta[2],
+                                "sampleRate": 24000,
+                                "channels": 1,
+                            }
+                        )
+                        started = True
+                    chunk_count += 1
+                    await websocket.send_json(
+                        {"type": "audio", "data": chunk.data, "mimeType": chunk.mime_type}
+                    )
+                if started:
+                    await websocket.send_json({"type": "done", "chunkCount": chunk_count})
+                    break
+            except (GeminiLiveAudioUnavailable, OpenAiLiveAudioUnavailable) as exc:
+                last_error = exc
+                if started:
+                    break  # 스트리밍 도중 실패는 중간에 제공자를 바꾸지 않는다.
+                continue  # 첫 청크 전 실패 → 다음 제공자로 폴백.
+        if not started:
+            raise last_error or GeminiLiveAudioUnavailable("No live audio provider available.")
     except (asyncio.TimeoutError, ValidationError):
         await _send_live_audio_error(
             websocket,
             code="INVALID_LIVE_TTS_REQUEST",
             message="Live TTS request was missing or invalid.",
         )
-    except GeminiLiveAudioUnavailable:
+    except (GeminiLiveAudioUnavailable, OpenAiLiveAudioUnavailable):
         await _send_live_audio_error(
             websocket,
-            code="GEMINI_LIVE_TTS_UNAVAILABLE",
-            message="Gemini Live API audio could not be generated.",
+            code="LIVE_TTS_UNAVAILABLE",
+            message="Live TTS audio could not be generated.",
         )
     except Exception:
         await _send_live_audio_error(
             websocket,
-            code="GEMINI_LIVE_TTS_ERROR",
+            code="LIVE_TTS_ERROR",
             message="Live TTS streaming failed.",
         )
     finally:
@@ -173,8 +228,19 @@ async def stt_live(websocket: WebSocket) -> None:
     발화 종료(turnComplete)를 판정한다.
     """
     await websocket.accept()
+    provider = _live_audio_provider()
+    if provider == "openai":
+        _open_session = open_openai_stt_session
+        _stt_audio_msg = openai_stt_audio_message
+        _stt_end_msg = openai_stt_stream_end_message
+        _stt_extract = extract_openai_input_transcript
+    else:
+        _open_session = open_gemini_stt_session
+        _stt_audio_msg = live_stt_audio_message
+        _stt_end_msg = live_stt_audio_stream_end_message
+        _stt_extract = extract_input_transcript
     try:
-        async with open_gemini_stt_session() as gemini:
+        async with _open_session() as gemini:
             await websocket.send_json({"type": "ready"})
 
             # 두 펌프가 공유하는 전사 버퍼(턴 사이 reset으로 잔여 전사 분리).
@@ -190,7 +256,7 @@ async def stt_live(websocket: WebSocket) -> None:
                             sr = msg.get("sampleRate") or 16000
                             await gemini.send(
                                 json.dumps(
-                                    live_stt_audio_message(
+                                    _stt_audio_msg(
                                         b64_pcm16=data, sample_rate=int(sr)
                                     )
                                 )
@@ -201,7 +267,7 @@ async def stt_live(websocket: WebSocket) -> None:
                     elif kind == "stop":
                         try:
                             await gemini.send(
-                                json.dumps(live_stt_audio_stream_end_message())
+                                json.dumps(_stt_end_msg())
                             )
                         except Exception:  # noqa: BLE001
                             pass
@@ -228,7 +294,7 @@ async def stt_live(websocket: WebSocket) -> None:
                         continue
                     if not isinstance(decoded, dict):
                         continue
-                    text, turn_complete = extract_input_transcript(decoded)
+                    text, turn_complete = _stt_extract(decoded)
                     if text:
                         shared["buffer"] += text
                         last_delta = loop.time()
@@ -268,16 +334,16 @@ async def stt_live(websocket: WebSocket) -> None:
                     task.cancel()
     except (WebSocketDisconnect, RuntimeError):
         pass
-    except GeminiLiveAudioUnavailable:
+    except (GeminiLiveAudioUnavailable, OpenAiLiveAudioUnavailable):
         await _send_live_audio_error(
             websocket,
-            code="GEMINI_LIVE_STT_UNAVAILABLE",
-            message="Gemini Live STT could not be started.",
+            code="LIVE_STT_UNAVAILABLE",
+            message="Live STT could not be started.",
         )
     except Exception:  # noqa: BLE001
         await _send_live_audio_error(
             websocket,
-            code="GEMINI_LIVE_STT_ERROR",
+            code="LIVE_STT_ERROR",
             message="Live STT streaming failed.",
         )
     finally:
@@ -430,6 +496,8 @@ def _run_converse(
     *,
     trace: AgentTraceRecorder,
 ) -> AgentConverseResponse:
+    # 요청별 NLU 제공자(Gemini/GPT) 설정 — 이후 모든 NLU 생성 호출이 이 값을 따른다.
+    set_nlu_provider(payload.nluProvider)
     session = v3_guidance_store.get(payload.sessionId, wake_word=payload.wakeWord)
     wake_word = session.wake_word.strip()
     normalize_event = trace.start(
@@ -1035,7 +1103,7 @@ def _handle_route_request(
 
     # 위치가 있으면 새 RoutePlan 기반으로 임의 장소/주소/정류장명을 처리한다.
     if payload.originLat is not None and payload.originLng is not None:
-        heard_text = nlp_destination or _generic_destination_text(payload.utterance) or destination or payload.utterance
+        heard_text = _route_heard_text(payload, explicit_destination, nlp_destination, destination)
         route_plan = _plan_route(
             heard_text=heard_text,
             origin_lat=payload.originLat,
@@ -1071,7 +1139,7 @@ def _handle_route_request(
     # 위치가 없으면 예전 고정 카탈로그 문장으로 승차 정류장을 꾸며내지 않는다.
     # 특히 "충북대병원" 같은 목적지 alias가 destination stop을 boarding stop처럼
     # 말하는 회귀를 만들 수 있으므로, RoutePlan의 위치 필요 응답만 사용한다.
-    heard_text = nlp_destination or _generic_destination_text(payload.utterance) or destination or payload.utterance
+    heard_text = _route_heard_text(payload, explicit_destination, nlp_destination, destination)
     route_plan = _plan_route(
         heard_text=heard_text,
         origin_lat=None,
@@ -1474,6 +1542,18 @@ def _extract_destination(utterance: str) -> str | None:
             return canonical
     cleaned = _generic_destination_text(utterance)
     return cleaned if cleaned else None
+
+
+def _route_heard_text(
+    payload: AgentConverseRequest,
+    explicit_destination: str | None,
+    nlp_destination: str | None,
+    destination: str | None,
+) -> str:
+    generic = _generic_destination_text(payload.utterance)
+    if generic and _compact(generic) == "터미널":
+        return generic
+    return explicit_destination or nlp_destination or generic or destination or payload.utterance
 
 
 def _generic_destination_text(utterance: str) -> str | None:
