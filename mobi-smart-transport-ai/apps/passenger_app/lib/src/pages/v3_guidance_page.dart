@@ -1910,6 +1910,8 @@ Future<void> _pollBeaconLatestOnce() async {
                       onRepeatScript: _repeatMockScript,
                       onRefreshArrivals: _refreshArrivals,
                       latestBeaconDecision: _lastBeaconDecision,
+                      latestBeacon: _latestBeacon,
+                      latestBeaconError: _latestBeaconError,
                       latestGeofenceMessage: _latestGeofenceMessage,
                       headTracking: _headTracking,
                       useMockHeadTracking: _useMockHeadTracking,
@@ -4152,6 +4154,8 @@ class _DebugExpansionPanel extends StatelessWidget {
     required this.onRepeatScript,
     required this.onRefreshArrivals,
     required this.latestBeaconDecision,
+    required this.latestBeacon,
+    required this.latestBeaconError,
     required this.latestGeofenceMessage,
     // Head Tracking
     required this.headTracking,
@@ -4187,6 +4191,8 @@ class _DebugExpansionPanel extends StatelessWidget {
   final VoidCallback onRepeatScript;
   final VoidCallback onRefreshArrivals;
   final V3BeaconDecisionResponse? latestBeaconDecision;
+  final V3BeaconLatestResponse? latestBeacon;
+  final String? latestBeaconError;
   final String? latestGeofenceMessage;
 
   final HeadTrackingDebugSnapshot headTracking;
@@ -4261,6 +4267,8 @@ class _DebugExpansionPanel extends StatelessWidget {
             lastAgentResponse: lastAgentResponse,
             lastArrivals: lastArrivals,
             lastBeaconDecision: latestBeaconDecision,
+            latestBeacon: latestBeacon,
+            latestBeaconError: latestBeaconError,
             headTracking: headTracking,
             activeCueType: activeCueType,
           ),
