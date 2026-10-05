@@ -71,26 +71,19 @@ backend/api/app/services/ride_request_service.py
 backend/api/app/services/safety_event_service.py
 backend/api/app/services/v3_guidance_store.py
 backend/api/requirements.txt
+backend/api/requirements-dev.txt
 backend/api/tests/test_api_contract_validation.py
 backend/api/tests/test_health.py
 backend/api/tests/test_v3_section1_routes.py
 backend/api/tests/test_v3_section2_bus_api.py
 backend/api/tests/test_v3_section3_agent_guidance_safety.py
-docs/00_ßäïßà»ßå½ßäçßà⌐ßå½_ßäåßà⌐ßäçßà╡_ßäæßà│ßäàßà⌐ßäîßàªßå¿ßäÉßà│_ßäÇßà¿ßäÆßà¼ßå¿ßäëßàÑ.docx
 docs/00_원본_모비_프로젝트_계획서.docx
-docs/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.docx
-docs/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.md
 docs/01_요구사항명세서.docx
 docs/01_요구사항명세서.md
-docs/02_4ßäïßà»ßå»_ßäÇßàóßäïßà╡ßå½ßäçßàºßå»_ßäÇßà«ßäÆßàºßå½ßäçßàÑßå╖ßäïßà▒_ßäëßà«ßäîßàÑßå╝ßäïßàíßå½.md
 docs/02_4월_개인별_구현범위_수정안.md
-docs/agent_required_reading/00_ßäïßà»ßå½ßäçßà⌐ßå½_ßäåßà⌐ßäçßà╡_ßäæßà│ßäàßà⌐ßäîßàªßå¿ßäÉßà│_ßäÇßà¿ßäÆßà¼ßå¿ßäëßàÑ.docx
 docs/agent_required_reading/00_원본_모비_프로젝트_계획서.docx
-docs/agent_required_reading/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.docx
-docs/agent_required_reading/01_ßäïßà¡ßäÇßà«ßäëßàíßäÆßàíßå╝ßäåßàºßå╝ßäëßàªßäëßàÑ.md
 docs/agent_required_reading/01_요구사항명세서.docx
 docs/agent_required_reading/01_요구사항명세서.md
-docs/agent_required_reading/02_4ßäïßà»ßå»_ßäÇßàóßäïßà╡ßå½ßäçßàºßå»_ßäÇßà«ßäÆßàºßå½ßäçßàÑßå╖ßäïßà▒_ßäëßà«ßäîßàÑßå╝ßäïßàíßå½.md
 docs/agent_required_reading/02_4월_개인별_구현범위_수정안.md
 docs/read/AGENT_REQUIRED_READING.md
 docs/read/BRANCH_STRATEGY.md
@@ -102,11 +95,6 @@ docs/read/PREDEPENDENCY_PATCH_AGENT_PROMPT.md
 docs/read/PULL_REQUEST_RULES.md
 docs/read/RENAMED_LONG_FILENAME_09d7f9e86d.md
 docs/read/architecture_validation_result.txt
-docs/read/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
-docs/read/ßäëßàªßå¿ßäëßàºßå½ ßäÄßà«ßäÇßàí
-docs/read/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
-docs/read/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
-docs/read/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕ßäïßà┤ ßäïßàªßäïßà╡ßäîßàÑßå½ßäÉßà│ ßäæßà╡ßå»ßäâßà⌐ßå¿ßäëßàíßäÆßàíßå╝.md
 docs/read/김도성의 에이전트 필독사항.md
 docs/read/섹션 추가
 docs/read/심현석의 에이전트 필독사항.md
@@ -127,19 +115,6 @@ docs/rw/V2_SECTION_PLAN.md
 docs/rw/V3_API_CONTRACTS.md
 docs/rw/V3_DEMO_SCRIPT.md
 docs/rw/V3_SECTION_PLAN.md
-docs/rw/ßäÄßà«ßå╝ßäâßà⌐ßå» ßäïßà╡ßäëßà▓.md
-docs/rw/ßäÇßà⌐ßå╝ßäÉßà⌐ßå╝ ßäîßà╡ßå½ßäÆßàóßå╝ßäëßàíßäÆßàíßå╝.md
-docs/rw/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
-docs/rw/ßäÇßà╡ßå╖ßäâßà⌐ßäëßàÑßå╝_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
-docs/rw/ßäëßàÑßå½ßäÆßàóßå╝ßäîßàíßå¿ßäïßàÑßå╕ßäïßà┤ßäîßà⌐ßå½ßäëßàÑßå╝ ßäîßàÑßå╝ßäàßà╡.md
-docs/rw/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
-docs/rw/ßäëßà╡ßå╖ßäÆßàºßå½ßäëßàÑßå¿_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
-docs/rw/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
-docs/rw/ßäïßàíßå½ßäîßà«ßå½ßäÆßà¬ßå½_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
-docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ.md
-docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäÄßà¼ßäîßà⌐ßå╝ ßäÇßàóßäçßàíßå» ßäçßà⌐ßäÇßà⌐ßäëßàÑ_V2.md
-docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│.md
-docs/rw/ßäïßà▓ßå½ßäÆßàºßå½ßäëßàÑßå╕_ßäâßà╡ßäçßàÑßäÇßà│ ßäàßà╡ßäæßà⌐ßäÉßà│_V2.md
 docs/rw/공통 진행사항.md
 docs/rw/김도성_디버그 리포트.md
 docs/rw/김도성_최종 개발 보고서.md
@@ -216,3 +191,222 @@ services/public_data/requirements.txt
 services/public_data/tests/.gitkeep
 services/public_data/tests/__init__.py
 services/public_data/tests/test_bus_arrivals_service.py
+PATCH_REPORT_V3_LOCATION_CHAT_VOICE.md
+apps/passenger_app/.gitignore
+apps/passenger_app/.metadata
+apps/passenger_app/analysis_options.yaml
+apps/passenger_app/assets/mock_voice/.keep
+apps/passenger_app/assets/mock_voice/arrive_at_stop.mp3
+apps/passenger_app/assets/mock_voice/arrive_at_stop__3f4ef956.mp3
+apps/passenger_app/assets/mock_voice/arrive_at_stop__48593171.mp3
+apps/passenger_app/assets/mock_voice/boarded_success.mp3
+apps/passenger_app/assets/mock_voice/boarded_success__2da24ced.mp3
+apps/passenger_app/assets/mock_voice/boarded_success__665e8fc8.mp3
+apps/passenger_app/assets/mock_voice/boarded_success__e91a25f0.mp3
+apps/passenger_app/assets/mock_voice/boarded_success__f73e88e4.mp3
+apps/passenger_app/assets/mock_voice/boarded_success__fd161a33.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt__024beec5.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt__9ffe00a7.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt__b8d33e74.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt__de923a3b.mp3
+apps/passenger_app/assets/mock_voice/boarding_prompt__fbcc0e72.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__609629a9.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__7d3b85c2.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__829d35dd.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__c0d6af2b.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__e9a85530.mp3
+apps/passenger_app/assets/mock_voice/bus_approaching__ee1264e3.mp3
+apps/passenger_app/assets/mock_voice/bus_stopped.mp3
+apps/passenger_app/assets/mock_voice/bus_stopped__9e5735dd.mp3
+apps/passenger_app/assets/mock_voice/bus_stopped__e301ce08.mp3
+apps/passenger_app/assets/mock_voice/bus_stopped__f1d285a1.mp3
+apps/passenger_app/assets/mock_voice/danger_zone.mp3
+apps/passenger_app/assets/mock_voice/danger_zone__1b1b5adf.mp3
+apps/passenger_app/assets/mock_voice/detour_left.mp3
+apps/passenger_app/assets/mock_voice/geofence_warning.mp3
+apps/passenger_app/assets/mock_voice/geofence_warning__18269fab.mp3
+apps/passenger_app/assets/mock_voice/missed_bus.mp3
+apps/passenger_app/assets/mock_voice/missed_bus__e7df6a14.mp3
+apps/passenger_app/assets/mock_voice/mock_start.mp3
+apps/passenger_app/assets/mock_voice/next_bus_wait.mp3
+apps/passenger_app/assets/mock_voice/next_bus_wait__d0b94a1d.mp3
+apps/passenger_app/assets/mock_voice/obstacle_detected.mp3
+apps/passenger_app/assets/mock_voice/obstacle_detected__16a00448.mp3
+apps/passenger_app/assets/mock_voice/return_to_geofence.mp3
+apps/passenger_app/assets/mock_voice/return_to_geofence__43298ee8.mp3
+apps/passenger_app/assets/mock_voice/return_to_geofence__ab45cb04.mp3
+apps/passenger_app/assets/mock_voice/route_changed.mp3
+apps/passenger_app/assets/mock_voice/route_changed__49bf74ac.mp3
+apps/passenger_app/assets/mock_voice/scenario_01_start.mp3
+apps/passenger_app/assets/mock_voice/scenario_04_start.mp3
+apps/passenger_app/assets/mock_voice/scenario_04_start_left.mp3
+apps/passenger_app/assets/mock_voice/signal_lost.mp3
+apps/passenger_app/assets/mock_voice/signal_lost__1c6cff80.mp3
+apps/passenger_app/assets/mock_voice/target_bus_confirmed.mp3
+apps/passenger_app/assets/mock_voice/target_bus_confirmed__accb249b.mp3
+apps/passenger_app/assets/mock_voice/target_bus_confirmed__ae47e7d5.mp3
+apps/passenger_app/assets/mock_voice/target_bus_confirmed_left.mp3
+apps/passenger_app/assets/mock_voice/target_bus_moving.mp3
+apps/passenger_app/assets/mock_voice/wrong_bus_warning.mp3
+apps/passenger_app/assets/mock_voice/wrong_bus_warning__8f99aae4.mp3
+apps/passenger_app/assets/mock_voice/wrong_bus_warning__e822e736.mp3
+apps/passenger_app/assets/shaders/voice_aurora.frag
+apps/passenger_app/firebase.json
+apps/passenger_app/ios/.gitignore
+apps/passenger_app/ios/Flutter/AppFrameworkInfo.plist
+apps/passenger_app/ios/Flutter/Debug.xcconfig
+apps/passenger_app/ios/Flutter/Release.xcconfig
+apps/passenger_app/ios/Podfile
+apps/passenger_app/ios/Podfile.lock
+apps/passenger_app/ios/Runner.xcodeproj/project.pbxproj
+apps/passenger_app/ios/Runner.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+apps/passenger_app/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+apps/passenger_app/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+apps/passenger_app/ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+apps/passenger_app/ios/Runner.xcworkspace/contents.xcworkspacedata
+apps/passenger_app/ios/Runner.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+apps/passenger_app/ios/Runner.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+apps/passenger_app/ios/Runner/AppDelegate.swift
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@1x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@3x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@1x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@3x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@1x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@3x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@3x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@1x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/LaunchImage.imageset/Contents.json
+apps/passenger_app/ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage.png
+apps/passenger_app/ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage@2x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage@3x.png
+apps/passenger_app/ios/Runner/Assets.xcassets/LaunchImage.imageset/README.md
+apps/passenger_app/ios/Runner/Base.lproj/LaunchScreen.storyboard
+apps/passenger_app/ios/Runner/Base.lproj/Main.storyboard
+apps/passenger_app/ios/Runner/GoogleService-Info.plist
+apps/passenger_app/ios/Runner/Info.plist
+apps/passenger_app/ios/Runner/Runner-Bridging-Header.h
+apps/passenger_app/ios/RunnerTests/RunnerTests.swift
+apps/passenger_app/lib/firebase_options.dart
+apps/passenger_app/lib/src/features/voice_live/aurora_voice_shader.dart
+apps/passenger_app/lib/src/features/voice_live/live_caption_controller.dart
+apps/passenger_app/lib/src/features/voice_live/live_caption_overlay.dart
+apps/passenger_app/lib/src/features/voice_live/live_speech.dart
+apps/passenger_app/lib/src/features/voice_live/live_speech_stub.dart
+apps/passenger_app/lib/src/features/voice_live/live_speech_web.dart
+apps/passenger_app/lib/src/features/voice_live/live_voice_controller.dart
+apps/passenger_app/lib/src/features/voice_live/live_voice_page.dart
+apps/passenger_app/lib/src/features/voice_live/pcm_audio_level_analyzer.dart
+apps/passenger_app/lib/src/features/voice_live/voice_audio_level.dart
+apps/passenger_app/lib/src/features/voice_live/voice_audio_level_stub.dart
+apps/passenger_app/lib/src/features/voice_live/voice_audio_level_web.dart
+apps/passenger_app/lib/src/features/voice_live/voice_turn_state.dart
+apps/passenger_app/lib/src/firebase/firebase_bootstrap.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_control_panel.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_controller.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_definition.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_math.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_metrics_panel.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_phase.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_stage.dart
+apps/passenger_app/lib/src/mock_scenario/mock_scenario_state.dart
+apps/passenger_app/lib/src/mock_scenario/mock_script_lines.dart
+apps/passenger_app/lib/src/mock_scenario/mock_voice_assets.dart
+apps/passenger_app/lib/src/pages/agent_name_setup_page.dart
+apps/passenger_app/lib/src/pages/data_mode_selection_page.dart
+apps/passenger_app/lib/src/services/agent_name_store.dart
+apps/passenger_app/lib/src/services/api_base_url.dart
+apps/passenger_app/lib/src/services/converse_event.dart
+apps/passenger_app/lib/src/services/converse_live.dart
+apps/passenger_app/lib/src/services/converse_live_stub.dart
+apps/passenger_app/lib/src/services/converse_live_web.dart
+apps/passenger_app/lib/src/services/live_audio_player.dart
+apps/passenger_app/lib/src/services/live_audio_player_stub.dart
+apps/passenger_app/lib/src/services/live_audio_player_web.dart
+apps/passenger_app/lib/src/services/mock_script_audio_service.dart
+apps/passenger_app/lib/src/services/spatial_cue_service.dart
+apps/passenger_app/lib/src/services/spatial_cue_service_stub.dart
+apps/passenger_app/lib/src/services/spatial_cue_service_web.dart
+apps/passenger_app/lib/src/services/web_coords.dart
+apps/passenger_app/lib/src/services/web_geolocation.dart
+apps/passenger_app/lib/src/services/web_geolocation_stub.dart
+apps/passenger_app/lib/src/services/web_geolocation_web.dart
+apps/passenger_app/lib/src/widgets/chat_overlay.dart
+apps/passenger_app/test/widget_test.dart
+apps/passenger_app/web/favicon.png
+apps/passenger_app/web/icons/Icon-192.png
+apps/passenger_app/web/icons/Icon-512.png
+apps/passenger_app/web/icons/Icon-maskable-192.png
+apps/passenger_app/web/icons/Icon-maskable-512.png
+apps/passenger_app/web/index.html
+apps/passenger_app/web/manifest.json
+apps/passenger_app/web/mobi_geo.js
+apps/passenger_app/web/mobi_live_audio.js
+apps/passenger_app/web/mobi_spatial_cue.js
+apps/passenger_app/web/mobi_speech.js
+apps/passenger_app/web/mobi_stt_mic.js
+apps/passenger_app/web/mobi_voice_mic.js
+backend/api/app/api/routes/firebase_admin.py
+backend/api/app/api/routes/v3_beacon_ingest.py
+backend/api/app/api/routes/v3_map.py
+backend/api/app/api/routes/v3_navigation.py
+backend/api/app/schemas/route_plan.py
+backend/api/app/schemas/v3_map.py
+backend/api/app/services/cheongju_bus_stops_service.py
+backend/api/app/services/cheongju_route_catalog.py
+backend/api/app/services/cheongju_route_planner.py
+backend/api/app/services/destination_candidate_resolver.py
+backend/api/app/services/direct_bus_planner.py
+backend/api/app/services/firebase_demo_seed_service.py
+backend/api/app/services/live_status_service.py
+backend/api/app/services/nearby_stops_service.py
+backend/api/app/services/odsay_client.py
+backend/api/app/services/odsay_route_mapper.py
+backend/api/app/services/route_direction_resolver.py
+backend/api/app/services/route_plan_enricher.py
+backend/api/app/services/route_ranker.py
+backend/api/app/services/route_service_status.py
+backend/api/app/services/route_stop_sequence_cache.py
+backend/api/app/services/tmap_pedestrian_client.py
+backend/api/app/services/transfer_bus_planner.py
+backend/api/app/services/transit_planner_orchestrator.py
+backend/api/app/services/v3_agent_tools.py
+backend/api/app/services/v3_agent_trace.py
+backend/api/app/services/v3_beacon_service.py
+backend/api/app/services/v3_gemini_live_audio_service.py
+backend/api/app/services/v3_gemini_service.py
+backend/api/app/services/v3_openai_live_audio_service.py
+backend/api/app/services/walking_route_service.py
+backend/api/scripts/smoke_test_odsay.py
+backend/api/tests/test_ride_request_ordering.py
+backend/api/tests/test_v3_agent_tools.py
+backend/api/tests/test_v3_agent_trace.py
+backend/api/tests/test_v3_beacon_ingest.py
+backend/api/tests/test_v3_destination_and_route_fixes.py
+backend/api/tests/test_v3_gemini_live_audio_service.py
+backend/api/tests/test_v3_live_status_service.py
+backend/api/tests/test_v3_phase1_hardening.py
+backend/api/tests/test_v3_section1_destination_candidates.py
+backend/api/tests/test_v3_section2_modular_route_plan.py
+backend/api/tests/test_v3_section2_route_plan.py
+backend/api/tests/test_v3_section3_gemini_safety.py
+backend/api/tests/test_v3_section3_route_plan_agent.py
+backend/api/tests/test_v3_section4_odsay_orchestrator.py
+docs/AJH_ISSUE36_COMPLETION_REPORT.md
+docs/rw/MOBI_V3_AGENT_TRACE_DEPLOYMENT_REPORT.md
+packages/mobile_sensors/docs/beacon_ingest_bridge_guide.md
+packages/mobile_sensors/fixtures/real_beacon_ab_ingest_samples.json
+packages/mobile_sensors/lib/src/beacon_ingest_bridge.dart
+packages/mobile_sensors/test/beacon_ingest_bridge_test.dart
+services/public_data/public_data_client/bus_location_service.py
+services/public_data/public_data_client/bus_route_service.py
+인수인계.md
