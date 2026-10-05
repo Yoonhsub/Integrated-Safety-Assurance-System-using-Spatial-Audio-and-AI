@@ -21,6 +21,7 @@ ai_vision/pipelines/detection_result.py
 ai_vision/pipelines/mock_vision_provider.py
 ai_vision/pipelines/mock_inference_pipeline.py
 ai_vision/pipelines/taxonomy_mapping.py
+ai_vision/pipelines/safety_interpreter.py
 ai_vision/pipelines/vision_input.py
 ai_vision/pipelines/vision_provider.py
 ai_vision/pipelines/yolo_vision_provider.py
@@ -30,6 +31,7 @@ ai_vision/pipelines/tests/test_detection_result_contract.py
 ai_vision/pipelines/tests/test_mock_vision_provider.py
 ai_vision/pipelines/tests/test_mock_inference_pipeline.py
 ai_vision/pipelines/tests/test_yolo_vision_provider.py
+ai_vision/pipelines/tests/test_safety_interpreter.py
 apps/driver_app/README.md
 apps/driver_app/lib/main.dart
 apps/driver_app/lib/src/app.dart

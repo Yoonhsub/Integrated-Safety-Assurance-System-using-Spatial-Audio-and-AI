@@ -1,6 +1,7 @@
 # AI Vision Inference Pipeline
 
-이 폴더는 DetectionResult contract, mock provider, local single-image YOLO inference를 제공한다.
+이 폴더는 DetectionResult contract, mock provider, local single-image YOLO inference,
+deterministic single-frame SafetyInterpreter를 제공한다.
 YOLO provider는 `ultralytics` 패키지를 명시적으로 설치하고 local model weight 경로를 전달해야
 사용할 수 있다.
 
@@ -14,7 +15,7 @@ VisionInferenceRequest
 → DetectionResult
 → SafetyInterpreter
 → Safety Event
-→ Backend
+→ Backend adapter (미구현)
 ```
 
 `VisionInferenceRequest`가 한 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
@@ -23,9 +24,18 @@ UUID frame ID, timezone이 포함된 ISO 8601 캡처 시각, 파일 존재 여�
 source와 ndarray/PIL payload는 아직 지원하지 않는다.
 
 `VisionProvider`가 request를 받아 detector 결과인 `DetectionResult`를 반환한다.
-`SafetyInterpreter`는 검출 클래스와
-사용자·상황 맥락을 해석해 위험도와 사유를 판단하고, 그 결과를 별도의 `Safety Event`로
-만들어 backend에 전달한다. 객체 taxonomy는 `../dataset_plan/class_taxonomy.json`을 따른다.
+`SafetyInterpreter`는 `../dataset_plan/class_taxonomy.json`의 클래스 임계값, reason, 위험도,
+안내 문구를 사용해 한 프레임으로 근거를 세울 수 있는 경우에만 별도 `Safety Event`를 만든다.
+event 생성 여부와 추론 결과 상태는 분리한다: 정상 결과에서 조건을 만족하는 규칙이 없으면
+`no_event`, 입력 DetectionResult가 `unavailable` 또는 `error`이면 그 상태를 그대로 전달한다.
+추론 실패는 위험 없음으로 처리되지 않는다.
+
+v1 단일 프레임 규칙은 `bus_stop_recognized`와 `bus_door_visible`이다. `approaching_bus`에는
+버스가 사용자 정류장에 접근한다는 시간/정류장 맥락이 필요하고, `off_sidewalk`에는 사용자의
+위치 관계, `obstacle_ahead`에는 보행 경로와의 관계, `tactile_paving_lost`에는 이전 프레임의
+점자블록 추적이 필요하다. 이 상태 정보가 없는 단일 detection으로 해당 이벤트를 주장하지 않는다.
+특히 bus 검출만으로 접근 또는 위험을 단정하지 않는다. bbox는 정규화된 이미지 위치일 뿐 거리나
+사용자와의 충돌 가능성을 나타내지 않는다.
 
 `frameId`, `capturedAt`, `source`는 request가 소유하며 provider 결과에도 그대로 전달한다.
 mock fixture에 저장된 같은 필드는 입력 metadata로 덮어쓴다. model metadata와 detections는
@@ -38,12 +48,12 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - typed `VisionProvider` interface 및 명시적 mock provider 선택
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
 - `YOLOVisionProvider`의 로컬 단일 이미지 inference
+- taxonomy 기반 `SafetyInterpreter` 및 내부 Safety Event representation
 
 아직 구현되지 않은 범위:
 
 - 프로젝트 custom dataset으로 학습한 모델
 - webcam 및 video stream 처리
-- `SafetyInterpreter`
 - DetectionResult 또는 Safety Event의 backend integration
 - passenger app integration
 
@@ -103,8 +113,13 @@ class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 �
   판정하지 않는다.
 - **Safety Event**는 DetectionResult를 SafetyInterpreter가 사용자·상황 맥락과 함께 해석한
   결과다. 기존 fixture의 `riskLevel`, `reason`, `primaryClass`, `message`는 이 event 계층에
-  속한다. backend `SafetyEventCreate`는 `eventType`, `source`, `timestamp`, 선택적
-  `confidence`/`metadata` 등을 받는 별도의 contract다.
+  속한다. 현재 내부 event는 `eventId`, `frameId`, `capturedAt`, `source`, `riskLevel`, `reason`,
+  `primaryClass`, `confidence`, detection summary, `message`와 가능한 `imageSize`/`modelInfo`를
+  포함한다. 이 표현은 legacy mock fixture 형식을 유지하면서 source와 primary detection confidence를
+  추가한다. 결정적인 ID 생성을 위해 event ID는 frame/reason/class 기준 UUIDv5다.
+- backend `SafetyEventCreate`는 `eventType`, `source`, `timestamp`, 선택적 `confidence`/`metadata`
+  등을 받는 별도의 contract다. AI Vision 내부 Safety Event를 backend payload로 직접 보내지 않으며,
+  field mapping을 정하는 backend adapter는 아직 구현하지 않았다.
 - `status: "ok"` + 빈 `detections`는 정상 추론 후 검출이 없었다는 뜻이다. `unavailable` 또는
   `error`는 추론 결과가 없으며 둘 다 `error` 정보를 포함하고 `detections`는 빈 배열이어야
   한다. 따라서 실패를 “위험 객체 없음”으로 해석할 수 없다.
@@ -115,6 +130,12 @@ class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 �
 JSON Schema는 `packages/shared_contracts/api/vision_detection.response.schema.json`에 있고,
 예제 상태별 데이터는 `fixtures/mock_detection_results.json`에 있다. 이 이름은 detector의
 표준 결과 형식을 나타내며, 현재 운영 중인 HTTP API endpoint가 있다는 뜻은 아니다.
+
+`SafetyInterpreter` 결과에는 `event`, `no_event`, `unavailable`, `error` 상태가 있다.
+taxonomic threshold 미만 detection과 unknown class는 이벤트 근거에서 제외한다. 이벤트 후보가
+여러 개면 reason 위험도(`danger > warn > info`), taxonomy class priority(`high > medium`),
+confidence 내림차순, class ID, bbox 좌표, reason code 순으로 선택해 입력 순서와 무관하게
+결과를 결정한다. Safety Event의 detection summary는 기존 mock event 필드명 `score`를 사용한다.
 
 ---
 
