@@ -5,14 +5,21 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import Response
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
-from ai_vision.pipelines.backend_safety_event_client import serialize_interpretation
+from ai_vision.pipelines.backend_safety_event_client import (
+    BackendSafetyEventClient,
+    serialize_interpretation,
+)
 from ai_vision.pipelines.detection_result import DetectionResult
+from ai_vision.pipelines.mock_vision_provider import MockScenario, MockVisionProvider
 from ai_vision.pipelines.safety_interpreter import SafetyInterpreter
+from ai_vision.pipelines.vision_input import VisionInferenceRequest, VisionInputSource
+from ai_vision.pipelines.vision_safety_pipeline import VisionSafetyPipeline
 from app.api.routes import ai_vision_events, safety_events
 from app.main import app
 from app.schemas.ai_vision_safety_event import AiVisionInterpretationIngestRequest
@@ -87,6 +94,56 @@ def test_detection_fixture_crosses_http_contract_endpoint_and_service(
         "modelVersion": "1.0.0",
     }
     assert len(isolated_service.recent().events) == 1
+
+
+def test_pipeline_client_endpoint_storage_and_recent_lookup(monkeypatch) -> None:
+    firebase = FirebaseClient(FirebaseSettings(None, None, None, None, True))
+    service = SafetyEventService(firebase)
+    monkeypatch.setattr(ai_vision_events, "_service", service)
+    monkeypatch.setattr(safety_events, "_service", service)
+    http_calls: list[str] = []
+
+    def dispatch(request: httpx.Request) -> httpx.Response:
+        http_calls.append(request.method + " " + request.url.path)
+        if request.method == "POST" and request.url.path == "/ai-vision/events":
+            payload = AiVisionInterpretationIngestRequest.model_validate(
+                json.loads(request.content)
+            )
+            response = Response()
+            body = ai_vision_events.ingest_ai_vision_interpretation(payload, response)
+            return httpx.Response(
+                response.status_code,
+                json=body.model_dump(mode="json"),
+            )
+        if request.method == "GET" and request.url.path == "/safety-events/recent":
+            body = safety_events.list_recent_safety_events(limit=20)
+            return httpx.Response(200, json=body.model_dump(mode="json"))
+        return httpx.Response(404, json={"detail": "not found"})
+
+    request = VisionInferenceRequest(
+        frame_id="22222222-2222-4222-8222-222222222222",
+        captured_at="2026-05-22T09:00:00+09:00",
+        source=VisionInputSource.IMAGE_FILE,
+        payload=Path(__file__).resolve(),
+    )
+    with BackendSafetyEventClient(
+        "http://backend.test", transport=httpx.MockTransport(dispatch)
+    ) as client:
+        pipeline = VisionSafetyPipeline(
+            MockVisionProvider(scenario=MockScenario.MULTIPLE_DETECTIONS),
+            SafetyInterpreter(),
+            client,
+        )
+        result = pipeline.run(request)
+        recent = client.recent_events()
+
+    assert result.interpretation.status.value == "event"
+    assert result.backend_stored is True
+    assert result.backend_event_id is not None
+    assert [item["eventId"] for item in recent] == [result.backend_event_id]
+    assert http_calls == ["POST /ai-vision/events", "GET /safety-events/recent"]
+    stored = firebase.get(f"/safetyEvents/{result.backend_event_id}")
+    assert stored["metadata"]["reason"] == result.interpretation.event.reason
 
 
 @pytest.mark.parametrize("index,status", [(1, "no_event"), (2, "unavailable"), (3, "error")])

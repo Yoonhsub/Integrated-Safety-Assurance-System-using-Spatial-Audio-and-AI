@@ -57,12 +57,13 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - backend-side AI Vision adapter의 `SafetyEventCreate` 변환과 기존 service 저장
 - 별도 프로세스용 HTTP client와 FastAPI ingestion endpoint
 - event / no_event / unavailable / error의 shared request/response contract
+- `VisionSafetyPipeline` one-shot orchestration과 single-image E2E CLI
 
 아직 구현되지 않은 범위:
 
 - 프로젝트 custom dataset으로 학습한 모델
 - webcam 및 video stream 처리
-- provider/backend startup을 연결하는 production orchestration
+- 자동 frame 수집을 수행하는 장시간 실행 daemon
 - 자동 재시도, 로컬 큐, 오프라인 재전송, 인증/인가
 - passenger app integration
 
@@ -185,6 +186,42 @@ python scripts/smoke_ai_vision_backend.py --backend-url http://127.0.0.1:8000
 AI Vision runtime 설치 명령은 `python -m pip install -r ai_vision/requirements.txt`다.
 `httpx`가 transport runtime dependency로 추가되며 backend도 기존 requirements에서 동일한
 버전을 사용한다.
+
+### 1.4 Single-image E2E runner
+
+`VisionSafetyPipeline`은 `VisionProvider.infer()` → `SafetyInterpreter.interpret()` →
+`BackendSafetyEventClient.send()`의 한 번 실행 순서만 조정한다. 각 모듈의 inference,
+위험 판단, transport serialization 로직을 복제하지 않는다. event뿐 아니라 `no_event`,
+`unavailable`, `error` 결과도 transport로 전달한다. non-event status는 backend에서 저장되지
+않으며, backend 통신 실패는 pipeline 호출자에게 예외로 전달된다.
+
+별도 PowerShell 터미널에서 backend를 실행한다.
+
+```powershell
+$env:PYTHONPATH = Join-Path $PWD "backend\api"
+.\backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+AI Vision 환경에서는 기존 local weight와 image 경로를 지정해 전체 한 장 처리를 실행한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" scripts\run_ai_vision_image.py `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --image "C:\mobi-ai\images\images_bus.jpg" `
+  --backend-url "http://127.0.0.1:8000"
+```
+
+CLI는 탐지 class/confidence, DetectionResult와 SafetyInterpretation 상태, backend 전송/저장
+여부와 backend event ID를 출력한다. 정상 `no_event`는 성공 실행이며 저장되지 않는다. 예를 들어
+pretrained COCO 모델이 bus만 탐지하면 현재 단일 프레임 규칙은 `no_event`가 될 수 있다. bus
+탐지 자체를 접근 위험이나 HIGH event로 바꾸지 않는다. inference unavailable/error는 결과를
+backend에 비저장 상태로 전달하고 CLI는 비정상 종료 코드로 알린다.
+
+pretrained model에서 project taxonomy로 직접 매핑되는 class는 bus뿐이다. 실제 거리(depth),
+시간 변화(temporal context), 사용자 위치 관계를 알 수 없고, bus stop/door 등 project class는
+custom-trained model 없이는 탐지한다고 보장할 수 없다. webcam/video 및 passenger integration은
+미구현이다. fixture의 bus_door/bus_stop event 경로는 YOLO weight 없이 unit/integration test에서
+검증하며 실제 bus 이미지의 `no_event` 경로와 구분한다.
 
 ## 2. 추론 위치 후보 (2학기 결정)
 
