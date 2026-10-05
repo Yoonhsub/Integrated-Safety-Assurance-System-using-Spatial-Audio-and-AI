@@ -79,6 +79,7 @@ backend/api/app/schemas/ride_request.py
 backend/api/app/schemas/safety_event.py
 backend/api/app/schemas/v3.py
 backend/api/app/services/__init__.py
+backend/api/app/services/ai_vision_safety_event_adapter.py
 backend/api/app/services/bus_info_gateway_service.py
 backend/api/app/services/fcm_service.py
 backend/api/app/services/firebase_client.py
@@ -88,6 +89,7 @@ backend/api/app/services/safety_event_service.py
 backend/api/app/services/v3_guidance_store.py
 backend/api/requirements.txt
 backend/api/requirements-dev.txt
+backend/api/tests/test_ai_vision_safety_event_adapter.py
 backend/api/tests/test_api_contract_validation.py
 backend/api/tests/test_health.py
 backend/api/tests/test_v3_section1_routes.py

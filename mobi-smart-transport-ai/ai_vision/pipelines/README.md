@@ -14,8 +14,11 @@ VisionInferenceRequest
 → VisionProvider
 → DetectionResult
 → SafetyInterpreter
-→ Safety Event
-→ Backend adapter (미구현)
+→ SafetyInterpretation
+→ Backend Adapter
+→ SafetyEventCreate
+→ SafetyEventService
+→ Firebase / mock storage
 ```
 
 `VisionInferenceRequest`가 한 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
@@ -49,12 +52,15 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
 - `YOLOVisionProvider`의 로컬 단일 이미지 inference
 - taxonomy 기반 `SafetyInterpreter` 및 내부 Safety Event representation
+- backend-side AI Vision adapter의 `SafetyEventCreate` 변환
+- 변환 결과를 기존 `SafetyEventService`에 직접 전달하는 service integration test
 
 아직 구현되지 않은 범위:
 
 - 프로젝트 custom dataset으로 학습한 모델
 - webcam 및 video stream 처리
-- DetectionResult 또는 Safety Event의 backend integration
+- provider/backend startup을 연결하는 production orchestration
+- remote process 간 전송과 HTTP API client 호출
 - passenger app integration
 
 mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리오를 반환한다.
@@ -118,8 +124,13 @@ class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 �
   포함한다. 이 표현은 legacy mock fixture 형식을 유지하면서 source와 primary detection confidence를
   추가한다. 결정적인 ID 생성을 위해 event ID는 frame/reason/class 기준 UUIDv5다.
 - backend `SafetyEventCreate`는 `eventType`, `source`, `timestamp`, 선택적 `confidence`/`metadata`
-  등을 받는 별도의 contract다. AI Vision 내부 Safety Event를 backend payload로 직접 보내지 않으며,
-  field mapping을 정하는 backend adapter는 아직 구현하지 않았다.
+  등을 받는 별도의 contract다. backend-side `AiVisionSafetyEventAdapter`가 이 contract에 맞게
+  변환하며, AI Vision interpreter/provider는 backend schema를 알지 않는다. 현재 허용 event type에는
+  `bus_stop_recognized`나 `bus_door_visible`와 의미가 맞는 값이 없으므로 기존 값을 오용하지 않고
+  additive `VISION_INTERPRETATION` type을 사용한다. reason/risk/class는 문자열 metadata로 유지한다.
+- adapter는 `SafetyEventService`에 직접 전달하는 구조다. backend 안에서 loopback HTTP를 거치지 않는다.
+  저장 service integration은 fixture 기반으로 검증했지만 실제 provider를 backend startup에 자동 연결하는
+  orchestration과 별도 process/HTTP client 경로는 아직 구현되지 않았다.
 - `status: "ok"` + 빈 `detections`는 정상 추론 후 검출이 없었다는 뜻이다. `unavailable` 또는
   `error`는 추론 결과가 없으며 둘 다 `error` 정보를 포함하고 `detections`는 빈 배열이어야
   한다. 따라서 실패를 “위험 객체 없음”으로 해석할 수 없다.
@@ -136,6 +147,13 @@ taxonomic threshold 미만 detection과 unknown class는 이벤트 근거에서 
 여러 개면 reason 위험도(`danger > warn > info`), taxonomy class priority(`high > medium`),
 confidence 내림차순, class ID, bbox 좌표, reason code 순으로 선택해 입력 순서와 무관하게
 결과를 결정한다. Safety Event의 detection summary는 기존 mock event 필드명 `score`를 사용한다.
+
+backend adapter는 `event`만 `SafetyEventCreate`로 변환한다. `no_event`, `unavailable`, `error`는
+payload를 만들지 않으며 저장 service도 호출하지 않는다. backend `source`는 mock provider를
+`ai_vision_mock`, Ultralytics provider를 `ai_vision_live`로 구분하고, `inferenceMode`와 정확한
+`modelProvider`도 metadata에 둔다. unknown provider는 mock으로 대체하지 않고 거부한다.
+DetectionResult의 `capturedAt`은 timezone 검증 후 backend `timestamp`로 전달한다. backend가 생성한
+record `eventId`와 구분하도록 원본 vision event ID는 `visionEventId` metadata에 보존한다.
 
 ---
 

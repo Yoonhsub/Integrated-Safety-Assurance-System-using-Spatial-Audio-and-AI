@@ -720,6 +720,7 @@ BUS_APPROACHING
 BEACON_NEAR
 USER_OFF_ROUTE
 CROSSWALK_RISK
+VISION_INTERPRETATION
 ```
 
 주의:
@@ -727,6 +728,9 @@ CROSSWALK_RISK
 ```txt
 - timestamp는 timezone-aware 값이어야 하며 backend 저장 시 UTC로 정규화한다.
 - metadata는 V2 초안에서 dict[str, str]로 제한한다.
+- VISION_INTERPRETATION은 AI Vision 해석 결과용 additive event type이다. riskLevel/reason/
+  primaryClass/frameId 및 model 정보를 metadata 문자열로 보존하고, mock/live는 source와
+  inferenceMode로 구분한다.
 - shared_contracts 정식 safety event schema는 김도성/안준환 산출물과 추가 합의 후 별도 PR로 등록한다.
 ```
 
