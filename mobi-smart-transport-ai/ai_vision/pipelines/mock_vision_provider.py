@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from ai_vision.pipelines.detection_result import DetectionResult
+from ai_vision.pipelines.vision_input import (
+    UnsupportedVisionInputError,
+    VisionInferenceRequest,
+)
 
 
 DEFAULT_FIXTURE_PATH = (
@@ -64,12 +69,21 @@ class MockVisionProvider:
         self.fixture_path = fixture_path or DEFAULT_FIXTURE_PATH
         self.schema_path = schema_path or DEFAULT_SCHEMA_PATH
 
-    def infer(self, request: object) -> DetectionResult:
-        """Return the selected fixture result; request media is intentionally ignored."""
-        del request  # The mock represents predefined samples, not actual frame inference.
+    def infer(self, request: VisionInferenceRequest) -> DetectionResult:
+        """Return the selected fixture result with metadata from the request."""
+        if not isinstance(request, VisionInferenceRequest):
+            raise UnsupportedVisionInputError(
+                "MockVisionProvider requires a VisionInferenceRequest."
+            )
         results = self._load_results()
         selected = self._select_result(results)
-        return DetectionResult.from_dict(selected)
+        result = DetectionResult.from_dict(selected)
+        return replace(
+            result,
+            source=request.source.value,
+            frame_id=request.frame_id,
+            captured_at=request.captured_at,
+        )
 
     def _load_results(self) -> list[dict[str, Any]]:
         if not self.fixture_path.is_file():

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ai_vision.pipelines.detection_result import DetectionResult
+from ai_vision.pipelines.vision_input import VisionInferenceRequest
 
 
 class ProviderConfigurationError(ValueError):
@@ -13,10 +14,10 @@ class ProviderConfigurationError(ValueError):
 
 @runtime_checkable
 class VisionProvider(Protocol):
-    """An inference provider that maps an opaque input to a DetectionResult."""
+    """An inference provider that maps a validated request to a DetectionResult."""
 
-    def infer(self, request: object) -> DetectionResult:
-        """Run inference for an input payload without prescribing its media type."""
+    def infer(self, request: VisionInferenceRequest) -> DetectionResult:
+        """Run inference for one provider-neutral image/frame request."""
 
 
 def create_vision_provider(

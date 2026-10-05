@@ -19,6 +19,7 @@ ai_vision/pipelines/fixtures/mock_safety_events.json
 ai_vision/pipelines/detection_result.py
 ai_vision/pipelines/mock_vision_provider.py
 ai_vision/pipelines/mock_inference_pipeline.py
+ai_vision/pipelines/vision_input.py
 ai_vision/pipelines/vision_provider.py
 ai_vision/pipelines/tests/.gitkeep
 ai_vision/pipelines/tests/__init__.py

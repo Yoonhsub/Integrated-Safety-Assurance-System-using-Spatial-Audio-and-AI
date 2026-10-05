@@ -8,7 +8,7 @@
 ## 1. 추론과 안전 이벤트 흐름
 
 ```txt
-FrameSource
+VisionInferenceRequest
 → VisionProvider
 → DetectionResult
 → SafetyInterpreter
@@ -16,15 +16,25 @@ FrameSource
 → Backend
 ```
 
-`FrameSource`가 카메라·이미지·비디오 프레임을 제공하고, `VisionProvider`가 detector를
-호출해 원시 추론 결과인 `DetectionResult`를 반환한다. `SafetyInterpreter`는 검출 클래스와
+`VisionInferenceRequest`가 한 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
+묶는다. 현재 source는 로컬 `image_file`만 지원하고 payload는 `pathlib.Path`다. 요청 생성 시
+UUID frame ID, timezone이 포함된 ISO 8601 캡처 시각, 파일 존재 여부를 확인한다. webcam/video
+source와 ndarray/PIL payload는 아직 지원하지 않는다.
+
+`VisionProvider`가 request를 받아 detector 결과인 `DetectionResult`를 반환한다.
+`SafetyInterpreter`는 검출 클래스와
 사용자·상황 맥락을 해석해 위험도와 사유를 판단하고, 그 결과를 별도의 `Safety Event`로
 만들어 backend에 전달한다. 객체 taxonomy는 `../dataset_plan/class_taxonomy.json`을 따른다.
+
+`frameId`, `capturedAt`, `source`는 request가 소유하며 provider 결과에도 그대로 전달한다.
+mock fixture에 저장된 같은 필드는 입력 metadata로 덮어쓴다. model metadata와 detections는
+provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 규칙을 따라야 한다.
 
 현재 구현 범위:
 
 - `DetectionResult` Python representation과 shared JSON Schema
-- `VisionProvider` interface 및 명시적 mock provider 선택
+- `VisionInferenceRequest` 입력 representation
+- typed `VisionProvider` interface 및 명시적 mock provider 선택
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
 
 아직 구현되지 않은 범위:
