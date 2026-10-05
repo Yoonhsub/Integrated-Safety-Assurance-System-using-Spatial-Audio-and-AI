@@ -5,18 +5,44 @@
 
 ---
 
-## 1. 향후 추론 흐름 (2학기)
+## 1. 추론과 안전 이벤트 흐름
 
 ```txt
-Camera Frame
-→ Pre-process (resize/normalize)
-→ Object Detection Model (YOLO계열 또는 EfficientDet-Lite)
-→ Bus / Bus Door / Bus Stop / Roadway / Sidewalk / Obstacle / Tactile Paving 탐지
-→ Risk Interpretation (사용자 위치 + 검출 객체 → 위험도/안내 메시지)
-→ Voice / Vibration / FCM 알림 출력
+FrameSource
+→ VisionProvider
+→ DetectionResult
+→ SafetyInterpreter
+→ Safety Event
+→ Backend
 ```
 
-위 흐름의 객체 분류 7종은 `../dataset_plan/class_taxonomy.json`에서 정의한다.
+`FrameSource`가 카메라·이미지·비디오 프레임을 제공하고, `VisionProvider`가 detector를
+호출해 원시 추론 결과인 `DetectionResult`를 반환한다. `SafetyInterpreter`는 검출 클래스와
+사용자·상황 맥락을 해석해 위험도와 사유를 판단하고, 그 결과를 별도의 `Safety Event`로
+만들어 backend에 전달한다. 객체 taxonomy는 `../dataset_plan/class_taxonomy.json`을 따른다.
+
+현재 이 흐름은 목표 구조이며, fixture 기반 mock만 구현되어 있다. 카메라 입력, 실제 모델,
+SafetyInterpreter 및 DetectionResult에서 backend로 이어지는 호출 연결은 아직 구현되지 않았다.
+
+### 1.1 DetectionResult와 Safety Event 책임
+
+- **DetectionResult**는 한 프레임의 detector 결과다. schema 버전, 입력 source, 처리 상태,
+  frame ID/캡처 시각, 모델 식별 정보, detection 목록을 표현한다. 위험도나 사용자 안내를
+  판정하지 않는다.
+- **Safety Event**는 DetectionResult를 SafetyInterpreter가 사용자·상황 맥락과 함께 해석한
+  결과다. 기존 fixture의 `riskLevel`, `reason`, `primaryClass`, `message`는 이 event 계층에
+  속한다. backend `SafetyEventCreate`는 `eventType`, `source`, `timestamp`, 선택적
+  `confidence`/`metadata` 등을 받는 별도의 contract다.
+- `status: "ok"` + 빈 `detections`는 정상 추론 후 검출이 없었다는 뜻이다. `unavailable` 또는
+  `error`는 추론 결과가 없으며 둘 다 `error` 정보를 포함하고 `detections`는 빈 배열이어야
+  한다. 따라서 실패를 “위험 객체 없음”으로 해석할 수 없다.
+- 추론 상태가 아닌 최종 위험 판정은 DetectionResult에 추가하지 않는다. 기존 Safety Event
+  fixture는 유지하며, 향후 adapter가 두 계약 사이를 명시적으로 변환한다. DetectionResult
+  전체를 현재 backend Safety Event endpoint에 그대로 보낼 수는 없다.
+
+JSON Schema는 `packages/shared_contracts/api/vision_detection.response.schema.json`에 있고,
+예제 상태별 데이터는 `fixtures/mock_detection_results.json`에 있다. 이 이름은 detector의
+표준 결과 형식을 나타내며, 현재 운영 중인 HTTP API endpoint가 있다는 뜻은 아니다.
 
 ---
 

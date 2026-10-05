@@ -1,0 +1,85 @@
+{
+  "schema_reference": "packages/shared_contracts/api/vision_detection.response.schema.json",
+  "results": [
+    {
+      "schemaVersion": "1.0.0",
+      "source": "mock",
+      "status": "ok",
+      "frameId": "22222222-2222-4222-8222-222222222222",
+      "capturedAt": "2026-05-22T09:00:00+09:00",
+      "imageSize": {
+        "width": 1920,
+        "height": 1080
+      },
+      "modelInfo": {
+        "provider": "mock",
+        "name": "fixture-detector",
+        "version": "1.0.0"
+      },
+      "detections": [
+        {
+          "classId": "bus",
+          "className": "버스",
+          "confidence": 0.88,
+          "bbox": {
+            "x": 0.2,
+            "y": 0.3,
+            "w": 0.55,
+            "h": 0.5
+          }
+        },
+        {
+          "classId": "bus_door",
+          "className": "버스 문",
+          "confidence": 0.71,
+          "bbox": {
+            "x": 0.42,
+            "y": 0.45,
+            "w": 0.1,
+            "h": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "source": "mock",
+      "status": "ok",
+      "frameId": "44444444-4444-4444-8444-444444444444",
+      "capturedAt": "2026-05-22T09:00:05+09:00",
+      "modelInfo": {
+        "provider": "mock",
+        "name": "fixture-detector",
+        "version": "1.0.0"
+      },
+      "detections": []
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "source": "webcam",
+      "status": "unavailable",
+      "detections": [],
+      "error": {
+        "code": "SOURCE_UNAVAILABLE",
+        "message": "No frame source is available."
+      }
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "source": "mock",
+      "status": "error",
+      "frameId": "88888888-8888-4888-8888-888888888888",
+      "capturedAt": "2026-05-22T09:00:15+09:00",
+      "modelInfo": {
+        "provider": "mock",
+        "name": "fixture-detector",
+        "version": "1.0.0"
+      },
+      "detections": [],
+      "error": {
+        "code": "INFERENCE_FAILED",
+        "message": "The mock inference failed for this sample."
+      }
+    }
+  ]
+}
