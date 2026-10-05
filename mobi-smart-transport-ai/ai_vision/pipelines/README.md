@@ -21,8 +21,27 @@ FrameSource
 사용자·상황 맥락을 해석해 위험도와 사유를 판단하고, 그 결과를 별도의 `Safety Event`로
 만들어 backend에 전달한다. 객체 taxonomy는 `../dataset_plan/class_taxonomy.json`을 따른다.
 
-현재 이 흐름은 목표 구조이며, fixture 기반 mock만 구현되어 있다. 카메라 입력, 실제 모델,
-SafetyInterpreter 및 DetectionResult에서 backend로 이어지는 호출 연결은 아직 구현되지 않았다.
+현재 구현 범위:
+
+- `DetectionResult` Python representation과 shared JSON Schema
+- `VisionProvider` interface 및 명시적 mock provider 선택
+- `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
+
+아직 구현되지 않은 범위:
+
+- `YOLOVisionProvider` 및 실제 모델 추론
+- 카메라·이미지·비디오 입력 처리
+- `SafetyInterpreter`
+- DetectionResult 또는 Safety Event의 backend integration
+
+mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리오를 반환한다.
+기존 `mock_inference_pipeline.py`와 `mock_safety_events.json`은 Safety Event demo용으로
+별도 유지한다.
+
+MockVisionProvider는 반환 전에 DetectionResult fixture를 shared JSON Schema로 검증하므로
+`jsonschema`가 필요하다. AI Vision 실행 환경은 프로젝트 루트에서
+`python -m pip install -r ai_vision/requirements.txt`로 준비한다. Backend 개발 환경의
+`backend/api/requirements-dev.txt`도 이 runtime dependency 파일을 포함한다.
 
 ### 1.1 DetectionResult와 Safety Event 책임
 
