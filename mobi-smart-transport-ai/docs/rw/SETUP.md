@@ -148,7 +148,7 @@ Windows PowerShell:
 pip install -r requirements-dev.txt
 ```
 
-`requirements.txt`는 백엔드 실행용이고, `requirements-dev.txt`는 이를 포함해 테스트 도구 `pytest`와 Windows `ZoneInfo`용 `tzdata`를 설치한다. 개발/테스트 환경에서는 `requirements-dev.txt`를 사용한다.
+`requirements.txt`는 백엔드 실행용이고, `requirements-dev.txt`는 이를 포함해 테스트 도구 `pytest`, Windows `ZoneInfo`용 `tzdata`, AI Vision runtime 의존성을 설치한다. 개발/테스트 환경에서는 `requirements-dev.txt`를 사용한다. AI Vision만 실행하는 환경은 프로젝트 루트에서 `pip install -r ai_vision/requirements.txt`를 사용한다.
 
 서버 실행 예시:
 
