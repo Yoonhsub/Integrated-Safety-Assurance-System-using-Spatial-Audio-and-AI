@@ -1,4 +1,4 @@
 -r requirements.txt
--r ../../ai_vision/requirements.txt
+-r ../../ai_vision/requirements-base.txt
 pytest==9.1.1
 tzdata==2026.5; sys_platform == "win32"

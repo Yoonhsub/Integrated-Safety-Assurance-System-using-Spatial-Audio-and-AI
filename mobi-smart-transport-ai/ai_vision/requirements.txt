@@ -1,1 +1,2 @@
-jsonschema==4.23.0
+-r requirements-base.txt
+ultralytics==8.4.173

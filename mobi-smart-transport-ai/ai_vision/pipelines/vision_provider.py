@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from ai_vision.pipelines.detection_result import DetectionResult
 from ai_vision.pipelines.vision_input import VisionInferenceRequest
@@ -25,6 +25,8 @@ def create_vision_provider(
     *,
     scenario: str = "multiple_detections",
     fixture_path: Path | None = None,
+    model_path: str | Path | None = None,
+    model_factory: Callable[[str], Any] | None = None,
 ) -> VisionProvider:
     """Create an explicitly selected provider; never silently fall back to mock."""
     if provider == "mock":
@@ -32,7 +34,11 @@ def create_vision_provider(
 
         return MockVisionProvider(scenario=scenario, fixture_path=fixture_path)
     if provider == "yolo":
-        raise ProviderConfigurationError(
-            "The 'yolo' provider is not implemented yet."
-        )
+        if model_path is None:
+            raise ProviderConfigurationError(
+                "The 'yolo' provider requires an explicit local model_path."
+            )
+        from ai_vision.pipelines.yolo_vision_provider import YOLOVisionProvider
+
+        return YOLOVisionProvider(model_path, model_factory=model_factory)
     raise ProviderConfigurationError(f"Unknown vision provider: {provider!r}.")

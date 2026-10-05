@@ -1,7 +1,8 @@
-# AI Vision Pipeline Placeholder
+# AI Vision Inference Pipeline
 
-이 폴더는 2학기 본격 구현 시 AI 비전 추론 파이프라인이 들어갈 예정 위치이다.
-**4월에는 실제 학습/추론 코드를 구현하지 않는다.**
+이 폴더는 DetectionResult contract, mock provider, local single-image YOLO inference를 제공한다.
+YOLO provider는 `ultralytics` 패키지를 명시적으로 설치하고 local model weight 경로를 전달해야
+사용할 수 있다.
 
 ---
 
@@ -36,13 +37,15 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - `VisionInferenceRequest` 입력 representation
 - typed `VisionProvider` interface 및 명시적 mock provider 선택
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
+- `YOLOVisionProvider`의 로컬 단일 이미지 inference
 
 아직 구현되지 않은 범위:
 
-- `YOLOVisionProvider` 및 실제 모델 추론
-- 카메라·이미지·비디오 입력 처리
+- 프로젝트 custom dataset으로 학습한 모델
+- webcam 및 video stream 처리
 - `SafetyInterpreter`
 - DetectionResult 또는 Safety Event의 backend integration
+- passenger app integration
 
 mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리오를 반환한다.
 기존 `mock_inference_pipeline.py`와 `mock_safety_events.json`은 Safety Event demo용으로
@@ -51,9 +54,49 @@ mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리
 MockVisionProvider는 반환 전에 DetectionResult fixture를 shared JSON Schema로 검증하므로
 `jsonschema`가 필요하다. AI Vision 실행 환경은 프로젝트 루트에서
 `python -m pip install -r ai_vision/requirements.txt`로 준비한다. Backend 개발 환경의
-`backend/api/requirements-dev.txt`도 이 runtime dependency 파일을 포함한다.
+`backend/api/requirements-dev.txt`는 contract test에 필요한 `requirements-base.txt`만
+포함하며, 무거운 Ultralytics/PyTorch runtime은 추가하지 않는다.
 
-### 1.1 DetectionResult와 Safety Event 책임
+### 1.1 YOLO single-image provider
+
+첫 개발 대상 pretrained model은 **YOLO11n**이다. repository model research의 COCO 기준에서
+YOLO11n은 YOLOv8n보다 mAP가 높고(39.5 vs 37.3), parameter도 적다(2.6M vs 3.2M).
+Ultralytics [YOLO11 문서](https://docs.ultralytics.com/models/yolo11)는 이를 권장 모델로 제시하고,
+[YOLOv8 문서](https://docs.ultralytics.com/models/yolov8)도 계속 제공한다.
+두 버전은 동일한 Ultralytics/PyTorch runtime을 사용하므로 YOLOv8n을 택해도 Python/Windows
+설치 경로는 크게 달라지지 않는다. 이 선택은 pretrained 개발 baseline이며, custom dataset
+평가 후 최종 모델 선정은 별도로 해야 한다. COCO CPU ONNX benchmark는 YOLO11n 56.1ms,
+YOLOv8n 80.4ms로 안내되지만, 로컬 PyTorch CPU 시간이나 실시간 보장은 아니다.
+
+AI Vision runtime 의존성 설치:
+
+```powershell
+python -m pip install -r ai_vision/requirements.txt
+```
+
+Ultralytics가 OpenCV Python package를 직접 의존성으로 선언하므로 `opencv-python`을 별도로
+중복 선언하지 않는다. YOLO weight와 입력 이미지는 저장소에 넣지 않는다. 공식 Ultralytics
+공식 [YOLO11 asset release](https://github.com/ultralytics/assets/releases/tag/v8.3.0)에서
+`yolo11n.pt`를 수동으로 준비하고 repository 밖의 경로에 보관한다. provider는
+존재하는 model file path만 받고, 파일이 없으면 다운로드하지 않고 configuration error를 낸다.
+
+실제 inference는 명시적으로 opt-in하여 실행한다. 설치 및 weight 준비 없이 test suite가 모델을
+다운로드하거나 로드하지 않는다.
+
+```powershell
+python scripts/smoke_yolo_inference.py `
+  --model-path "C:\models\yolo11n.pt" `
+  --image "C:\data\bus.jpg"
+```
+
+COCO pretrained model 중 현재 project taxonomy와 안전하게 직접 대응하는 class는 `bus`뿐이다.
+`person`은 개인정보·taxonomy 정책 때문에 버린다. `stop sign`은 bus stop으로 간주하지 않는다.
+YOLO result에서 mapping되지 않은 class는 DetectionResult에 넣지 않는다. 따라서 pretrained
+결과의 빈 detection은 정상 추론 결과이며, project safety coverage를 뜻하지 않는다.
+`bus_door`, `bus_stop`, `roadway`, `sidewalk`, `obstacle`, `tactile_paving`은 정확한 custom
+class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 주장하지 않는다.
+
+### 1.2 DetectionResult와 Safety Event 책임
 
 - **DetectionResult**는 한 프레임의 detector 결과다. schema 버전, 입력 source, 처리 상태,
   frame ID/캡처 시각, 모델 식별 정보, detection 목록을 표현한다. 위험도나 사용자 안내를
