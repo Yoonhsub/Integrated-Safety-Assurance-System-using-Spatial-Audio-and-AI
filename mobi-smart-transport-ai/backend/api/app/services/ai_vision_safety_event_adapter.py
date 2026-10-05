@@ -1,6 +1,7 @@
 """Map AI Vision interpretation results to the backend Safety Event contract."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -8,6 +9,7 @@ from app.schemas.safety_event import SafetyEventCreate, SafetyEventType
 
 if TYPE_CHECKING:
     from ai_vision.pipelines.safety_interpreter import SafetyInterpretation
+    from app.schemas.ai_vision_safety_event import AiVisionInterpretationIngestRequest
 
 
 _SOURCE_BY_MODEL_PROVIDER = {
@@ -24,12 +26,86 @@ class UnsupportedVisionProviderError(SafetyInterpretationAdapterError):
     """The event's provider is not explicitly classified as mock or live."""
 
 
+@dataclass(frozen=True)
+class _BackendModelInfo:
+    provider: str
+    name: str
+    version: str | None
+
+
+@dataclass(frozen=True)
+class _BackendSafetyEvent:
+    event_id: str
+    frame_id: str
+    captured_at: str
+    source: str
+    risk_level: str
+    reason: str
+    primary_class: str
+    confidence: float
+    message: str
+    model_info: _BackendModelInfo
+
+
+@dataclass(frozen=True)
+class _BackendSafetyInterpretation:
+    status: str
+    frame_id: str | None
+    captured_at: str | None
+    source: str
+    event: _BackendSafetyEvent | None
+    error: Any = None
+
+
 class AiVisionSafetyEventAdapter:
     """Convert an AI Vision interpretation; it does not persist or send events."""
 
+    def from_transport_request(
+        self,
+        request: AiVisionInterpretationIngestRequest,
+    ) -> _BackendSafetyInterpretation:
+        """Reconstitute the small backend-side interpretation domain projection."""
+        status = _status_value(request.status)
+        frame_id = str(request.frameId) if request.frameId is not None else None
+        captured_at = request.capturedAt.isoformat() if request.capturedAt is not None else None
+        error = request.error
+        if status != "event":
+            return _BackendSafetyInterpretation(
+                status=status,
+                frame_id=frame_id,
+                captured_at=captured_at,
+                source=request.source,
+                event=None,
+                error=error,
+            )
+
+        model = request.modelInfo
+        return _BackendSafetyInterpretation(
+            status=status,
+            frame_id=frame_id,
+            captured_at=captured_at,
+            source=request.source,
+            event=_BackendSafetyEvent(
+                event_id=str(request.eventId),
+                frame_id=str(request.frameId),
+                captured_at=captured_at or "",
+                source=request.source,
+                risk_level=_status_value(request.riskLevel),
+                reason=_status_value(request.reason),
+                primary_class=_status_value(request.primaryClass),
+                confidence=request.confidence,
+                message=request.message or "",
+                model_info=_BackendModelInfo(
+                    provider=model.provider,
+                    name=model.name,
+                    version=model.version,
+                ),
+            ),
+        )
+
     def to_safety_event_create(
         self,
-        interpretation: SafetyInterpretation,
+        interpretation: SafetyInterpretation | _BackendSafetyInterpretation,
     ) -> SafetyEventCreate | None:
         """Return a backend payload for event status, or None for non-event statuses.
 

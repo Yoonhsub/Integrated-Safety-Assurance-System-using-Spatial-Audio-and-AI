@@ -15,9 +15,11 @@ VisionInferenceRequest
 → DetectionResult
 → SafetyInterpreter
 → SafetyInterpretation
-→ Backend Adapter
+→ HTTP transport client (AI Vision process)
+→ POST /ai-vision/events
+→ backend transport validation and adapter
 → SafetyEventCreate
-→ SafetyEventService
+→ existing SafetyEventService
 → Firebase / mock storage
 ```
 
@@ -52,15 +54,16 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
 - `YOLOVisionProvider`의 로컬 단일 이미지 inference
 - taxonomy 기반 `SafetyInterpreter` 및 내부 Safety Event representation
-- backend-side AI Vision adapter의 `SafetyEventCreate` 변환
-- 변환 결과를 기존 `SafetyEventService`에 직접 전달하는 service integration test
+- backend-side AI Vision adapter의 `SafetyEventCreate` 변환과 기존 service 저장
+- 별도 프로세스용 HTTP client와 FastAPI ingestion endpoint
+- event / no_event / unavailable / error의 shared request/response contract
 
 아직 구현되지 않은 범위:
 
 - 프로젝트 custom dataset으로 학습한 모델
 - webcam 및 video stream 처리
 - provider/backend startup을 연결하는 production orchestration
-- remote process 간 전송과 HTTP API client 호출
+- 자동 재시도, 로컬 큐, 오프라인 재전송, 인증/인가
 - passenger app integration
 
 mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리오를 반환한다.
@@ -130,7 +133,7 @@ class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 �
   additive `VISION_INTERPRETATION` type을 사용한다. reason/risk/class는 문자열 metadata로 유지한다.
 - adapter는 `SafetyEventService`에 직접 전달하는 구조다. backend 안에서 loopback HTTP를 거치지 않는다.
   저장 service integration은 fixture 기반으로 검증했지만 실제 provider를 backend startup에 자동 연결하는
-  orchestration과 별도 process/HTTP client 경로는 아직 구현되지 않았다.
+  자동 orchestration은 아직 구현되지 않았다. 별도 process/HTTP 경로는 §1.3에서 설명한다.
 - `status: "ok"` + 빈 `detections`는 정상 추론 후 검출이 없었다는 뜻이다. `unavailable` 또는
   `error`는 추론 결과가 없으며 둘 다 `error` 정보를 포함하고 `detections`는 빈 배열이어야
   한다. 따라서 실패를 “위험 객체 없음”으로 해석할 수 없다.
@@ -156,6 +159,32 @@ DetectionResult의 `capturedAt`은 timezone 검증 후 backend `timestamp`로 �
 record `eventId`와 구분하도록 원본 vision event ID는 `visionEventId` metadata에 보존한다.
 
 ---
+
+### 1.3 Cross-process backend transport
+
+AI Vision 프로세스는 `BackendSafetyEventClient`로 해석 결과만 JSON 전송한다. 이미지,
+정규화 bbox 목록, detector raw output은 전송하지 않는다. DTO는
+`packages/shared_contracts/api/ai_vision_safety_interpretation.request.schema.json` 및
+`ai_vision_safety_interpretation.response.schema.json`을 따른다. backend의
+`POST /ai-vision/events`가 Pydantic 계약을 검증하고 backend adapter를 거쳐 기존
+`SafetyEventService`를 호출한다. 기존 `POST /safety-events`와 저장 service는 유지된다.
+
+`event`는 HTTP 201 및 저장된 Safety Event를 반환한다. `no_event`, `unavailable`, `error`는
+HTTP 200으로 처리 결과를 확인시키지만 `stored: false`, `safetyEvent: null`로 응답하며
+저장 service를 호출하지 않는다. status별 field와 reason/class 조합은 schema와 Pydantic에서
+검증한다. client는 backend URL과 timeout을 명시적으로 받고 연결/4xx/5xx/invalid response를
+서로 다른 예외로 전달한다. 자동 retry나 mock fallback은 하지 않는다.
+
+실제 backend 프로세스가 실행 중일 때 다음 opt-in smoke 명령으로 fixture event를 저장할 수
+있다. 실행 시 mock Safety Event가 backend 저장소에 추가된다.
+
+```powershell
+python scripts/smoke_ai_vision_backend.py --backend-url http://127.0.0.1:8000
+```
+
+AI Vision runtime 설치 명령은 `python -m pip install -r ai_vision/requirements.txt`다.
+`httpx`가 transport runtime dependency로 추가되며 backend도 기존 requirements에서 동일한
+버전을 사용한다.
 
 ## 2. 추론 위치 후보 (2학기 결정)
 

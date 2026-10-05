@@ -36,6 +36,7 @@ FastAPI의 `/openapi.json`은 자동 생성 클라이언트 참고용이다. 단
 | `PATCH /driver/ride-requests/{id}/status` | current | OpenAPI path parameter 이름은 `{requestId}` | V2 Section 5에서 driver app alias로 추가했다. |
 | `POST /safety-events` | current | `backend/api/app/api/routes/safety_events.py` | Sensor/AI mock safety event intake. |
 | `GET /safety-events/recent` | current | `backend/api/app/api/routes/safety_events.py` | 최근 safety event 목록 조회. |
+| `POST /ai-vision/events` | current | `backend/api/app/api/routes/ai_vision_events.py` | AI Vision process의 SafetyInterpretation 수신. event만 기존 SafetyEventService에 저장. |
 
 기존 current API 중 V2에서도 유지되는 보조 계약:
 
@@ -61,6 +62,7 @@ GET /driver/ride-requests
 PATCH /driver/ride-requests/{requestId}/status
 POST /safety-events
 GET /safety-events/recent
+POST /ai-vision/events
 POST /geofence/check
 POST /notifications/send
 ```
@@ -72,7 +74,37 @@ POST /notifications/send
 - driver app current route는 기존 `/drivers/{driverId}/ride-requests`와 V2 alias `/driver/ride-requests?driverId=...`를 함께 지원한다.
 - driver app status update alias는 `/driver/ride-requests/{requestId}/status`이다.
 - Safety Event API는 V2 Section 7에서 backend current 초안으로 추가되었다.
+- AI Vision transport는 별도 process 경계다. 기존 `/safety-events` contract는 변경하지 않는다.
 ```
+
+### AI Vision Safety Interpretation Ingest API
+
+```txt
+POST /ai-vision/events
+```
+
+요청/응답 JSON Schema는 각각 다음 파일을 기준으로 한다.
+
+```txt
+packages/shared_contracts/api/ai_vision_safety_interpretation.request.schema.json
+packages/shared_contracts/api/ai_vision_safety_interpretation.response.schema.json
+```
+
+요청은 `schemaVersion`, `status`, `source`를 포함한다. `event`에는 event/frame ID, 캡처 시각,
+risk/reason/class, confidence, message, model info가 필요하며 reason과 primaryClass 조합도
+taxonomy에 따라 일치해야 한다. `no_event`는 frame ID와 캡처 시각만 추가로 보낼 수 있고,
+`unavailable`/`error`는 error code/message를 요구한다. image bytes와 bbox/detections 배열은 보내지 않는다.
+
+| 요청 status | HTTP | 저장 | 응답 |
+|---|---:|---|---|
+| `event` | 201 | 기존 SafetyEventService로 저장 | `stored: true`, backend Safety Event record |
+| `no_event` | 200 | 저장하지 않음 | `stored: false`, `safetyEvent: null` |
+| `unavailable` | 200 | 저장하지 않음 | `stored: false`, `safetyEvent: null` |
+| `error` | 200 | 저장하지 않음 | `stored: false`, `safetyEvent: null` |
+
+기존 `POST /safety-events`는 별도의 sensor/backend contract로 그대로 유지한다. AI Vision HTTP
+endpoint는 backend 프로세스 안에서 기존 `SafetyEventService`를 호출하므로 loopback HTTP를
+추가로 거치지 않는다. 4xx 검증 실패와 5xx 저장 실패는 정상 Safety Event 응답과 구분한다.
 
 ## 2. 공통 응답 원칙
 

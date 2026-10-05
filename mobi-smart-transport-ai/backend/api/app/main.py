@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import (
+    ai_vision_events,
     bus_info_gateway,
     driver_ride_requests,
     firebase_admin,
@@ -127,6 +128,7 @@ app.include_router(bus_info_gateway.router, prefix="/bus-info", tags=["bus-info-
 app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver-ride-requests"])
 app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
 app.include_router(safety_events.router, prefix="/safety-events", tags=["safety-events"])
+app.include_router(ai_vision_events.router, prefix="/ai-vision", tags=["ai-vision"])
 app.include_router(firebase_admin.router, prefix="/firebase", tags=["firebase-admin"])
 
 # V3 voice-first bus boarding assistant routes.

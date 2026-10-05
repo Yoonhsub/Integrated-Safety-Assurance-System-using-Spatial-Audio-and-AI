@@ -12,6 +12,14 @@ ai_vision/model_research/model_comparison.md
 ai_vision/requirements-base.txt
 ai_vision/requirements.txt
 ai_vision/pipelines/README.md
+ai_vision/pipelines/backend_safety_event_client.py
+ai_vision/pipelines/tests/test_backend_safety_event_client.py
+backend/api/app/api/routes/ai_vision_events.py
+backend/api/app/schemas/ai_vision_safety_event.py
+backend/api/tests/test_ai_vision_event_ingestion.py
+packages/shared_contracts/api/ai_vision_safety_interpretation.request.schema.json
+packages/shared_contracts/api/ai_vision_safety_interpretation.response.schema.json
+scripts/smoke_ai_vision_backend.py
 ai_vision/pipelines/__init__.py
 ai_vision/pipelines/fixtures/.gitkeep
 ai_vision/pipelines/fixtures/__init__.py

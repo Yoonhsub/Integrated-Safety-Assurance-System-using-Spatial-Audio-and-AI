@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AiVisionInterpretationIngestResponse",
+  "type": "object",
+  "required": ["status", "stored", "safetyEvent"],
+  "properties": {
+    "status": { "type": "string", "enum": ["event", "no_event", "unavailable", "error"] },
+    "stored": { "type": "boolean" },
+    "safetyEvent": {
+      "anyOf": [
+        { "$ref": "#/$defs/SafetyEventRecord" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "event" } }, "required": ["status"] },
+      "then": { "properties": { "stored": { "const": true }, "safetyEvent": { "$ref": "#/$defs/SafetyEventRecord" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["no_event", "unavailable", "error"] } }, "required": ["status"] },
+      "then": { "properties": { "stored": { "const": false }, "safetyEvent": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "SafetyEventRecord": {
+      "type": "object",
+      "required": ["eventId", "eventType", "source", "metadata", "timestamp", "createdAt"],
+      "properties": {
+        "eventId": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "eventType": { "type": "string", "enum": ["VISION_INTERPRETATION", "OBSTACLE_DETECTED", "BUS_APPROACHING", "BEACON_NEAR", "USER_OFF_ROUTE", "CROSSWALK_RISK"] },
+        "source": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "userId": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
+        "stopId": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
+        "routeId": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "message": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
