@@ -1,0 +1,19 @@
+# Execute only in a TensorFlow-compatible Python 3.12 or 3.13 virtual environment.
+# This is separate from the Python 3.14 PC offline-inference environment.
+# 8.4.83+ routes ``format=tflite`` through the new LiteRT-Torch exporter,
+# whose current torch requirement is newer than a supported CPU-only wheel.
+# This version keeps the established TensorFlow SavedModel -> .tflite exporter.
+ultralytics==8.4.82
+tensorflow-cpu>=2.16,<2.20
+
+# Keep the TensorFlow exporter dependency graph compatible.  Newer ONNX releases
+# require protobuf 6+, whereas TensorFlow 2.19 requires protobuf <6.
+protobuf==5.29.6
+onnx==1.16.2
+onnxruntime==1.20.1
+onnxslim==0.1.82
+onnx2tf==1.28.8
+tf_keras==2.19.0
+sng4onnx>=1.0.1
+onnx_graphsurgeon>=0.3.26
+ai-edge-litert>=1.2.0

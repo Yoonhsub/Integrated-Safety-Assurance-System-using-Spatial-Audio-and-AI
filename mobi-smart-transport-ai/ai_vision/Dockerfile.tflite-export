@@ -1,0 +1,23 @@
+# Windows의 TensorFlow DLL 실행 정책과 분리된 Android TFLite 변환 환경.
+# CPU 전용 PyTorch를 먼저 설치해 불필요한 CUDA 다운로드를 막는다.
+FROM python:3.12-slim
+
+WORKDIR /workspace
+
+# Ultralytics imports OpenCV during export.  Even though this image never opens
+# a window, the prebuilt OpenCV wheel requires these runtime shared libraries.
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.5.1 torchvision==0.20.1
+
+COPY requirements-tflite-export.txt /tmp/requirements-tflite-export.txt
+
+RUN pip install --no-cache-dir -r /tmp/requirements-tflite-export.txt
+
+ENTRYPOINT ["python", "ai_vision/pipelines/export_android_tflite.py"]

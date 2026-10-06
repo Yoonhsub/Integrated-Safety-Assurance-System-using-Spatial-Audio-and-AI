@@ -46,6 +46,9 @@ htmlcov/
 venv/
 env/
 ENV/
+.vision-env/
+.vision-tflite-env/
+.tool-tmp/
 pip-wheel-metadata/
 dist/
 build/
@@ -121,12 +124,23 @@ ai_vision/datasets/
 ai_vision/raw_data/
 ai_vision/processed_data/
 ai_vision/models/*.tflite
+# Keep the small, approved Android bus-detection baseline in Git so every
+# teammate receives the exact model on clone/pull. Other model artifacts stay
+# local by default.
+!ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite
 ai_vision/models/*.onnx
 ai_vision/models/*.pt
 ai_vision/models/*.pth
 ai_vision/models/*.weights
 ai_vision/runs/
+yolo11n.pt
+Ultralytics/
+.ultralytics/
 *.ckpt
+
+# Local-only public samples and generated VisionResult evidence.
+ai_vision/pipelines/fixtures/external/*
+!ai_vision/pipelines/fixtures/external/.gitkeep
 
 # =========================
 # Large media files

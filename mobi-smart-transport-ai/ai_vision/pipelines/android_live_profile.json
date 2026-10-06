@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0.0",
+  "schedule_reference": "개발 일정.pdf / 개발자 B / 1주차: Camera 설정, 모델·클래스 확정",
+  "platform": "android",
+  "camera": {
+    "lens_facing": "back",
+    "capture_width": 1280,
+    "capture_height": 720,
+    "target_fps": 15,
+    "frame_delivery": "latest_only"
+  },
+  "model": {
+    "name": "yolov11n",
+    "runtime": "tflite",
+    "input_width": 640,
+    "input_height": 640,
+    "asset_path": "assets/models/yolov11n_bus_safety.tflite",
+    "status": "baseline_selected_model_artifact_pending"
+  },
+  "classes": [
+    "bus",
+    "bus_door",
+    "bus_stop",
+    "roadway",
+    "sidewalk",
+    "obstacle",
+    "tactile_paving"
+  ],
+  "output_contract": "ai_vision/pipelines/vision_result.py::VisionResult",
+  "scope_note": "이 프로필은 Android 첫 실기기 검증 기준이다. 실제 모델 파일과 Flutter 카메라 연결은 후속 주차 작업이다."
+}
