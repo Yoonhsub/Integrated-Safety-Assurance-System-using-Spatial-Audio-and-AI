@@ -29,9 +29,12 @@ ai_vision/training/tests/test_development_train_only.py
 ai_vision/pipelines/README.md
 ai_vision/pipelines/STREAMING_SAFETY_CONTRACT.md
 ai_vision/pipelines/backend_safety_event_client.py
+ai_vision/pipelines/frame_sources.py
 ai_vision/pipelines/vision_safety_pipeline.py
+ai_vision/pipelines/vision_stream_runner.py
 ai_vision/pipelines/tests/test_backend_safety_event_client.py
 ai_vision/pipelines/tests/test_vision_safety_pipeline.py
+ai_vision/pipelines/tests/test_vision_streaming.py
 backend/api/app/api/routes/ai_vision_events.py
 backend/api/app/schemas/ai_vision_safety_event.py
 backend/api/tests/test_ai_vision_event_ingestion.py
@@ -43,6 +46,7 @@ scripts/validate_ai_vision_dataset.py
 scripts/prepare_ai_vision_dataset.py
 scripts/train_ai_vision_yolo.py
 scripts/evaluate_ai_vision_yolo.py
+scripts/run_ai_vision_stream.py
 ai_vision/pipelines/__init__.py
 ai_vision/pipelines/fixtures/.gitkeep
 ai_vision/pipelines/fixtures/__init__.py
