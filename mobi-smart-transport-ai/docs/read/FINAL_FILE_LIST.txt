@@ -9,8 +9,17 @@ ai_vision/dataset_plan/data_collection_guide.md
 ai_vision/dataset_plan/labeling_standards.md
 ai_vision/model_research/model_candidates.csv
 ai_vision/model_research/model_comparison.md
+ai_vision/datasets/custom_bus_safety/README.md
 ai_vision/requirements-base.txt
 ai_vision/requirements.txt
+ai_vision/training/ANNOTATION_GUIDELINES.md
+ai_vision/training/README.md
+ai_vision/training/__init__.py
+ai_vision/training/class_mapping.json
+ai_vision/training/dataset_validation.py
+ai_vision/training/datasets/bus_safety.yaml
+ai_vision/training/tests/__init__.py
+ai_vision/training/tests/test_dataset_training.py
 ai_vision/pipelines/README.md
 ai_vision/pipelines/backend_safety_event_client.py
 ai_vision/pipelines/vision_safety_pipeline.py
@@ -23,6 +32,9 @@ packages/shared_contracts/api/ai_vision_safety_interpretation.request.schema.jso
 packages/shared_contracts/api/ai_vision_safety_interpretation.response.schema.json
 scripts/smoke_ai_vision_backend.py
 scripts/run_ai_vision_image.py
+scripts/validate_ai_vision_dataset.py
+scripts/train_ai_vision_yolo.py
+scripts/evaluate_ai_vision_yolo.py
 ai_vision/pipelines/__init__.py
 ai_vision/pipelines/fixtures/.gitkeep
 ai_vision/pipelines/fixtures/__init__.py

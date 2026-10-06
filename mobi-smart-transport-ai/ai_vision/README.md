@@ -5,6 +5,17 @@
 4월에는 실제 모델 학습/추론 코드나 Flutter/백엔드 실시간 통합을 구현하지 않습니다.
 목표는 데이터 수집 계획, 라벨링 기준, 모델 후보 리서치, 향후 파이프라인 초안 작성입니다.
 
+## 현재 구현 안내 (2026-10)
+
+위 문장과 아래 4월/V2 기록은 당시 단계의 범위를 설명하는 이력입니다. 이후 단일 이미지
+AI Vision pipeline과 custom YOLO 데이터셋 검증·학습·평가 도구가 추가되었습니다.
+
+- 추론/provider 상태: [`pipelines/README.md`](pipelines/README.md)
+- custom dataset·annotation·validate/train/evaluate: [`training/README.md`](training/README.md)
+
+새 기능의 실제 범위와 사용 명령은 위 문서를 기준으로 확인합니다. 학습 산출물은 runtime/default
+model로 자동 승격되지 않으며, camera/stream과 앱 연동 범위도 별도 구현으로 남아 있습니다.
+
 ---
 
 ## V2 단계 진입 노트 (2026-05~ 진행)
