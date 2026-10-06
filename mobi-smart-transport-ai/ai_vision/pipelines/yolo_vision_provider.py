@@ -1,4 +1,4 @@
-"""Ultralytics-backed single-image VisionProvider with explicit local weights."""
+"""Ultralytics-backed VisionProvider for image files and in-memory frames."""
 from __future__ import annotations
 
 import math
@@ -17,6 +17,7 @@ from ai_vision.pipelines.detection_result import (
 )
 from ai_vision.pipelines.taxonomy_mapping import map_coco_class
 from ai_vision.pipelines.vision_input import (
+    FrameImagePayload,
     MissingImageFileError,
     UnsupportedVisionInputError,
     VisionInferenceRequest,
@@ -76,16 +77,24 @@ class YOLOVisionProvider:
             raise UnsupportedVisionInputError(
                 "YOLOVisionProvider requires a VisionInferenceRequest."
             )
-        if request.source is not VisionInputSource.IMAGE_FILE:
+        if request.source is VisionInputSource.IMAGE_FILE:
+            if not isinstance(request.payload, Path) or not request.payload.is_file():
+                raise MissingImageFileError(f"Image file not found: {request.payload}")
+            inference_source: str | object = str(request.payload)
+        elif request.source in {VisionInputSource.VIDEO_FILE, VisionInputSource.WEBCAM}:
+            if not isinstance(request.payload, FrameImagePayload):
+                raise UnsupportedVisionInputError(
+                    f"YOLO provider requires an in-memory frame for {request.source.value}."
+                )
+            inference_source = request.payload.image
+        else:
             raise UnsupportedVisionInputError(
                 f"YOLO provider does not support source {request.source.value!r}."
             )
-        if not request.payload.is_file():
-            raise MissingImageFileError(f"Image file not found: {request.payload}")
 
         try:
             predictions = self._model.predict(
-                source=str(request.payload),
+                source=inference_source,
                 verbose=False,
             )
         except Exception as exc:

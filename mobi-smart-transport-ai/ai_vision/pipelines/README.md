@@ -23,10 +23,10 @@ VisionInferenceRequest
 → Firebase / mock storage
 ```
 
-`VisionInferenceRequest`가 한 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
-묶는다. 현재 source는 로컬 `image_file`만 지원하고 payload는 `pathlib.Path`다. 요청 생성 시
-UUID frame ID, timezone이 포함된 ISO 8601 캡처 시각, 파일 존재 여부를 확인한다. webcam/video
-source와 ndarray/PIL payload는 아직 지원하지 않는다.
+`VisionInferenceRequest`가 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
+묶는다. `image_file`은 `pathlib.Path`를 사용하며 `video_file`과 `webcam`은 검증된 in-memory
+frame payload를 사용한다. request는 UUID frame ID와 timezone이 포함된 ISO 8601 시각을 검증하고,
+연속 frame은 원본 source frame index도 보존한다.
 
 `VisionProvider`가 request를 받아 detector 결과인 `DetectionResult`를 반환한다.
 `SafetyInterpreter`는 `../dataset_plan/class_taxonomy.json`의 클래스 임계값, reason, 위험도,
@@ -52,18 +52,18 @@ provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 �
 - `VisionInferenceRequest` 입력 representation
 - typed `VisionProvider` interface 및 명시적 mock provider 선택
 - `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
-- `YOLOVisionProvider`의 로컬 단일 이미지 inference
+- `YOLOVisionProvider`의 로컬 이미지 파일 및 in-memory frame inference
 - taxonomy 기반 `SafetyInterpreter` 및 내부 Safety Event representation
 - backend-side AI Vision adapter의 `SafetyEventCreate` 변환과 기존 service 저장
 - 별도 프로세스용 HTTP client와 FastAPI ingestion endpoint
 - event / no_event / unavailable / error의 shared request/response contract
 - `VisionSafetyPipeline` one-shot orchestration과 single-image E2E CLI
+- `VideoFileSource` / `WebcamSource`와 순차 `VisionStreamRunner`
 
 아직 구현되지 않은 범위:
 
 - 프로젝트 custom dataset으로 학습한 모델
-- webcam 및 video stream 처리
-- 자동 frame 수집을 수행하는 장시간 실행 daemon
+- 지속 실행 daemon 형태의 자동 frame 수집
 - 자동 재시도, 로컬 큐, 오프라인 재전송, 인증/인가
 - passenger app integration
 
@@ -219,9 +219,78 @@ backend에 비저장 상태로 전달하고 CLI는 비정상 종료 코드로 �
 
 pretrained model에서 project taxonomy로 직접 매핑되는 class는 bus뿐이다. 실제 거리(depth),
 시간 변화(temporal context), 사용자 위치 관계를 알 수 없고, bus stop/door 등 project class는
-custom-trained model 없이는 탐지한다고 보장할 수 없다. webcam/video 및 passenger integration은
-미구현이다. fixture의 bus_door/bus_stop event 경로는 YOLO weight 없이 unit/integration test에서
-검증하며 실제 bus 이미지의 `no_event` 경로와 구분한다.
+custom-trained model 없이는 탐지한다고 보장할 수 없다. fixture의 bus_door/bus_stop event 경로는
+YOLO weight 없이 unit/integration test에서 검증하며 실제 bus 이미지의 `no_event` 경로와 구분한다.
+
+### 1.5 Video/webcam frame streaming
+
+```txt
+VideoFileSource 또는 WebcamSource
+→ VisionInferenceRequest (in-memory frame)
+→ 기존 VisionSafetyPipeline
+→ YOLOVisionProvider
+→ SafetyInterpreter
+→ BackendSafetyEventClient
+```
+
+`FrameSource`는 frame 획득과 frame ID, timezone-aware capture timestamp, frame index, source
+metadata 생성 및 capture resource lifecycle만 담당한다. `VideoFileSource`와 `WebcamSource`는
+OpenCV `VideoCapture`를 사용한다. 각 frame은 `FrameImagePayload`로 감싼 BGR ndarray를 그대로
+Ultralytics에 전달하므로 frame마다 임시 이미지 파일을 만들지 않는다. OpenCV/NumPy 타입을
+공유 request contract의 import-time dependency로 노출하지 않는다.
+
+video EOF는 정상 종료다. webcam open/read 실패, malformed frame, backend 통신 실패는 오류로
+전달되며 자동 retry나 mock fallback은 없다. Ctrl+C는 source를 release하고 현재 통계를 출력한다.
+GUI preview는 실행하지 않는다.
+
+`--frame-interval N`은 source frame index가 0부터 시작할 때 index가 N의 배수인 frame만 처리한다.
+기본값 1은 모든 frame을 처리하고, 2는 0, 2, 4번 frame을 처리하며 나머지는 건너뛴다.
+`--max-frames N`은 처리 frame 수가 아니라 **읽은 원본 frame 수**를 제한하므로 skipping을 사용해도
+실행이 정해진 입력량 안에서 끝난다. 요약에는 read/processed/skipped frame, detections, 각
+interpretation status, 저장 event 수, elapsed time과 effective processing FPS가 나온다.
+
+OpenCV Python package는 현재 `ultralytics`의 runtime dependency로 제공되므로 별도로 중복 선언하지
+않는다. `ai_vision/requirements.txt` 설치는 모델 런타임 환경에서 한 번 필요하다. 실제 video와
+webcam 실행은 opt-in이다.
+
+```powershell
+python -B scripts/run_ai_vision_stream.py --help
+```
+
+로컬 backend는 프로젝트 루트의 별도 PowerShell에서 실행한다.
+
+```powershell
+$env:PYTHONPATH = Join-Path $PWD "backend\api"
+& ".\backend\api\.venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+AI Vision 환경은 Ultralytics/OpenCV runtime을 설치한 `mobi-yolo` Python을 사용한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -m pip install -r ai_vision\requirements.txt
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -B scripts\run_ai_vision_stream.py `
+  --source video `
+  --video "C:\mobi-ai\videos\bus_stop.mp4" `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --backend-url "http://127.0.0.1:8000" `
+  --frame-interval 2
+```
+
+webcam은 Ctrl+C로 종료하며, 짧은 검증은 `--max-frames 120`처럼 입력 frame 수를 제한한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -B scripts\run_ai_vision_stream.py `
+  --source webcam `
+  --camera 0 `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --backend-url "http://127.0.0.1:8000" `
+  --frame-interval 2 `
+  --max-frames 120
+```
+
+pretrained taxonomy mapping은 `bus`에 한정된다. depth, temporal risk reasoning, custom model,
+passenger app 및 spatial audio integration은 이 단계에 포함되지 않는다. 따라서 bus detection 후
+`no_event` 결과가 정상일 수 있으며, bus를 approaching_bus나 HIGH risk로 추론하지 않는다.
 
 ## 2. 추론 위치 후보 (2학기 결정)
 
