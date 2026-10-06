@@ -26,6 +26,11 @@ api/notification.response.schema.json
 api/ride_request.create.request.schema.json
 api/ride_request.schema.json
 api/ride_request.status_update.request.schema.json
+api/vision_detection.response.schema.json
 ```
 
 성공 응답은 `success/data/message/timestamp` wrapper 없이 각 스키마 객체를 그대로 반환한다.
+
+`vision_detection.response.schema.json`은 모델이 반환하는 DetectionResult contract이며,
+현재 backend endpoint 응답 schema를 뜻하지 않는다. 추론 성공 결과와 안전 판단 후 발행하는
+Safety Event는 서로 다른 contract로 관리한다.
