@@ -40,6 +40,14 @@ ai_vision/
         └── mock_safety_events.json     ← V2 섹션 8 — Safety Event 샘플 4건
 ```
 
+## 커스텀 모델 데이터셋 준비 (현재)
+
+COCO `bus` 기준선은 Android 연결 검증용이며, `bus_door`와 `obstacle`을 인식하지
+못한다. 실제 안내 모델을 만들기 위한 다음 작업은
+[`dataset_plan/CUSTOM_DATASET_BOOTSTRAP.md`](dataset_plan/CUSTOM_DATASET_BOOTSTRAP.md)를
+따른다. 이 문서에는 100장 시범 데이터셋의 목표, 개인정보 처리, YOLO 폴더 구조,
+분할 규칙, 자동 검증 명령을 정리했다.
+
 ---
 
 ## 2. 클래스 정의 요약
