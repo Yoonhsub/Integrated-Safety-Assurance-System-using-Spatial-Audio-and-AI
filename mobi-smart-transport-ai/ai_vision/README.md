@@ -48,6 +48,9 @@ COCO `bus` 기준선은 Android 연결 검증용이며, `bus_door`와 `obstacle`
 따른다. 이 문서에는 100장 시범 데이터셋의 목표, 개인정보 처리, YOLO 폴더 구조,
 분할 규칙, 자동 검증 명령을 정리했다.
 
+팀 결산·인계용 현재 진행 현황은
+[`DEVELOPER_B_PROGRESS_SUMMARY.md`](DEVELOPER_B_PROGRESS_SUMMARY.md)에서 확인한다.
+
 ---
 
 ## 2. 클래스 정의 요약
