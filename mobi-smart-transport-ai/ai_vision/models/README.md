@@ -6,6 +6,9 @@ Expected first artifact:
 yolo11n_coco_bus_baseline_float32.tflite
 ```
 
+앱 담당자에게 전달할 정확한 Android 입력·출력 규칙과 검수 기준은
+[`../ANDROID_TFLITE_HANDOFF.md`](../ANDROID_TFLITE_HANDOFF.md)에 정리돼 있다.
+
 Create it on a Python 3.12/3.13 environment with TensorFlow installed:
 
 ```powershell
