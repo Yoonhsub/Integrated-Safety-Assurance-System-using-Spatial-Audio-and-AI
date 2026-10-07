@@ -14,6 +14,7 @@ if str(_PIPELINES_DIR) not in sys.path:
 from tflite_bus_inference import (  # noqa: E402
     COCO_BUS_CLASS_INDEX,
     decode_bus_detections,
+    frame_indices_to_process,
     make_letterbox_transform,
     vision_result_from_tflite_output,
 )
@@ -73,6 +74,15 @@ class TfliteBusInferenceTest(unittest.TestCase):
     def test_rejects_unexpected_tensor_layout(self) -> None:
         with self.assertRaises(VisionResultValidationError):
             decode_bus_detections([[[0.0]]], transform=make_letterbox_transform(ImageSize(width=640, height=640)))
+
+    def test_selects_video_frames_at_requested_interval(self) -> None:
+        self.assertEqual(frame_indices_to_process(100, frame_stride=15, max_samples=4), [0, 15, 30, 45])
+
+    def test_rejects_invalid_video_sampling_options(self) -> None:
+        with self.assertRaises(VisionResultValidationError):
+            frame_indices_to_process(10, frame_stride=0, max_samples=1)
+        with self.assertRaises(VisionResultValidationError):
+            frame_indices_to_process(10, frame_stride=1, max_samples=0)
 
 
 if __name__ == "__main__":

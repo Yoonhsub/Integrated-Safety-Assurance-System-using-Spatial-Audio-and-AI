@@ -213,6 +213,53 @@ def _preprocess_bgr_image(image_bgr: Any, transform: LetterboxTransform) -> Any:
     return np.expand_dims(rgb.astype(np.float32) / 255.0, axis=0)
 
 
+def frame_indices_to_process(total_frames: int, *, frame_stride: int, max_samples: int | None) -> list[int]:
+    """영상에서 분석할 프레임 번호를 예측 가능하게 선택한다."""
+    if total_frames < 0:
+        raise VisionResultValidationError("total frame count must not be negative")
+    if frame_stride <= 0:
+        raise VisionResultValidationError("frame stride must be positive")
+    if max_samples is not None and max_samples <= 0:
+        raise VisionResultValidationError("max samples must be positive when supplied")
+    indices = list(range(0, total_frames, frame_stride))
+    return indices if max_samples is None else indices[:max_samples]
+
+
+def _create_tflite_interpreter(model_path: Path) -> Any:
+    """모델을 한 번 열고 입력 규격을 검사한다."""
+    if not model_path.is_file():
+        raise FileNotFoundError(f"TFLite model not found: {model_path}")
+    try:
+        import tensorflow as tf
+    except ImportError as exc:
+        raise RuntimeError("TFLite runtime dependencies are unavailable. Run this in the Docker export image.") from exc
+    interpreter = tf.lite.Interpreter(model_path=str(model_path))
+    interpreter.allocate_tensors()
+    input_shape = tuple(int(value) for value in interpreter.get_input_details()[0]["shape"])
+    if len(input_shape) != 4 or input_shape[0] != 1 or input_shape[3] != 3:
+        raise VisionResultValidationError(f"unexpected TFLite input shape: {input_shape}")
+    return interpreter
+
+
+def _run_tflite_bgr_frame(
+    image_bgr: Any, *, interpreter: Any, confidence_threshold: float, nms_iou_threshold: float
+) -> VisionResult:
+    """이미지 또는 영상 프레임 하나를 동일한 TFLite 계약으로 분석한다."""
+    height, width = image_bgr.shape[:2]
+    source_size = ImageSize(width=width, height=height)
+    input_detail = interpreter.get_input_details()[0]
+    input_shape = tuple(int(value) for value in input_detail["shape"])
+    transform = make_letterbox_transform(source_size, input_width=input_shape[2], input_height=input_shape[1])
+    interpreter.set_tensor(input_detail["index"], _preprocess_bgr_image(image_bgr, transform))
+    interpreter.invoke()
+    output_detail = interpreter.get_output_details()[0]
+    output = interpreter.get_tensor(output_detail["index"]).tolist()
+    return vision_result_from_tflite_output(
+        output, source_size=source_size, input_width=input_shape[2], input_height=input_shape[1],
+        confidence_threshold=confidence_threshold, nms_iou_threshold=nms_iou_threshold,
+    )
+
+
 def run_tflite_image_inference(
     source: Path,
     *,
@@ -223,51 +270,91 @@ def run_tflite_image_inference(
     """실제 이미지 한 장으로 TFLite 모델부터 안내 후보까지 검증한다."""
     if not source.is_file():
         raise FileNotFoundError(f"source image not found: {source}")
-    if not model_path.is_file():
-        raise FileNotFoundError(f"TFLite model not found: {model_path}")
     try:
         import cv2
-        import tensorflow as tf
     except ImportError as exc:
-        raise RuntimeError("TFLite runtime dependencies are unavailable. Run this in the Docker export image.") from exc
+        raise RuntimeError("TFLite image preprocessing requires opencv-python") from exc
 
     image_bgr = cv2.imread(str(source))
     if image_bgr is None:
         raise VisionResultValidationError(f"unable to decode source image: {source}")
-    height, width = image_bgr.shape[:2]
-    source_size = ImageSize(width=width, height=height)
-    interpreter = tf.lite.Interpreter(model_path=str(model_path))
-    interpreter.allocate_tensors()
-    input_detail = interpreter.get_input_details()[0]
-    input_shape = tuple(int(value) for value in input_detail["shape"])
-    if len(input_shape) != 4 or input_shape[0] != 1 or input_shape[3] != 3:
-        raise VisionResultValidationError(f"unexpected TFLite input shape: {input_shape}")
-    transform = make_letterbox_transform(source_size, input_width=input_shape[2], input_height=input_shape[1])
-    interpreter.set_tensor(input_detail["index"], _preprocess_bgr_image(image_bgr, transform))
-    interpreter.invoke()
-    output_detail = interpreter.get_output_details()[0]
-    output = interpreter.get_tensor(output_detail["index"]).tolist()
-    return vision_result_from_tflite_output(
-        output,
-        source_size=source_size,
-        input_width=input_shape[2],
-        input_height=input_shape[1],
+    return _run_tflite_bgr_frame(
+        image_bgr,
+        interpreter=_create_tflite_interpreter(model_path),
         confidence_threshold=confidence_threshold,
         nms_iou_threshold=nms_iou_threshold,
     )
 
 
+def run_tflite_video_inference(
+    source: Path, *, model_path: Path = DEFAULT_MODEL_PATH, frame_stride: int = 30,
+    max_samples: int | None = 20, confidence_threshold: float = DEFAULT_BUS_CONFIDENCE_THRESHOLD,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> dict[str, Any]:
+    """영상의 일정 간격 프레임을 분석해 거리 변화 기반 안내를 검증한다."""
+    if not source.is_file():
+        raise FileNotFoundError(f"source video not found: {source}")
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("TFLite video inference requires opencv-python") from exc
+    capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        raise VisionResultValidationError(f"unable to decode source video: {source}")
+    try:
+        total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        frames_per_second = float(capture.get(cv2.CAP_PROP_FPS))
+        if total_frames <= 0 or not math.isfinite(frames_per_second) or frames_per_second <= 0:
+            raise VisionResultValidationError("video must provide a positive frame count and frame rate")
+        interpreter = _create_tflite_interpreter(model_path)
+        previous_result: VisionResult | None = None
+        samples: list[dict[str, Any]] = []
+        for frame_index in frame_indices_to_process(total_frames, frame_stride=frame_stride, max_samples=max_samples):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, image_bgr = capture.read()
+            if not ok or image_bgr is None:
+                continue
+            result = _run_tflite_bgr_frame(image_bgr, interpreter=interpreter, confidence_threshold=confidence_threshold, nms_iou_threshold=nms_iou_threshold)
+            guidance = interpret_bus_guidance(result, previous=previous_result)
+            handoff = build_vision_guidance_handoff(result, previous=previous_result)
+            samples.append({
+                "frameIndex": frame_index,
+                "offsetMillis": round(frame_index / frames_per_second * 1000),
+                "visionResult": result.as_contract_payload(),
+                "spatialGuidance": guidance.as_dict() if guidance is not None else None,
+                "visionGuidanceHandoff": handoff.as_dict(),
+            })
+            previous_result = result
+    finally:
+        capture.release()
+    return {"source": str(source), "frameRate": frames_per_second, "totalFrames": total_frames, "frameStride": frame_stride, "samples": samples}
+
+
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the Android TFLite bus baseline on one image.")
-    parser.add_argument("--source", required=True, type=Path, help="Input image path")
+    parser = argparse.ArgumentParser(description="Run the Android TFLite bus baseline on an image or video.")
+    parser.add_argument("--source", required=True, type=Path, help="Input image or video path")
+    parser.add_argument("--video", action="store_true", help="Treat --source as a video and sample sequential frames")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH, help="TFLite model path")
     parser.add_argument("--output", required=True, type=Path, help="JSON result path")
     parser.add_argument("--confidence", type=float, default=DEFAULT_BUS_CONFIDENCE_THRESHOLD)
+    parser.add_argument("--frame-stride", type=int, default=30, help="Frames skipped between video samples")
+    parser.add_argument("--max-samples", type=int, default=20, help="Maximum video frames to analyse")
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    if args.video:
+        payload = run_tflite_video_inference(
+            args.source, model_path=args.model, frame_stride=args.frame_stride, max_samples=args.max_samples,
+            confidence_threshold=args.confidence,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"TFLite video results written: {args.output}")
+        print(f"Analysed frames: {len(payload['samples'])}")
+        return
+
     result = run_tflite_image_inference(args.source, model_path=args.model, confidence_threshold=args.confidence)
     handoff = build_vision_guidance_handoff(result)
     guidance = interpret_bus_guidance(result)

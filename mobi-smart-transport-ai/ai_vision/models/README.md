@@ -49,3 +49,21 @@ input contract: letterboxed RGB `[1, 640, 640, 3]` `float32` values in
 first four output channels are normalized `cx, cy, w, h` values in `[0, 1]`;
 multiply them by 640 before removing letterbox padding and restoring original
 camera-frame coordinates.
+
+## Video sequence validation
+
+Use the same adapter on a public test video before an Android phone is
+available. It samples frames in chronological order and compares each bus box
+with the preceding sampled frame, so the result can include `APPROACHING`,
+`STABLE`, or `RECEDING`. This is a screen-size estimate only; it is not a
+real-world distance measurement.
+
+```powershell
+docker run --rm --mount type=bind,src=<project-absolute-path>,dst=/workspace `
+  -w /workspace --entrypoint python mobi-tflite-export:python312-cpu `
+  ai_vision/pipelines/tflite_bus_inference.py --video `
+  --source ai_vision/pipelines/fixtures/external/waiting-for-a-bus.webm `
+  --model ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite `
+  --frame-stride 30 --max-samples 20 `
+  --output .tool-tmp/tflite-waiting-for-a-bus.video-guidance.json
+```
