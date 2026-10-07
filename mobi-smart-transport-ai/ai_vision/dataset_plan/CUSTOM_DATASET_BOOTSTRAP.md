@@ -109,3 +109,19 @@ python ai_vision/pipelines/validate_yolo_dataset.py `
 
 그 다음에야 YOLO 학습, 평가, TFLite 재변환 순서로 진행한다. 현재 COCO 버스 기준선은
 새 모델 성능을 비교하는 용도로 유지한다.
+
+## 공개 버스 문 데이터의 별도 처리
+
+Roboflow에서 내려받은 공개 버스 문 데이터는 원본 클래스가 `Bus`, `Front_door`,
+`Number`, `Rear_door`로 구성되어 있다. 이 데이터만으로는 7개 전체 클래스를 학습할 수
+없다. 첫 실험에서는 `Number`를 제외하고 앞문·뒷문을 `bus_door` 하나로 합친 2개 클래스
+모델을 만든다.
+
+```powershell
+python ai_vision/pipelines/prepare_public_bus_door_dataset.py `
+  --source-root <Roboflow-YOLO-압축해제-폴더> `
+  --target-root data/public_bus_door_v1
+```
+
+그 결과는 `public_bus_door_dataset.yaml`을 사용해 학습한다. `obstacle` 등 나머지
+클래스는 국내 직접 촬영·라벨링 데이터를 확보한 뒤 별도 확장 모델에서 추가한다.

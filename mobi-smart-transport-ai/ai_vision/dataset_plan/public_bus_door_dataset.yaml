@@ -1,0 +1,9 @@
+# 공개 버스 문 데이터셋을 변환한 첫 커스텀 모델용 설정.
+# 이 버전은 bus와 bus_door만 학습한다. obstacle 등 나머지 프로젝트 클래스는 포함하지 않는다.
+path: data/public_bus_door_v1
+train: train/images
+val: val/images
+test: test/images
+names:
+  0: bus
+  1: bus_door
