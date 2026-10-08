@@ -26,7 +26,7 @@ class GuidanceHandoffTest(unittest.TestCase):
             raw_detections=detections,
             model_name="yolov11n",
             model_version="test",
-            thresholds={"bus": 0.50},
+            thresholds={"bus": 0.50, "bus_door": 0.55},
         )
 
     def test_serializes_observation_without_risk_or_message_policy(self) -> None:
@@ -48,6 +48,34 @@ class GuidanceHandoffTest(unittest.TestCase):
         payload = build_vision_guidance_handoff(current).as_dict()
 
         self.assertEqual(payload["candidates"], [])
+
+    def test_adds_door_candidate_when_door_is_inside_bus(self) -> None:
+        current = self.result(
+            [
+                RawDetection("bus", 0.90, 300, 100, 900, 800),
+                RawDetection("bus_door", 0.80, 700, 300, 820, 700),
+            ]
+        )
+
+        payload = build_vision_guidance_handoff(current).as_dict()
+
+        self.assertEqual([candidate["classId"] for candidate in payload["candidates"]], ["bus", "bus_door"])
+        door = payload["candidates"][1]
+        self.assertEqual(door["direction"], "RIGHT")
+        self.assertEqual(door["relativeDistance"], "NEAR")
+        self.assertEqual(door["motion"], "UNKNOWN")
+
+    def test_omits_door_candidate_when_door_is_not_inside_bus(self) -> None:
+        current = self.result(
+            [
+                RawDetection("bus", 0.90, 0, 100, 300, 800),
+                RawDetection("bus_door", 0.80, 700, 300, 820, 700),
+            ]
+        )
+
+        payload = build_vision_guidance_handoff(current).as_dict()
+
+        self.assertEqual([candidate["classId"] for candidate in payload["candidates"]], ["bus"])
 
 
 if __name__ == "__main__":

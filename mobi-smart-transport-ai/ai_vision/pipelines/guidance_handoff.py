@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from spatial_guidance import SpatialGuidance, interpret_bus_guidance
+from spatial_guidance import SpatialGuidance, interpret_bus_door_guidance, interpret_bus_guidance
 from vision_result import VisionResult
 
 
@@ -57,9 +57,10 @@ def build_vision_guidance_handoff(
     Context/SAL/음성 담당 모듈의 책임이며, 여기서는 검증 가능한 관측·해석 값만
     전달한다.
     """
-    guidance = interpret_bus_guidance(current, previous)
+    bus_guidance = interpret_bus_guidance(current, previous)
+    door_guidance = interpret_bus_door_guidance(current, previous)
     return VisionGuidanceHandoff(
         frame_id=current.frame_id,
         captured_at=current.captured_at.isoformat(),
-        candidates=(guidance,) if guidance is not None else (),
+        candidates=tuple(candidate for candidate in (bus_guidance, door_guidance) if candidate is not None),
     )

@@ -1,4 +1,4 @@
-"""버스 탐지 결과를 화면 기준의 안내 정보로 해석한다.
+"""버스·버스 문 탐지 결과를 화면 기준의 안내 정보로 해석한다.
 
 이 모듈은 실제 거리 측정기가 아니다. 단일 카메라 프레임에서 버스 bbox가
 차지하는 비율을 사용해 ``FAR/MEDIUM/NEAR``라는 *상대적 화면 거리 단계*를
@@ -49,6 +49,10 @@ NEAR_AREA_THRESHOLD = 0.20
 APPROACHING_AREA_RATIO = 1.25
 RECEDING_AREA_RATIO = 0.80
 
+# 버스 문은 버스 bbox 내부에 충분히 포함될 때만 안내 후보로 인정한다. 창문·광고판
+# 같은 비슷한 사각형을 문으로 잘못 읽었을 때 바로 안내하는 일을 줄이는 1차 조건이다.
+MIN_DOOR_IN_BUS_OVERLAP = 0.70
+
 
 @dataclass(frozen=True)
 class SpatialGuidance:
@@ -82,8 +86,10 @@ def _area(detection: VisionDetection) -> float:
     return detection.bbox.w * detection.bbox.h
 
 
-def _largest_detection(result: VisionResult, class_id: str) -> VisionDetection | None:
+def _largest_detection(result: VisionResult | None, class_id: str) -> VisionDetection | None:
     """동일 클래스가 여럿이면 화면에서 가장 큰 대상을 안내 대상으로 선택한다."""
+    if result is None:
+        return None
     candidates = (detection for detection in result.detections if detection.class_id == class_id)
     return max(candidates, key=_area, default=None)
 
@@ -115,6 +121,27 @@ def _motion(current_area: float, previous_area: float | None) -> MotionState:
     return MotionState.STABLE
 
 
+def _intersection_area(first: VisionDetection, second: VisionDetection) -> float:
+    left = max(first.bbox.x, second.bbox.x)
+    top = max(first.bbox.y, second.bbox.y)
+    right = min(first.bbox.x + first.bbox.w, second.bbox.x + second.bbox.w)
+    bottom = min(first.bbox.y + first.bbox.h, second.bbox.y + second.bbox.h)
+    return max(0.0, right - left) * max(0.0, bottom - top)
+
+
+def _parent_bus(door: VisionDetection, result: VisionResult | None) -> VisionDetection | None:
+    """문 bbox 대부분을 포함하는 버스 중 가장 잘 맞는 버스를 고른다."""
+    door_area = _area(door)
+    if door_area <= 0 or result is None:
+        return None
+    candidates = (
+        bus
+        for bus in result.detections
+        if bus.class_id == "bus" and _intersection_area(door, bus) / door_area >= MIN_DOOR_IN_BUS_OVERLAP
+    )
+    return max(candidates, key=lambda bus: (_intersection_area(door, bus), _area(bus)), default=None)
+
+
 def interpret_bus_guidance(
     current: VisionResult,
     previous: VisionResult | None = None,
@@ -141,3 +168,36 @@ def interpret_bus_guidance(
         confidence=current_bus.score,
         normalized_area=current_area,
     )
+
+
+def interpret_bus_door_guidance(
+    current: VisionResult,
+    previous: VisionResult | None = None,
+) -> SpatialGuidance | None:
+    """현재 프레임의 신뢰 가능한 버스 문을 승차 위치 안내 후보로 만든다.
+
+    문 방향은 문 bbox로 판단한다. 반면 상대 거리·접근 상태는 문을 포함하는 버스
+    차체의 크기로 판단한다. 문 자체는 작아 화면 거리 단계에 적합하지 않기 때문이다.
+    """
+    doors = sorted(
+        (detection for detection in current.detections if detection.class_id == "bus_door"),
+        key=lambda detection: (detection.score, _area(detection)),
+        reverse=True,
+    )
+    for door in doors:
+        current_bus = _parent_bus(door, current)
+        if current_bus is None:
+            continue
+        previous_bus = _largest_detection(previous, "bus")
+        current_bus_area = _area(current_bus)
+        previous_bus_area = _area(previous_bus) if previous_bus is not None else None
+        return SpatialGuidance(
+            frame_id=current.frame_id,
+            class_id=door.class_id,
+            direction=_direction(door),
+            relative_distance=_relative_distance(current_bus_area),
+            motion=_motion(current_bus_area, previous_bus_area),
+            confidence=door.score,
+            normalized_area=_area(door),
+        )
+    return None
