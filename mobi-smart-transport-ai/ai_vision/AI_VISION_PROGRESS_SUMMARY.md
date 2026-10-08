@@ -77,5 +77,6 @@
 
 - [Android TFLite 연결 인계서](ANDROID_TFLITE_HANDOFF.md)
 - [버스 문 모델 산출물](BUS_DOOR_MODEL_RELEASE.md)
+- [버스 문 모델 사용 방법](BUS_DOOR_MODEL_USAGE.md)
 - [커스텀 데이터셋 시작 안내](dataset_plan/CUSTOM_DATASET_BOOTSTRAP.md)
 - [공개 데이터 클래스 변환 도구](pipelines/prepare_public_bus_door_dataset.py)

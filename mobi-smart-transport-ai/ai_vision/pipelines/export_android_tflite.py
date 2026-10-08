@@ -1,8 +1,7 @@
-"""PC YOLO 기준 모델을 Android용 TensorFlow Lite 파일로 내보내는 도구.
+"""YOLO ``.pt`` 모델을 Android용 TensorFlow Lite 파일로 내보내는 도구.
 
-이 도구가 만드는 파일은 COCO 사전학습 ``yolo11n.pt``의 ``bus`` 검증용
-기준선이다. 프로젝트 전용 ``bus_door``·장애물 7개 클래스를 지원하는 최종
-모델이 아니며, 해당 모델은 별도 데이터 학습 뒤 다시 export해야 한다.
+인자를 생략하면 COCO 사전학습 ``yolo11n.pt`` 버스 기준선을 만들고, ``--source``로
+프로젝트 전용 ``bus_door`` 등 학습 완료 모델을 지정할 수 있다.
 """
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ def export_android_tflite(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Export the bus baseline YOLO model to Android TFLite.")
+    parser = argparse.ArgumentParser(description="Export a YOLO model to Android TFLite.")
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE_MODEL)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_MODEL)
     parser.add_argument("--image-size", type=int, default=640)
@@ -71,8 +70,8 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     artifact = export_android_tflite(args.source, args.output, image_size=args.image_size)
-    print(f"Android TFLite baseline written: {artifact}")
-    print("Scope: COCO pretrained bus baseline only; bus_door and project-specific classes are not included.")
+    print(f"Android TFLite model written: {artifact}")
+    print("Verify the exported model's class order and output tensor layout before Android integration.")
 
 
 if __name__ == "__main__":
