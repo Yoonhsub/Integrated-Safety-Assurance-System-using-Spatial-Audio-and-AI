@@ -362,6 +362,48 @@ def run_tflite_image_inference(
     )
 
 
+def run_bus_door_tflite_image_inference(
+    source: Path,
+    *,
+    model_path: Path = Path("ai_vision/models/yolo11n_bus_door_v1_float32.tflite"),
+    confidence_threshold: float = DEFAULT_BUS_CONFIDENCE_THRESHOLD,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> VisionResult:
+    """버스 문 TFLite를 실제 이미지 한 장에 실행한다.
+
+    Android 앱 연결 전에도 동일한 letterbox/RGB/float32 입력 규칙과 두 클래스
+    후처리 규칙을 재현하는 공개 검증 진입점이다.
+    """
+    if not source.is_file():
+        raise FileNotFoundError(f"source image not found: {source}")
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("TFLite image preprocessing requires opencv-python") from exc
+
+    image_bgr = cv2.imread(str(source))
+    if image_bgr is None:
+        raise VisionResultValidationError(f"unable to decode source image: {source}")
+    height, width = image_bgr.shape[:2]
+    source_size = ImageSize(width=width, height=height)
+    interpreter = _create_tflite_interpreter(model_path)
+    input_detail = interpreter.get_input_details()[0]
+    input_shape = tuple(int(value) for value in input_detail["shape"])
+    transform = make_letterbox_transform(source_size, input_width=input_shape[2], input_height=input_shape[1])
+    interpreter.set_tensor(input_detail["index"], _preprocess_bgr_image(image_bgr, transform))
+    interpreter.invoke()
+    output_detail = interpreter.get_output_details()[0]
+    output = interpreter.get_tensor(output_detail["index"]).tolist()
+    return vision_result_from_bus_door_tflite_output(
+        output,
+        source_size=source_size,
+        input_width=input_shape[2],
+        input_height=input_shape[1],
+        confidence_threshold=confidence_threshold,
+        nms_iou_threshold=nms_iou_threshold,
+    )
+
+
 def run_tflite_video_inference(
     source: Path, *, model_path: Path = DEFAULT_MODEL_PATH, frame_stride: int = 30,
     max_samples: int | None = 20, confidence_threshold: float = DEFAULT_BUS_CONFIDENCE_THRESHOLD,
@@ -411,6 +453,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source", required=True, type=Path, help="Input image or video path")
     parser.add_argument("--video", action="store_true", help="Treat --source as a video and sample sequential frames")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH, help="TFLite model path")
+    parser.add_argument(
+        "--model-profile",
+        choices=("coco-bus", "bus-door"),
+        default="coco-bus",
+        help="coco-bus is the generic bus baseline; bus-door expects [1,6,8400] output",
+    )
     parser.add_argument("--output", required=True, type=Path, help="JSON result path")
     parser.add_argument("--confidence", type=float, default=DEFAULT_BUS_CONFIDENCE_THRESHOLD)
     parser.add_argument("--frame-stride", type=int, default=30, help="Frames skipped between video samples")
@@ -421,6 +469,8 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     if args.video:
+        if args.model_profile == "bus-door":
+            raise SystemExit("bus-door video sampling is not implemented; validate an image or use the Android app path")
         payload = run_tflite_video_inference(
             args.source, model_path=args.model, frame_stride=args.frame_stride, max_samples=args.max_samples,
             confidence_threshold=args.confidence,
@@ -431,7 +481,12 @@ def main() -> None:
         print(f"Analysed frames: {len(payload['samples'])}")
         return
 
-    result = run_tflite_image_inference(args.source, model_path=args.model, confidence_threshold=args.confidence)
+    if args.model_profile == "bus-door":
+        result = run_bus_door_tflite_image_inference(
+            args.source, model_path=args.model, confidence_threshold=args.confidence
+        )
+    else:
+        result = run_tflite_image_inference(args.source, model_path=args.model, confidence_threshold=args.confidence)
     handoff = build_vision_guidance_handoff(result)
     guidance = interpret_bus_guidance(result)
     payload = {

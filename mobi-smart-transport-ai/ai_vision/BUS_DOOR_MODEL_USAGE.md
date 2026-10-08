@@ -114,6 +114,24 @@ ai_vision/models/yolo11n_bus_door_v1_float32.tflite
 동일 클래스끼리만 NMS를 적용해야 한다. 버스 문 박스는 버스 차체 박스와 겹치는 것이
 정상이므로, 두 클래스를 한꺼번에 NMS 처리하면 문 후보가 사라질 수 있다.
 
+### 변환된 TFLite를 PC에서 재검증하기
+
+Android 실기기 전에는 아래 명령으로 TFLite 모델 자체를 공개 버스 문 이미지에 실행할
+수 있다. 결과 JSON에는 `bus`·`bus_door` 검출과 안내 후보가 함께 저장된다.
+
+```powershell
+docker run --rm `
+  --mount type=bind,src=<프로젝트_절대경로>,dst=/workspace `
+  --workdir /workspace `
+  --entrypoint python `
+  mobi-tflite-export:python312-cpu `
+  ai_vision/pipelines/tflite_bus_inference.py `
+  --model-profile bus-door `
+  --model ai_vision/models/yolo11n_bus_door_v1_float32.tflite `
+  --source <버스_문_이미지_경로> `
+  --output .tool-tmp/bus-door-tflite-result.json
+```
+
 ## 5. Android 담당자가 해야 할 일
 
 1. 생성된 `.tflite` 파일을 Android 앱 assets에 넣는다.
