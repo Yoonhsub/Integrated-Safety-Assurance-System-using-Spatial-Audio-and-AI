@@ -1,0 +1,8 @@
+# 첫 장애물 전용 모델의 YOLO 설정이다.
+# 실제 이미지·라벨은 Git에 올리지 않는 ai_vision/datasets/obstacle_v1/에 둔다.
+path: ai_vision/datasets/obstacle_v1
+train: train/images
+val: val/images
+test: test/images
+names:
+  0: obstacle

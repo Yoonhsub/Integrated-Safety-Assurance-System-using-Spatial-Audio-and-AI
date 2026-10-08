@@ -58,9 +58,21 @@ def _validate_label_file(label_path: Path, *, class_count: int) -> list[str]:
     return errors
 
 
-def validate_dataset(dataset_root: Path, *, taxonomy_path: Path) -> DatasetValidationReport:
+def validate_dataset(
+    dataset_root: Path,
+    *,
+    taxonomy_path: Path | None = None,
+    class_count: int | None = None,
+) -> DatasetValidationReport:
     """YOLO 분할 폴더와 모든 이미지·라벨 조합을 검사한다."""
-    class_names = load_class_names(taxonomy_path)
+    if taxonomy_path is not None and class_count is not None:
+        raise ValueError("supply either taxonomy_path or class_count, not both")
+    if class_count is None:
+        if taxonomy_path is None:
+            raise ValueError("taxonomy_path or class_count is required")
+        class_count = len(load_class_names(taxonomy_path))
+    if class_count <= 0:
+        raise ValueError("class_count must be positive")
     image_count = 0
     label_count = 0
     errors: list[str] = []
@@ -78,7 +90,7 @@ def validate_dataset(dataset_root: Path, *, taxonomy_path: Path) -> DatasetValid
                 errors.append(f"missing label for image: {image_path}")
                 continue
             label_count += 1
-            errors.extend(_validate_label_file(label_path, class_count=len(class_names)))
+            errors.extend(_validate_label_file(label_path, class_count=class_count))
         for label_path in labels_dir.glob("*.txt"):
             if not any(image_path.stem == label_path.stem for image_path in images):
                 errors.append(f"label has no matching image: {label_path}")
@@ -88,13 +100,17 @@ def validate_dataset(dataset_root: Path, *, taxonomy_path: Path) -> DatasetValid
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate a custom YOLO dataset before training.")
     parser.add_argument("--dataset-root", type=Path, required=True)
-    parser.add_argument("--taxonomy", type=Path, default=Path("ai_vision/dataset_plan/class_taxonomy.json"))
+    parser.add_argument("--taxonomy", type=Path, default=None, help="Project taxonomy JSON (default: 7-class taxonomy)")
+    parser.add_argument("--class-count", type=int, default=None, help="Class count for a dedicated model")
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    report = validate_dataset(args.dataset_root, taxonomy_path=args.taxonomy)
+    taxonomy_path = args.taxonomy
+    if taxonomy_path is None and args.class_count is None:
+        taxonomy_path = Path("ai_vision/dataset_plan/class_taxonomy.json")
+    report = validate_dataset(args.dataset_root, taxonomy_path=taxonomy_path, class_count=args.class_count)
     print(f"images={report.image_count}, labels={report.label_count}, errors={len(report.errors)}")
     for error in report.errors:
         print(f"- {error}")

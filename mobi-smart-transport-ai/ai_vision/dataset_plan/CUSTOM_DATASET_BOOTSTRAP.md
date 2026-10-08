@@ -68,6 +68,10 @@ data/custom_bus_safety_v1/
 특히 `bus_door`는 `bus` 박스 내부에 중첩해서 라벨링하며, 사람·자전거는 `obstacle`로
 라벨링하지 않는다.
 
+장애물 우선 시범 모델은 전체 7개 클래스를 기다리지 않고 단일 `obstacle` 클래스로
+시작한다. 사진 수집·라벨 규칙·검증 명령은
+[OBSTACLE_V1_START.md](OBSTACLE_V1_START.md)를 따른다.
+
 ## 4. metadata.csv 형식
 
 아래 헤더를 사용한다. `image_id`는 파일명에서 확장자를 뺀 값과 같게 두면 추적이 쉽다.

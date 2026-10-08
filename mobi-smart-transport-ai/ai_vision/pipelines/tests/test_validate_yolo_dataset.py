@@ -52,6 +52,21 @@ class ValidateYoloDatasetTest(unittest.TestCase):
             self.assertFalse(report.valid)
             self.assertIn("missing label for image", report.errors[0])
 
+    def test_supports_dedicated_one_class_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self._create_dataset(root, label="0 0.5 0.5 0.4 0.3\n")
+            report = validate_dataset(root, class_count=1)
+            self.assertTrue(report.valid)
+
+    def test_rejects_invalid_dedicated_class_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self._create_dataset(root, label="1 0.5 0.5 0.4 0.3\n")
+            report = validate_dataset(root, class_count=1)
+            self.assertFalse(report.valid)
+            self.assertIn("class id 1 is outside taxonomy", report.errors[0])
+
 
 if __name__ == "__main__":
     unittest.main()
