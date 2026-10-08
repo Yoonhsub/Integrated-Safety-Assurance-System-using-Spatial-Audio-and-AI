@@ -49,7 +49,7 @@ COCO `bus` 기준선은 Android 연결 검증용이며, `bus_door`와 `obstacle`
 분할 규칙, 자동 검증 명령을 정리했다.
 
 팀 결산·인계용 현재 진행 현황은
-[`DEVELOPER_B_PROGRESS_SUMMARY.md`](DEVELOPER_B_PROGRESS_SUMMARY.md)에서 확인한다.
+[`AI_VISION_PROGRESS_SUMMARY.md`](AI_VISION_PROGRESS_SUMMARY.md)에서 확인한다.
 
 ---
 
