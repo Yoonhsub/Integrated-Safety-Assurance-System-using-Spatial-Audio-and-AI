@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "0.1.0-proposed",
+  "frameId": "a0af5e88-362b-4a9a-b2ee-2e15c080d6da",
+  "capturedAt": "2026-10-08T10:18:00+00:00",
+  "candidates": [
+    {
+      "classId": "bus",
+      "direction": "CENTER",
+      "relativeDistance": "NEAR",
+      "motion": "UNKNOWN",
+      "confidence": 0.9402,
+      "normalizedArea": 0.4456
+    },
+    {
+      "classId": "bus_door",
+      "direction": "CENTER",
+      "relativeDistance": "NEAR",
+      "motion": "UNKNOWN",
+      "confidence": 0.8917,
+      "normalizedArea": 0.0201
+    }
+  ]
+}

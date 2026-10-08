@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 import uuid
@@ -76,6 +77,22 @@ class GuidanceHandoffTest(unittest.TestCase):
         payload = build_vision_guidance_handoff(current).as_dict()
 
         self.assertEqual([candidate["classId"] for candidate in payload["candidates"]], ["bus"])
+
+    def test_context_audio_fixture_is_a_policy_free_bus_and_door_handoff(self) -> None:
+        fixture_path = _PIPELINES_DIR / "fixtures" / "bus_door_guidance_candidate.json"
+        payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["schemaVersion"], PROPOSED_SCHEMA_VERSION)
+        self.assertEqual([item["classId"] for item in payload["candidates"]], ["bus", "bus_door"])
+        for candidate in payload["candidates"]:
+            self.assertIn(candidate["direction"], {"LEFT", "CENTER", "RIGHT"})
+            self.assertIn(candidate["relativeDistance"], {"FAR", "MEDIUM", "NEAR"})
+            self.assertIn(candidate["motion"], {"UNKNOWN", "APPROACHING", "STABLE", "RECEDING"})
+            self.assertGreaterEqual(candidate["confidence"], 0.0)
+            self.assertLessEqual(candidate["confidence"], 1.0)
+            self.assertGreater(candidate["normalizedArea"], 0.0)
+            self.assertNotIn("riskLevel", candidate)
+            self.assertNotIn("message", candidate)
 
 
 if __name__ == "__main__":
