@@ -1,12 +1,12 @@
-"""Android TFLite YOLO11 출력에서 ``bus``를 프로젝트 VisionResult로 변환한다.
+"""Android TFLite YOLO11 출력에서 버스·버스 문을 VisionResult로 변환한다.
 
 이 파일은 Android 앱 구현 전에 동일한 입·출력 흐름을 PC에서 검증하기 위한
 참조 어댑터다. Android 구현도 아래 순서를 그대로 따르면 된다.
 
 ``camera frame -> letterbox/RGB/float32 -> [1,84,8400] -> bus/NMS -> VisionResult``
 
-COCO 사전학습 기준선만 다루므로 ``bus``(COCO class 5)만 계약으로 내보낸다.
-``bus_door``와 프로젝트 전용 클래스는 별도 학습 모델이 준비된 뒤 추가한다.
+기본값은 COCO 사전학습 기준선의 ``bus``(COCO class 5)다. ``bus_door`` 모델은
+별도 프로필로 두 클래스 모두를 해석한다.
 """
 
 from __future__ import annotations
@@ -26,6 +26,8 @@ from vision_result import ImageSize, RawDetection, VisionResult, VisionResultVal
 
 
 COCO_BUS_CLASS_INDEX = 5
+BUS_DOOR_BUS_CLASS_INDEX = 0
+BUS_DOOR_CLASS_INDEX = 1
 DEFAULT_INPUT_WIDTH = 640
 DEFAULT_INPUT_HEIGHT = 640
 DEFAULT_BUS_CONFIDENCE_THRESHOLD = 0.50
@@ -169,6 +171,54 @@ def decode_bus_detections(
     return non_maximum_suppression(raw, iou_threshold=nms_iou_threshold)
 
 
+def decode_bus_door_detections(
+    output: Sequence[Sequence[Sequence[float]]],
+    *,
+    transform: LetterboxTransform,
+    confidence_threshold: float = DEFAULT_BUS_CONFIDENCE_THRESHOLD,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> list[RawDetection]:
+    """버스 문 모델의 ``[1, 6, 8400]`` 출력을 두 프로젝트 클래스로 해석한다.
+
+    채널 0~3은 정규화된 ``cx, cy, w, h``이며 채널 4, 5는 각각 ``bus``,
+    ``bus_door`` 점수다. NMS는 클래스별로 적용해야 문 박스가 버스 차체 박스에
+    의해 제거되지 않는다.
+    """
+    if not 0.0 <= confidence_threshold <= 1.0:
+        raise VisionResultValidationError("confidence threshold must be in [0, 1]")
+    if len(output) != 1 or len(output[0]) != 6:
+        raise VisionResultValidationError("expected bus-door TFLite output shape [1, 6, candidate_count]")
+
+    channels = output[0]
+    candidate_count = len(channels[0])
+    if candidate_count <= 0 or any(len(channel) != candidate_count for channel in channels):
+        raise VisionResultValidationError("TFLite output channels must have equal non-zero length")
+
+    class_channels = ((BUS_DOOR_BUS_CLASS_INDEX, "bus"), (BUS_DOOR_CLASS_INDEX, "bus_door"))
+    by_class: dict[str, list[RawDetection]] = {class_id: [] for _, class_id in class_channels}
+    for index in range(candidate_count):
+        source_box = _model_box_to_source(
+            center_x=float(channels[0][index]),
+            center_y=float(channels[1][index]),
+            width=float(channels[2][index]),
+            height=float(channels[3][index]),
+            transform=transform,
+        )
+        if source_box is None:
+            continue
+        for class_index, class_id in class_channels:
+            score = float(channels[4 + class_index][index])
+            if math.isfinite(score) and score >= confidence_threshold:
+                by_class[class_id].append(
+                    RawDetection(class_id=class_id, score=min(score, 1.0), x1=source_box[0], y1=source_box[1], x2=source_box[2], y2=source_box[3])
+                )
+    return [
+        detection
+        for class_id in ("bus", "bus_door")
+        for detection in non_maximum_suppression(by_class[class_id], iou_threshold=nms_iou_threshold)
+    ]
+
+
 def vision_result_from_tflite_output(
     output: Sequence[Sequence[Sequence[float]]],
     *,
@@ -192,6 +242,32 @@ def vision_result_from_tflite_output(
         ),
         model_name=DEFAULT_MODEL_NAME,
         model_version=DEFAULT_MODEL_VERSION,
+    )
+
+
+def vision_result_from_bus_door_tflite_output(
+    output: Sequence[Sequence[Sequence[float]]],
+    *,
+    source_size: ImageSize,
+    input_width: int = DEFAULT_INPUT_WIDTH,
+    input_height: int = DEFAULT_INPUT_HEIGHT,
+    confidence_threshold: float = DEFAULT_BUS_CONFIDENCE_THRESHOLD,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> VisionResult:
+    """버스 문 TFLite 출력 하나를 프로젝트 VisionResult로 바꾼다."""
+    transform = make_letterbox_transform(source_size, input_width=input_width, input_height=input_height)
+    return build_vision_result(
+        frame_id=str(uuid.uuid4()),
+        captured_at=datetime.now(timezone.utc),
+        image_size=source_size,
+        raw_detections=decode_bus_door_detections(
+            output,
+            transform=transform,
+            confidence_threshold=confidence_threshold,
+            nms_iou_threshold=nms_iou_threshold,
+        ),
+        model_name="yolo11n-bus-door",
+        model_version="public-bus-door-v1-tflite-float32",
     )
 
 

@@ -12,7 +12,10 @@ if str(_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(_PIPELINES_DIR))
 
 from tflite_bus_inference import (  # noqa: E402
+    BUS_DOOR_BUS_CLASS_INDEX,
+    BUS_DOOR_CLASS_INDEX,
     COCO_BUS_CLASS_INDEX,
+    decode_bus_door_detections,
     decode_bus_detections,
     frame_indices_to_process,
     make_letterbox_transform,
@@ -30,6 +33,19 @@ def _output_with_candidates(candidates: list[tuple[float, float, float, float, f
         channels[2][index] = width
         channels[3][index] = height
         channels[4 + COCO_BUS_CLASS_INDEX][index] = score
+    return [channels]
+
+
+def _bus_door_output_with_candidates(
+    candidates: list[tuple[float, float, float, float, float, float]]
+) -> list[list[list[float]]]:
+    """(cx, cy, w, h, bus_score, door_score)로 [1,6,N] fixture를 만든다."""
+    channels = [[0.0 for _ in candidates] for _ in range(6)]
+    for index, (cx, cy, width, height, bus_score, door_score) in enumerate(candidates):
+        channels[0][index], channels[1][index] = cx, cy
+        channels[2][index], channels[3][index] = width, height
+        channels[4 + BUS_DOOR_BUS_CLASS_INDEX][index] = bus_score
+        channels[4 + BUS_DOOR_CLASS_INDEX][index] = door_score
     return [channels]
 
 
@@ -61,6 +77,22 @@ class TfliteBusInferenceTest(unittest.TestCase):
         output = _output_with_candidates([(0.5, 0.5, 100.0 / 640, 100.0 / 640, 0.49)])
         detections = decode_bus_detections(output, transform=make_letterbox_transform(ImageSize(width=640, height=640)))
         self.assertEqual(detections, [])
+
+    def test_decodes_bus_door_without_cross_class_nms(self) -> None:
+        output = _bus_door_output_with_candidates(
+            [
+                (0.5, 0.5, 0.8, 0.6, 0.90, 0.0),
+                (0.7, 0.5, 0.15, 0.4, 0.0, 0.85),
+            ]
+        )
+
+        detections = decode_bus_door_detections(
+            output, transform=make_letterbox_transform(ImageSize(width=640, height=640))
+        )
+
+        self.assertEqual([detection.class_id for detection in detections], ["bus", "bus_door"])
+        self.assertAlmostEqual(detections[0].score, 0.90)
+        self.assertAlmostEqual(detections[1].score, 0.85)
 
     def test_builds_normalized_vision_result(self) -> None:
         output = _output_with_candidates([(0.5, 0.5, 0.5, 0.5, 0.91)])

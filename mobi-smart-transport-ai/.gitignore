@@ -128,6 +128,7 @@ ai_vision/models/*.tflite
 # teammate receives the exact model on clone/pull. Other model artifacts stay
 # local by default.
 !ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite
+!ai_vision/models/yolo11n_bus_door_v1_float32.tflite
 ai_vision/models/*.onnx
 ai_vision/models/*.pt
 # Keep the trained bus-door checkpoint in Git LFS so the Android integration

@@ -19,7 +19,14 @@
 
 ## 산출물 보관 위치
 
-학습 가중치는 GitHub에 올리지 않고 로컬 산출물 폴더에 보관한다.
+학습 원본 가중치와 Android용 변환 모델은 Git LFS로 관리한다.
+
+```text
+ai_vision/models/yolo11n_bus_door_v1.pt
+ai_vision/models/yolo11n_bus_door_v1_float32.tflite
+```
+
+학습 과정의 세부 결과는 로컬 산출물 폴더에 보관한다.
 
 ```text
 .tool-tmp/model_artifacts/bus_door_v1/
@@ -33,9 +40,15 @@
 81C44B1818DE6C86B09D790AB240E7797DFAC6C392222789C00E907158513D86
 ```
 
+Android용 `yolo11n_bus_door_v1_float32.tflite` SHA-256:
+
+```text
+7178A76B3ABAA83BFAC0AD9C5B1EA40627560D6AA0E05587B335950A1BFFAA85
+```
+
 ## 다음 단계
 
-1. Android 앱 연동 단계에서 이 가중치를 TFLite로 변환한다.
+1. Android 앱에 변환된 TFLite 모델을 넣고 카메라 프레임을 연결한다.
 2. 앱 카메라 입력으로 `bus`·`bus_door` 검출을 확인한다.
 3. 검출 박스를 방향·거리 안내 이벤트로 전달하고 실제 정류장에서 조정한다.
 

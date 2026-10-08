@@ -95,11 +95,30 @@ docker run --rm `
 C:\ClaudeTest\claude-project\cap-Project\tflite-publish\mobi-smart-transport-ai
 ```
 
+변환을 마친 모델은 다음 파일이며 Git LFS로 함께 관리한다.
+
+```text
+ai_vision/models/yolo11n_bus_door_v1_float32.tflite
+```
+
+검증된 Android 입력·출력 규격은 다음과 같다.
+
+| 구분 | 값 |
+| --- | --- |
+| 입력 | `[1, 640, 640, 3]` RGB `float32`, 픽셀 값 `0.0~1.0` |
+| 출력 | `[1, 6, 8400]` `float32` |
+| 출력 채널 0~3 | 정규화된 `cx, cy, w, h` |
+| 출력 채널 4 | 클래스 `0`: `bus` 점수 |
+| 출력 채널 5 | 클래스 `1`: `bus_door` 점수 |
+
+동일 클래스끼리만 NMS를 적용해야 한다. 버스 문 박스는 버스 차체 박스와 겹치는 것이
+정상이므로, 두 클래스를 한꺼번에 NMS 처리하면 문 후보가 사라질 수 있다.
+
 ## 5. Android 담당자가 해야 할 일
 
 1. 생성된 `.tflite` 파일을 Android 앱 assets에 넣는다.
 2. 카메라 프레임을 모델 입력 크기와 형식에 맞춰 변환한다.
-3. 모델 출력에서 클래스 `0`은 `bus`, 클래스 `1`은 `bus_door`로 해석한다.
+3. 모델 출력에서 채널 `4`의 클래스 `0`은 `bus`, 채널 `5`의 클래스 `1`은 `bus_door`로 해석한다.
 4. `bus_door` 박스의 화면상 위치를 AI Vision 쪽 안내 이벤트에 전달한다.
 5. 실제 Android 기기에서 버스·버스 문·문이 아닌 창문을 구분하는지 확인한다.
 

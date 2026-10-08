@@ -1,1 +1,2 @@
 ai_vision/models/yolo11n_bus_door_v1.pt filter=lfs diff=lfs merge=lfs -text
+ai_vision/models/yolo11n_bus_door_v1_float32.tflite filter=lfs diff=lfs merge=lfs -text
