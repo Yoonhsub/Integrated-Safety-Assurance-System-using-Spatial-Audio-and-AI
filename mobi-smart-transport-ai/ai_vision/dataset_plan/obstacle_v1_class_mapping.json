@@ -1,25 +1,25 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "model_name": "bus_stop_obstacle_v1",
-  "purpose": "정적인 버스 정류장 장애물을 구분하되 앱 전달 계약에서는 obstacle로 통합한다.",
+  "purpose": "버스 정류장 문맥과 정적인 보행 장애물을 구분한다. 정류장은 문맥 정보이고, 나머지는 앱 전달 계약에서 obstacle로 통합한다.",
   "classes": [
     {
       "model_class_id": 0,
-      "model_class": "shelter_pillar",
-      "contract_class": "obstacle",
-      "label_rule": "쉘터를 지지하는 기둥 또는 통행 방향으로 돌출된 측면 프레임을 개별 bbox로 표시한다. 쉘터 전체를 하나의 bbox로 표시하지 않는다."
+      "model_class": "bus_stop",
+      "contract_class": "context",
+      "label_rule": "쉘터 전체 또는 쉘터 없는 정류장의 표지판·기둥 전체를 하나의 bbox로 표시한다."
     },
     {
       "model_class_id": 1,
-      "model_class": "bus_stop_pole",
+      "model_class": "sidewalk_pole",
       "contract_class": "obstacle",
-      "label_rule": "정류장 표지판과 이를 지지하는 기둥을 함께 하나의 bbox로 표시한다."
+      "label_rule": "보행 공간 가까이의 정류장 표지판·속도제한 표지판 등 인공 기둥을 표시한다. 차도 반대편·먼 기둥은 제외한다."
     },
     {
       "model_class_id": 2,
-      "model_class": "trash_bin",
+      "model_class": "tree_trunk",
       "contract_class": "obstacle",
-      "label_rule": "보행 공간에 설치된 쓰레기통의 외곽을 bbox로 표시한다."
+      "label_rule": "보행 공간 가까이의 나무 줄기만 표시한다. 잎·가지·화단 뒤의 나무는 제외한다."
     },
     {
       "model_class_id": 3,

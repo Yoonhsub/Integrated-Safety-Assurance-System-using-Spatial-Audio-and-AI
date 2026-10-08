@@ -1,11 +1,11 @@
-# 버스 정류장 장애물 V1 모델의 YOLO 설정이다.
+# 버스 정류장 문맥·장애물 시범 모델의 YOLO 설정이다.
 # 실제 이미지·라벨은 Git에 올리지 않는 ai_vision/datasets/obstacle_v1/에 둔다.
 path: ai_vision/datasets/obstacle_v1
 train: train/images
 val: val/images
 test: test/images
 names:
-  0: shelter_pillar
-  1: bus_stop_pole
-  2: trash_bin
+  0: bus_stop
+  1: sidewalk_pole
+  2: tree_trunk
   3: parked_pm

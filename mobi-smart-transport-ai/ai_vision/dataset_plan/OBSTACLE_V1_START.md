@@ -2,18 +2,17 @@
 
 ## 목표
 
-개발 일정의 주요 레벨인 전방 `obstacle`을 먼저 검증한다. 이 단계는 7개 전체 클래스를
-한 번에 학습하지 않고, 버스 정류장에서 부딪힐 수 있는 4개 정적 대상만 찾는 모델로
-시작한다. 모델 내부에서는 종류를 구분하고, 앱에 전달할 때는 모두 `obstacle` 계약으로
-통합한다.
+개발 일정의 주요 레벨인 전방 `obstacle`을 먼저 검증한다. 이 단계는 버스 정류장 문맥과
+보행 중 부딪힐 수 있는 정적 대상을 함께 찾는 4개 클래스 파일럿이다. `bus_stop`은
+문맥 정보이고, 나머지는 앱에 전달할 때 `obstacle` 계약으로 통합한다.
 
 ## 무엇을 찍고 라벨링하나
 
 | 모델 클래스 | 포함 대상 | 라벨링 방법 |
 | --- | --- | --- |
-| `shelter_pillar` | 쉘터 지지 기둥·돌출 측면 프레임 | 기둥 또는 프레임을 개별 bbox로 표시. 쉘터 전체는 표시하지 않음 |
-| `bus_stop_pole` | 정류장 표지판·안내판 기둥 | 표지판과 지지 기둥을 하나의 bbox로 표시 |
-| `trash_bin` | 보행 공간의 쓰레기통 | 쓰레기통 외곽을 bbox로 표시 |
+| `bus_stop` | 쉘터 또는 쉘터 없는 정류장의 표지판·기둥 | 정류장 전체를 하나의 bbox로 표시 |
+| `sidewalk_pole` | 보도 가까운 정류장·속도제한 표지판 등 인공 기둥 | 표지판과 지지 기둥을 하나의 bbox로 표시 |
+| `tree_trunk` | 보행 공간 가까운 나무 줄기 | 잎·가지가 아닌 줄기 부분을 bbox로 표시 |
 | `parked_pm` | 정지 상태의 전동킥보드·자전거 | 세워진 상태와 넘어진 상태를 모두 bbox로 표시 |
 
 사람이 타고 이동 중인 전동킥보드·자전거, 사람, 오토바이, 차량, 공사 가림막과
@@ -28,9 +27,9 @@
 
 | 클래스 | 최소 bbox 목표 |
 | --- | ---: |
-| `shelter_pillar` | 40개 |
-| `bus_stop_pole` | 30개 |
-| `trash_bin` | 30개 |
+| `bus_stop` | 50개 |
+| `sidewalk_pole` | 30개 |
+| `tree_trunk` | 50개 |
 | `parked_pm` | 50개 |
 
 | 분할 | 사진 목표 | 용도 |
@@ -57,13 +56,13 @@ ai_vision/datasets/obstacle_v1/
 YOLO 라벨의 첫 숫자는 아래 모델 클래스 번호다.
 
 ```text
-0 shelter_pillar
-1 bus_stop_pole
-2 trash_bin
+0 bus_stop
+1 sidewalk_pole
+2 tree_trunk
 3 parked_pm
 ```
 
-예: 사진 가운데의 쓰레기통은 `2 0.50 0.55 0.20 0.40`처럼 작성한다. 클래스별
+예: 사진 가운데의 나무 줄기는 `2 0.50 0.55 0.20 0.40`처럼 작성한다. 클래스별
 상세 규칙은 [obstacle_v1_class_mapping.json](obstacle_v1_class_mapping.json)과
 [labeling_standards.md](labeling_standards.md)의 `obstacle` 항목을 함께 따른다.
 
