@@ -130,6 +130,9 @@ ai_vision/models/*.tflite
 !ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite
 ai_vision/models/*.onnx
 ai_vision/models/*.pt
+# Keep the trained bus-door checkpoint in Git LFS so the Android integration
+# stage can start from the exact reviewed model.
+!ai_vision/models/yolo11n_bus_door_v1.pt
 ai_vision/models/*.pth
 ai_vision/models/*.weights
 ai_vision/runs/
