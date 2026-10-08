@@ -51,6 +51,27 @@ results[0].save(filename="bus-door-result.jpg")
 결과 이미지에서 `bus`와 `bus_door` 박스가 각각 표시되는지 확인한다. 이 단계는
 학습 결과를 PC에서 확인하는 용도이며, 실제 모바일 사용 검증은 아니다.
 
+프로젝트 안내 후보 JSON까지 함께 확인하려면 Docker에서 다음처럼 실행한다.
+
+```powershell
+docker run --rm `
+  --mount type=bind,src=<프로젝트_절대경로>,dst=/workspace `
+  --workdir /workspace `
+  --entrypoint python `
+  mobi-tflite-export:python312-cpu `
+  ai_vision/pipelines/offline_yolo_inference.py `
+  --source <버스_이미지_경로> `
+  --model ai_vision/models/yolo11n_bus_door_v1.pt `
+  --model-name yolo11n-bus-door `
+  --model-version public-bus-door-v1 `
+  --output .tool-tmp/bus-door.vision-result.json `
+  --guidance-output .tool-tmp/bus-door.guidance.json
+```
+
+`bus-door.guidance.json`에는 버스 후보와, 버스 차체 안에 충분히 포함된 버스 문 후보가
+함께 기록된다. 문 후보의 방향은 문 bbox를 사용하며, 화면상 거리·접근 상태는 버스
+차체 bbox를 사용한다.
+
 ## 4. Android 연동 단계: TFLite 변환
 
 개발 일정의 Android 카메라 연동 단계에서만 아래 작업을 수행한다. Docker Desktop이

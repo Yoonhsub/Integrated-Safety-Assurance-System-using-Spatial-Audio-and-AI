@@ -225,7 +225,14 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run offline YOLO inference and emit a VisionResult JSON file.")
     parser.add_argument("--source", required=True, type=Path, help="Input image or video path")
     parser.add_argument("--output", required=True, type=Path, help="VisionResult JSON output path")
+    parser.add_argument(
+        "--guidance-output",
+        type=Path,
+        help="Optional image-mode guidance-candidate JSON output path",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="YOLO model path or model filename")
+    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME, help="Model name recorded in the result JSON")
+    parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION, help="Model version recorded in the result JSON")
     parser.add_argument("--video", action="store_true", help="Treat source as video and sample its frames")
     parser.add_argument("--frame-stride", type=int, default=15, help="Process every Nth video frame")
     parser.add_argument("--max-samples", type=int, default=20, help="Maximum video frames to process")
@@ -240,10 +247,17 @@ def main() -> None:
             model_path=args.model,
             frame_stride=args.frame_stride,
             max_samples=args.max_samples,
+            model_name=args.model_name,
+            model_version=args.model_version,
         )
         summary = f"Video samples written: {len(payload['samples'])}"
     else:
-        result = run_image_inference(args.source, model_path=args.model)
+        result = run_image_inference(
+            args.source,
+            model_path=args.model,
+            model_name=args.model_name,
+            model_version=args.model_version,
+        )
         payload = result.as_contract_payload()
         summary = f"Supported detections: {len(result.detections)}"
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -251,6 +265,14 @@ def main() -> None:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if args.guidance_output is not None and not args.video:
+        guidance = build_vision_guidance_handoff(result)
+        args.guidance_output.parent.mkdir(parents=True, exist_ok=True)
+        args.guidance_output.write_text(
+            json.dumps(guidance.as_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"Guidance candidates written: {args.guidance_output}")
     print(f"VisionResult written: {args.output}")
     print(summary)
     if not args.video:
