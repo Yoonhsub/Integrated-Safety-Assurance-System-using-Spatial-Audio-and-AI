@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "model_name": "bus_stop_obstacle_v1",
+  "purpose": "정적인 버스 정류장 장애물을 구분하되 앱 전달 계약에서는 obstacle로 통합한다.",
+  "classes": [
+    {
+      "model_class_id": 0,
+      "model_class": "shelter_pillar",
+      "contract_class": "obstacle",
+      "label_rule": "쉘터를 지지하는 기둥 또는 통행 방향으로 돌출된 측면 프레임을 개별 bbox로 표시한다. 쉘터 전체를 하나의 bbox로 표시하지 않는다."
+    },
+    {
+      "model_class_id": 1,
+      "model_class": "bus_stop_pole",
+      "contract_class": "obstacle",
+      "label_rule": "정류장 표지판과 이를 지지하는 기둥을 함께 하나의 bbox로 표시한다."
+    },
+    {
+      "model_class_id": 2,
+      "model_class": "trash_bin",
+      "contract_class": "obstacle",
+      "label_rule": "보행 공간에 설치된 쓰레기통의 외곽을 bbox로 표시한다."
+    },
+    {
+      "model_class_id": 3,
+      "model_class": "parked_pm",
+      "contract_class": "obstacle",
+      "label_rule": "사람이 타지 않은 정지 상태의 전동킥보드·자전거만 표시한다. 세워진 상태와 넘어진 상태를 모두 포함한다."
+    }
+  ],
+  "alert_policy": "모든 검출은 즉시 음성 안내하지 않는다. 화면상 가까우면서 진행 방향에 있을 때만 Context/Audio가 안내 여부를 결정한다."
+}
