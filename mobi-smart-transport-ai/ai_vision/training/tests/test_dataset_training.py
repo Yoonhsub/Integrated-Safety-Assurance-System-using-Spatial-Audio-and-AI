@@ -16,6 +16,7 @@ from scripts.evaluate_ai_vision_yolo import build_parser as build_evaluation_par
 from scripts.evaluate_ai_vision_yolo import validate_evaluation_args
 from scripts.train_ai_vision_yolo import build_parser as build_training_parser
 from scripts.train_ai_vision_yolo import validate_training_args
+from scripts.validate_ai_vision_dataset import build_parser as build_dataset_validation_parser
 
 
 def _write_dataset(root: Path, data_yaml: Path) -> None:
@@ -65,6 +66,18 @@ def test_dataset_yaml_rejects_mapping_mismatch(tmp_path: Path) -> None:
     data_yaml.write_text(data_yaml.read_text(encoding="utf-8").replace("1: bus_door", "1: obstacle"), encoding="utf-8")
     with pytest.raises(ValueError, match="do not match class_mapping"):
         validate_dataset_config(data_yaml)
+
+
+def test_three_class_mapping_is_explicit_and_validator_default_stays_four_class() -> None:
+    from ai_vision.training.dataset_validation import DEFAULT_DATA_YAML
+
+    args = build_dataset_validation_parser().parse_args([])
+    assert args.data == DEFAULT_DATA_YAML
+    assert args.mapping == DEFAULT_MAPPING
+    three_class_mapping = DEFAULT_MAPPING.with_name("class_mapping_3class.json")
+    explicit = build_dataset_validation_parser().parse_args(["--mapping", str(three_class_mapping)])
+    assert explicit.mapping == three_class_mapping
+    assert len(load_training_classes(explicit.mapping, DEFAULT_TAXONOMY)) == 3
 
 
 def test_valid_label_and_empty_negative_label_are_accepted() -> None:

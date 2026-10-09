@@ -24,6 +24,71 @@ project taxonomy IDs is `class_mapping.json`; `datasets/bus_safety.yaml` contain
 Ultralytics' required duplicate class-name declaration. Tests and the dataset
 validator reject disagreement between the two files and the project taxonomy.
 
+The first custom-training data-preparation baseline is a separate three-class
+subset: `bus`, `bus_door`, and `bus_stop`, with IDs 0–2 in
+`class_mapping_3class.json` and `datasets/bus_safety_3class.yaml`. It does not
+replace the four-class setup or remove `obstacle` from the project taxonomy.
+Select the mapping explicitly when validating it:
+
+```powershell
+python scripts/validate_ai_vision_dataset.py `
+  --data ai_vision/training/datasets/bus_safety_3class.yaml `
+  --mapping ai_vision/training/class_mapping_3class.json
+```
+
+## Review-gated source conversion
+
+`scripts/prepare_ai_vision_dataset.py` reads AI-Hub CVAT XML/images and the
+Roboflow YOLO export directly from ZIP files; it does not extract or modify the
+source archives. A normal invocation is a read-only dry run:
+
+```powershell
+python scripts/prepare_ai_vision_dataset.py `
+  --aihub-zip C:\path\to\Bbox_1_new.zip `
+  --roboflow-zip C:\path\to\bus-open-door-v2-yolov8.zip
+```
+
+Review queues are created only when `--write-review-dir` is explicitly passed.
+The tool writes separate `box_review.csv` and `image_review.csv` files. Every
+box and image starts `unreviewed`; no parser or preview can approve data. The
+image row is a separate completeness attestation covering all three target
+classes in the full image, including checking for missing `bus` labels in
+Roboflow frames and missing `bus_door` labels in AI-Hub frames. Each candidate
+box needs an explicit decision (`approved`, `needs_correction`, `rejected`,
+`uncertain`, or `unreviewed`). Corrected coordinates are written in
+`corrected_bbox`; source annotation coordinates remain untouched. Source group
+identity must be reviewed and marked `verified` with a nonempty reason before
+conversion. Image completeness decisions also require a reason; non-approval box
+decisions require a `review_reason`. The tool rejects stale review rows and
+prevents an `approved` row from silently changing source coordinates. Unknown
+license/provenance is recorded as `not_recorded_in_this_manifest`, not inferred.
+
+Creating review manifests computes SHA-256 for every source image so review
+decisions stay bound to the inspected bytes; this explicit operation can take
+time on the large AI-Hub archive. A missing hash blocks conversion. Preview
+generation also requires an explicit output path and selected box IDs:
+
+```powershell
+python scripts/prepare_ai_vision_dataset.py `
+  --roboflow-zip C:\path\to\bus-open-door-v2-yolov8.zip `
+  --preview-dir C:\path\to\review-previews `
+  --box-id "<box-id-from-box_review.csv>"
+```
+
+Only explicit `--apply` can copy images and generate labels. It requires both
+review CSVs, an output directory, and a positive `--max-images` cap. All images
+must have human-reviewed annotation completeness, all candidate boxes must be
+approved/corrected/rejected, and each source group must be verified. At least
+three verified groups are required; whole groups are deterministically assigned
+to train/val/test. Source groups that cannot be tied to a known capture session
+must remain unverified. Roboflow train-split variants are kept train-only;
+the source split is not used as a trustworthy evaluation split. The generated
+dataset includes paired image/label folders, `dataset_manifest.csv`, a local
+`dataset.yaml`, and is checked with the existing validator and the explicit
+three-class mapping. Start with a small cap and inspect the resulting manifest
+before increasing it. This workflow does not merge datasets, download data,
+train a model, or make a runtime model change.
+
 ## Dataset preparation and annotation
 
 Prepare authorized images locally at:

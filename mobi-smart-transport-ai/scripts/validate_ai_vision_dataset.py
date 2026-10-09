@@ -12,6 +12,8 @@ if str(ROOT) not in sys.path:
 
 from ai_vision.training.dataset_validation import (  # noqa: E402
     DEFAULT_DATA_YAML,
+    DEFAULT_MAPPING,
+    DEFAULT_TAXONOMY,
     DatasetReport,
     validate_dataset,
 )
@@ -26,6 +28,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_DATA_YAML,
         help="Ultralytics dataset YAML (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--mapping",
+        type=Path,
+        default=DEFAULT_MAPPING,
+        help="Training class mapping JSON (default preserves the existing four-class setup).",
+    )
+    parser.add_argument(
+        "--taxonomy",
+        type=Path,
+        default=DEFAULT_TAXONOMY,
+        help="Project taxonomy JSON.",
     )
     return parser
 
@@ -53,7 +67,7 @@ def format_report(report: DatasetReport) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = validate_dataset(args.data)
+    report = validate_dataset(args.data, mapping_path=args.mapping, taxonomy_path=args.taxonomy)
     print(format_report(report))
     return 1 if report.errors else 0
 

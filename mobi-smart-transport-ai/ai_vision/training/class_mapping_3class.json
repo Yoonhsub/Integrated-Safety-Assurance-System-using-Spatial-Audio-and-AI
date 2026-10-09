@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "taxonomy": "ai_vision/dataset_plan/class_taxonomy.json",
+  "classes": [
+    {"yoloId": 0, "taxonomyId": "bus", "name": "bus"},
+    {"yoloId": 1, "taxonomyId": "bus_door", "name": "bus_door"},
+    {"yoloId": 2, "taxonomyId": "bus_stop", "name": "bus_stop"}
+  ]
+}

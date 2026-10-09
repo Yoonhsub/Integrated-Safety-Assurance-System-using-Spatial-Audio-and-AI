@@ -1,0 +1,10 @@
+# Separate first-baseline subset; bus_safety.yaml keeps the original four classes.
+path: ../../datasets/custom_bus_safety_3class
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: bus
+  1: bus_door
+  2: bus_stop
