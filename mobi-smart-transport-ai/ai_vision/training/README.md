@@ -75,6 +75,52 @@ python scripts/prepare_ai_vision_dataset.py `
   --box-id "<box-id-from-box_review.csv>"
 ```
 
+For objects absent from source annotations (for example a missing bus box in a
+Roboflow door image), use an explicit, image-scoped workbench selection:
+
+```powershell
+python scripts/prepare_ai_vision_dataset.py `
+  --roboflow-zip C:\path\to\bus-open-door-v2-yolov8.zip `
+  --workbench-dir C:\path\outside\the-repository\bus-review `
+  --image-id "<image-id-from-image_review.csv>"
+```
+
+The generated `index.html` lets a reviewer draw new pixel-coordinate boxes
+over copied review images and exports `additional_annotations.csv`. The source
+ZIP and existing `box_review.csv` are not edited. Every exported new box is
+`unreviewed`; a human must explicitly set `review_status=approved`, provide a
+reviewer, ISO-8601 `reviewed_at`, and a review reason, and preserve the source
+hash and image dimensions. `review_reason` should explain each decision and
+must describe corrections, rejection, or uncertainty. New IDs use an
+image-specific `additional:` namespace and cannot collide with source box IDs.
+Coordinates are `xyxy_pixel` by default; bounded
+`xyxy_normalized` is also accepted. New boxes must be at least 16 pixels wide
+and high.
+
+Pass the sidecar with both existing review manifests to include it in dry-run
+gating or explicit conversion:
+
+```powershell
+python scripts/prepare_ai_vision_dataset.py `
+  --roboflow-zip C:\path\to\bus-open-door-v2-yolov8.zip `
+  --box-review-csv C:\path\to\box_review.csv `
+  --image-review-csv C:\path\to\image_review.csv `
+  --additional-annotations-csv C:\path\to\additional_annotations.csv
+```
+
+To scope the operation to the external 75-image batch, also pass its
+`sample_index.csv` with `--image-ids-csv`. This filters the parsed source list
+before review gating, so unreviewed images outside that explicit sample do not
+enter the sample conversion queue. Unknown or duplicate IDs are rejected.
+
+Unreviewed, uncertain, or correction-pending new boxes block their image.
+Rejected boxes are excluded, and image completeness still requires a separate
+human decision. Approved new boxes merge with approved/corrected source boxes
+only when the image is explicitly marked `complete` with a reason and its
+source group is verified. The workbench cannot approve boxes or attest image
+completeness; a person must check all three target classes in the full frame.
+The existing four-class mapping and seven-class taxonomy are unchanged.
+
 Only explicit `--apply` can copy images and generate labels. It requires both
 review CSVs, an output directory, and a positive `--max-images` cap. All images
 must have human-reviewed annotation completeness, all candidate boxes must be

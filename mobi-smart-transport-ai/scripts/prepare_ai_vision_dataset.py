@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -16,9 +17,11 @@ from ai_vision.training.dataset_preparation import (  # noqa: E402
     build_review_plan,
     convert_reviewed_dataset,
     create_review_preview,
+    create_annotation_workbench,
     dry_run_summary,
     parse_cvat_archive,
     parse_roboflow_archive,
+    select_images_by_id,
     write_review_manifests,
 )
 
@@ -33,6 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--box-review-csv", type=Path, help="Human-edited box review manifest.")
     parser.add_argument("--image-review-csv", type=Path, help="Human-edited image completeness/group manifest.")
     parser.add_argument("--preview-dir", type=Path, help="Explicitly write bbox overlay images here.")
+    parser.add_argument("--workbench-dir", type=Path, help="Create a browser annotation workbench for explicitly selected image IDs.")
+    parser.add_argument("--image-id", action="append", default=[], help="Image ID to scope review/conversion to; repeat as needed.")
+    parser.add_argument("--image-ids-csv", type=Path, help="CSV with an image_id column to scope dry-run/review/conversion to a sample batch.")
+    parser.add_argument("--additional-annotations-csv", type=Path, help="Human-reviewed new-box sidecar CSV.")
     parser.add_argument("--box-id", action="append", default=[], help="Box ID to include in previews; repeat as needed.")
     parser.add_argument("--apply", action="store_true", help="Write a derived dataset (requires reviews, output path, and image cap).")
     parser.add_argument("--output", type=Path, help="Derived dataset output directory; must be absent or empty.")
@@ -56,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Provide at least one source archive.")
     if args.box_id and not args.preview_dir:
         raise SystemExit("--box-id requires --preview-dir.")
+    if args.image_id and args.image_ids_csv:
+        raise SystemExit("Use either --image-id or --image-ids-csv, not both.")
+    if args.workbench_dir and not (args.image_id or args.image_ids_csv):
+        raise SystemExit("--workbench-dir requires explicit --image-id values or --image-ids-csv.")
     if args.apply:
         missing = [name for name, value in (
             ("--output", args.output), ("--max-images", args.max_images),
@@ -67,7 +78,18 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("--max-images must be positive.")
 
     try:
+        selected_ids = list(args.image_id)
+        if args.image_ids_csv:
+            with args.image_ids_csv.open(encoding="utf-8-sig", newline="") as stream:
+                reader = csv.DictReader(stream)
+                if not reader.fieldnames or "image_id" not in reader.fieldnames:
+                    raise PreparationError(f"{args.image_ids_csv} must contain an image_id column.")
+                selected_ids = [(row.get("image_id") or "").strip() for row in reader]
+            if not selected_ids:
+                raise PreparationError(f"{args.image_ids_csv} contains no image IDs; refusing to expand to the full source dataset.")
         images = _load_sources(args)
+        if selected_ids:
+            images = select_images_by_id(images, selected_ids)
         summary = dry_run_summary(images)
         if args.write_review_dir:
             write_review_manifests(
@@ -79,11 +101,26 @@ def main(argv: list[str] | None = None) -> int:
             summary["review_manifests_written"] = 2
             summary["review_manifest_dir"] = str(args.write_review_dir.resolve())
         if args.box_review_csv and args.image_review_csv:
-            plan = build_review_plan(images, args.box_review_csv, args.image_review_csv)
+            plan = build_review_plan(
+                images, args.box_review_csv, args.image_review_csv,
+                args.additional_annotations_csv,
+            )
             summary["eligible_reviewed_images"] = len(plan.eligible)
             summary["review_queue_items"] = len(plan.review_queue)
             summary["box_review_counts"] = dict(plan.box_counts)
             summary["image_review_counts"] = dict(plan.image_counts)
+            summary["additional_annotation_counts"] = {
+                key: value for key, value in plan.box_counts.items() if key.startswith("additional_")
+            }
+        if args.additional_annotations_csv and not (args.box_review_csv and args.image_review_csv):
+            raise PreparationError("--additional-annotations-csv requires both review CSVs for dry-run gating.")
+        if args.workbench_dir:
+            workbench = create_annotation_workbench(images, args.workbench_dir, image_ids=selected_ids)
+            summary["workbench_index"] = str(workbench.resolve())
+            summary["workbench_images"] = len(selected_ids)
+            summary["additional_annotation_template"] = str((args.workbench_dir / "additional_annotations.csv").resolve())
+            from ai_vision.training.dataset_preparation import write_additional_annotation_template
+            write_additional_annotation_template(args.workbench_dir / "additional_annotations.csv")
         if args.preview_dir:
             wanted = set(args.box_id)
             chosen = [image for image in images if any(box.box_id in wanted for box in image.boxes)]
@@ -106,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                 images, args.box_review_csv, args.image_review_csv, args.output,
                 max_images=args.max_images, seed=args.seed,
                 mapping_path=ROOT / "ai_vision/training/class_mapping_3class.json",
+                additional_annotations=args.additional_annotations_csv,
                 apply=True,
             )
             summary["conversion"] = {

@@ -32,6 +32,28 @@ single image. Do not add risk labels to detection annotations.
   annotation omission.
 - Blur faces and license plates and remove/strip EXIF GPS before sharing data.
 
+## Additional boxes missing from source annotations
+
+Never edit the source ZIP or overwrite an original annotation to add a missing
+object. Draw it in the external review workbench and keep it in the separate
+`additional_annotations.csv` sidecar. A new box starts `unreviewed` and is not
+eligible for YOLO output until a human marks it `approved`, records a reviewer
+and review timestamp, and the full image receives an explicit completeness
+decision. Keep the original hash and dimensions bound to the row. Use an
+image-scoped `additional:` box ID; do not reuse an original box ID.
+
+Coordinates default to `xyxy_pixel` in the exact source image coordinate
+system. If coordinates are normalized, state `xyxy_normalized`; do not mix
+formats. Boxes must be finite, inside the source image, have positive area,
+and be at least 16 pixels wide and high. A correction to an added box is kept
+in `corrected_bbox_coordinates`; the first drawn coordinates remain recorded.
+The source-box `corrected_bbox` workflow remains separate.
+
+Image completeness is an independent human judgment, not inferred from the
+presence of source or added boxes. Inspect the full image for missing `bus`,
+`bus_door`, and `bus_stop` objects before marking it complete. Any unresolved
+omission, uncertain object, or pending box keeps that image out of conversion.
+
 ## Classes
 
 ### `bus`

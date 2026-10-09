@@ -23,6 +23,7 @@ ai_vision/training/datasets/bus_safety.yaml
 ai_vision/training/datasets/bus_safety_3class.yaml
 ai_vision/training/tests/__init__.py
 ai_vision/training/tests/test_dataset_preparation.py
+ai_vision/training/tests/test_additional_annotations.py
 ai_vision/training/tests/test_dataset_training.py
 ai_vision/pipelines/README.md
 ai_vision/pipelines/backend_safety_event_client.py
