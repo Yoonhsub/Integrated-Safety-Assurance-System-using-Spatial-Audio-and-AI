@@ -1,0 +1,11 @@
+APP_ENV: "staging"
+FIREBASE_PROJECT_ID: "mobi-smart-transport"
+FIREBASE_DATABASE_URL: "<copy-the-existing-Realtime-Database-URL>"
+FIREBASE_USE_ADC: "true"
+FIREBASE_USE_MOCK: "false"
+USE_MOCK_DATA: "false"
+BACKEND_CORS_ORIGINS: "https://mobi-smart-transport.web.app,https://mobi-smart-transport.firebaseapp.com"
+# This first web deployment is a labelled demonstration, not live bus guidance.
+PUBLIC_DATA_USE_MOCK: "true"
+FCM_ENABLED: "false"
+FCM_USE_MOCK: "true"
