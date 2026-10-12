@@ -64,7 +64,8 @@ class BeaconSignal {
 
   bool wasDetectedWithin(Duration maxAge, {DateTime? now}) {
     final referenceTime = now ?? DateTime.now();
-    return referenceTime.difference(lastDetectedAt) <= maxAge;
+    final age = referenceTime.difference(lastDetectedAt);
+    return !age.isNegative && age < maxAge;
   }
 
   BeaconSignal copyWith({

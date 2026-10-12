@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'beacon_distance_estimator.dart';
@@ -23,8 +25,7 @@ class BeaconScannerFilters {
 
 /// Resolves a stable MOBI beacon identifier from a BLE scan result.
 ///
-/// The default implementation prefers the advertised local name and falls back
-/// to the device remote id. A real field deployment may replace this resolver
+/// The default uses the device remote id; shared advertising names are not unique. A real field deployment may replace this resolver
 /// with a rule based on UUID/manufacturer data after the beacon model is fixed.
 typedef BeaconIdResolver = String Function(ScanResult result);
 
@@ -41,7 +42,13 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
     this.maxSingleSampleDelta = 10,
     this.lostResetThreshold = 3,
     BeaconIdResolver? beaconIdResolver,
-  })  : assert(smoothingWindowSize > 0, 'smoothingWindowSize must be greater than 0'),
+    this.maxObservationAge = const Duration(seconds: 5),
+    Stream<List<ScanResult>>? scanResults,
+    Future<void> Function()? startScan,
+    Future<void> Function()? stopScan,
+    DateTime Function()? now,
+  })  : assert(smoothingWindowSize > 0,
+            'smoothingWindowSize must be greater than 0'),
         assert(
           maxSingleSampleDelta > 0,
           'maxSingleSampleDelta must be greater than 0',
@@ -50,7 +57,11 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
           lostResetThreshold > 0,
           'lostResetThreshold must be greater than 0',
         ),
-        beaconIdResolver = beaconIdResolver ?? defaultBeaconIdResolver;
+        beaconIdResolver = beaconIdResolver ?? defaultBeaconIdResolver,
+        _scanResults = scanResults,
+        _startScan = startScan,
+        _stopScan = stopScan,
+        _now = now ?? DateTime.now;
 
   final BeaconDistanceEstimator estimator;
   final Duration scanTimeout;
@@ -58,6 +69,18 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
   final int maxSingleSampleDelta;
   final int lostResetThreshold;
   final BeaconIdResolver beaconIdResolver;
+  final Duration maxObservationAge;
+  final Stream<List<ScanResult>>? _scanResults;
+  final Future<void> Function()? _startScan;
+  final Future<void> Function()? _stopScan;
+  final DateTime Function() _now;
+  final Map<String, DateTime> _lastObservation = {};
+  StreamController<BeaconSignal>? _output;
+  StreamSubscription<List<ScanResult>>? _subscription;
+  Timer? _timer;
+  Future<void>? _stopping;
+  Future<void>? _starting;
+  bool _scanActive = false;
 
   final Map<String, RssiMovingAverageSmoother> _smoothers = {};
   bool _isScanning = false;
@@ -72,74 +95,108 @@ class FlutterBlueBeaconScanner implements BeaconScanner {
   /// 사용된다.
   @override
   Stream<BeaconSignal> scan({String? targetBeaconId}) async* {
+    if (_scanActive) throw StateError('A BLE scan is already active.');
+    _scanActive = true;
+    _stopping = null;
+    _starting = null;
     _isScanning = true;
     _smoothers.clear();
-    final deadline = DateTime.now().add(scanTimeout);
-
+    // Keep callback watermarks across scan restarts to reject cached replays.
+    final startedAt = _now();
+    final output = StreamController<BeaconSignal>();
+    _output = output;
     try {
-      await FlutterBluePlus.startScan(timeout: scanTimeout);
-
-      await for (final results in FlutterBluePlus.scanResults) {
-        if (!_isScanning || DateTime.now().isAfter(deadline)) {
-          break;
-        }
-
-        for (final result in results) {
-          if (!_isScanning) {
-            break;
+      _subscription = (_scanResults ?? FlutterBluePlus.onScanResults).listen(
+        (results) {
+          if (!_isScanning) return;
+          for (final result in results) {
+            // Plugin callback time, NOT this list's emission/read/send time.
+            final stamp = result.timeStamp;
+            final age = _now().difference(stamp);
+            final deviceKey = result.device.remoteId.str;
+            final previous = _lastObservation[deviceKey];
+            if (stamp.isBefore(startedAt) ||
+                age.isNegative ||
+                age >= maxObservationAge ||
+                (previous != null && !stamp.isAfter(previous))) continue;
+            _lastObservation[deviceKey] = stamp;
+            final beaconId = beaconIdResolver(result).trim();
+            if (beaconId.isEmpty) continue;
+            if (previous != null &&
+                stamp.difference(previous) >= maxObservationAge) {
+              _smoothers.remove(deviceKey);
+            }
+            final smoother = _smoothers.putIfAbsent(
+                deviceKey,
+                () => RssiMovingAverageSmoother(
+                      windowSize: smoothingWindowSize,
+                      maxSingleSampleDelta: maxSingleSampleDelta,
+                      lostResetThreshold: lostResetThreshold,
+                    ));
+            final signal = estimator.buildSignal(
+              beaconId: beaconId,
+              rssi: smoother.addSample(result.rssi),
+              lastDetectedAt: stamp.toUtc(),
+            );
+            if (BeaconScannerFilters.matchesTarget(signal, targetBeaconId)) {
+              output.add(signal);
+            }
           }
-
-          final beaconId = beaconIdResolver(result).trim();
-          if (beaconId.isEmpty) {
-            continue;
-          }
-
-          final smoother = _smoothers.putIfAbsent(
-            beaconId,
-            () => RssiMovingAverageSmoother(
-              windowSize: smoothingWindowSize,
-              maxSingleSampleDelta: maxSingleSampleDelta,
-              lostResetThreshold: lostResetThreshold,
-            ),
+        },
+        onError: (Object error, StackTrace stack) {
+          output.addError(error, stack);
+          unawaited(stop().catchError((Object _) {}));
+        },
+        onDone: () => unawaited(stop().catchError((Object _) {})),
+      );
+      // End even when no advertisements arrive. stop() also wakes this stream.
+      _timer =
+          Timer(scanTimeout, () => unawaited(stop().catchError((Object _) {})));
+      _starting = _startScan?.call() ??
+          FlutterBluePlus.startScan(
+            timeout: scanTimeout,
+            continuousUpdates: true,
+            continuousDivisor: 1,
           );
-          final smoothedRssi = smoother.addSample(result.rssi);
-
-          final signal = estimator.buildSignal(
-            beaconId: beaconId,
-            rssi: smoothedRssi,
-            lastDetectedAt: DateTime.now(),
-          );
-
-          if (BeaconScannerFilters.matchesTarget(signal, targetBeaconId)) {
-            yield signal;
-          }
-        }
-      }
+      await _starting;
+      yield* output.stream;
     } finally {
-      await stop();
+      try {
+        await stop();
+      } finally {
+        _scanActive = false;
+      }
     }
   }
 
   @override
-  Future<void> stop() async {
-    if (!_isScanning) {
-      return;
-    }
+  Future<void> stop() => _stopping ??= _finishScan();
+
+  Future<void> _finishScan() async {
+    if (!_isScanning) return;
     _isScanning = false;
+    _timer?.cancel();
+    final subscription = _subscription;
+    _subscription = null;
+    final output = _output;
+    _output = null;
+    // Do not await close: the async generator must be allowed to consume done.
+    if (output != null) unawaited(output.close());
+    await subscription?.cancel();
     _smoothers.clear();
-    await FlutterBluePlus.stopScan();
+    try {
+      await _starting;
+    } catch (_) {
+      // scan() propagates start errors; still release platform resources.
+    }
+    await (_stopScan?.call() ?? FlutterBluePlus.stopScan());
   }
 
   /// 기본 beaconId 추출 규칙이다.
   ///
-  /// 광고 이름이 있으면 사람이 읽기 쉬운 ID로 사용하고, 없으면 BLE remote id를
-  /// 사용한다. 실제 정류장 비콘 모델이 확정되면 UUID/manufacturer data 기반
+  /// 공유 광고 이름 대신 BLE remote id를 사용한다. 차량 신원 증명은 아니다. 실제 정류장 비콘 모델이 확정되면 UUID/manufacturer data 기반
   /// resolver로 교체할 수 있다.
   static String defaultBeaconIdResolver(ScanResult result) {
-    final advertisedName = result.advertisementData.advName;
-    if (advertisedName.isNotEmpty) {
-      return advertisedName;
-    }
     return result.device.remoteId.str;
   }
 }

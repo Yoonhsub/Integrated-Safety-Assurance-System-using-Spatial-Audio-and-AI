@@ -8,7 +8,8 @@ import 'direction_sensor.dart';
 ///
 /// Passenger App은 화면/UI를 직접 수정하지 않고도 이 callback을 통해 현재
 /// 방향값을 proximity event payload에 붙일 수 있다.
-typedef ProximityDirectionProvider = DirectionReading? Function(BeaconSignal signal);
+typedef ProximityDirectionProvider = DirectionReading? Function(
+    BeaconSignal signal);
 
 /// BLE beacon signal stream을 Passenger App이 소비할 수 있는 proximity event
 /// stream으로 변환하는 adapter이다.
@@ -38,7 +39,12 @@ class ProximityEventStreamAdapter {
   }) async* {
     await for (final signal in scanner.scan(targetBeaconId: targetBeaconId)) {
       final direction = directionProvider?.call(signal);
-      for (final event in eventsForSignal(signal, direction: direction)) {
+      for (final event in eventsForSignal(signal,
+          direction: direction,
+          // Offline fixture replay has a deliberate simulated observation clock.
+          now: scanner is MockBeaconScanner
+              ? signal.lastDetectedAt
+              : DateTime.now())) {
         yield event;
       }
     }
@@ -53,7 +59,7 @@ class ProximityEventStreamAdapter {
     DirectionReading? direction,
     DateTime? now,
   }) sync* {
-    final referenceTime = now ?? signal.lastDetectedAt;
+    final referenceTime = now ?? DateTime.now();
 
     if (signal.isLost) {
       tracker.resetBeacon(signal.beaconId);
@@ -67,6 +73,7 @@ class ProximityEventStreamAdapter {
     }
 
     final snapshot = tracker.addSignal(signal, now: referenceTime);
+    if (snapshot.isStale) return;
     final distanceZone = BeaconDistanceEstimator.zoneFromSignalLevel(
       signal.signalLevel,
     );
