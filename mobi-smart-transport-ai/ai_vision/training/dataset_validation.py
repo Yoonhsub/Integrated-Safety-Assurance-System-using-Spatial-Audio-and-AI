@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -367,4 +368,149 @@ def validate_dataset(
             report.add_warning(f"The {split} split contains no images.")
 
     _validate_source_manifest(dataset_root, report)
+    return report
+
+
+def validate_development_train_only_dataset(
+    data_yaml: Path,
+    *,
+    mapping_path: Path = DEFAULT_MAPPING,
+    taxonomy_path: Path = DEFAULT_TAXONOMY,
+) -> DatasetReport:
+    """Validate the isolated non-evaluation train-only dataset layout."""
+    report = DatasetReport()
+    try:
+        config = load_yaml(data_yaml)
+        classes = load_training_classes(mapping_path, taxonomy_path)
+        names = _normalize_names(config.get("names"))
+        if names != [item.name for item in classes]:
+            raise ValueError("Development YAML class names do not match the selected mapping.")
+        if "val" in config or "test" in config:
+            report.add_error("Development train-only YAML must not define validation or test paths.")
+        if not isinstance(config.get("train"), str) or config["train"].replace("\\", "/") != "images/train":
+            report.add_error("Development YAML train path must be exactly images/train.")
+        dataset_root = Path(config.get("path", "."))
+        if not dataset_root.is_absolute():
+            dataset_root = Path(data_yaml).resolve().parent / dataset_root
+        dataset_root = dataset_root.resolve()
+        if set(item.taxonomy_id for item in classes) != {"bus", "bus_door", "bus_stop"}:
+            raise ValueError("Development validation requires the three-class mapping.")
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        report.add_error(str(exc))
+        return report
+
+    report.class_counts = {item.name: 0 for item in classes}
+    if not (dataset_root / "images" / "train").is_dir():
+        report.add_error("Missing development images/train directory.")
+    if not (dataset_root / "labels" / "train").is_dir():
+        report.add_error("Missing development labels/train directory.")
+    for split in ("val", "test"):
+        if (dataset_root / "images" / split).exists() or (dataset_root / "labels" / split).exists():
+            report.add_error(f"Development train-only dataset must not contain {split} directories.")
+
+    image_dir = dataset_root / "images" / "train"
+    label_dir = dataset_root / "labels" / "train"
+    images = sorted(path for path in image_dir.glob("*") if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES) if image_dir.is_dir() else []
+    labels = sorted(label_dir.glob("*.txt")) if label_dir.is_dir() else []
+    image_by_stem = {path.stem.casefold(): path for path in images}
+    label_by_stem = {path.stem.casefold(): path for path in labels}
+    class_names_by_stem: dict[str, list[str]] = {}
+    if len(image_by_stem) != len(images):
+        report.add_error("Development train images contain duplicate file stems.")
+    if len(label_by_stem) != len(labels):
+        report.add_error("Development train labels contain duplicate file stems.")
+    for stem in sorted(set(image_by_stem) - set(label_by_stem)):
+        report.add_error(f"Missing label file for train/{image_by_stem[stem].name}.")
+    for stem in sorted(set(label_by_stem) - set(image_by_stem)):
+        report.add_error(f"Orphan train label file: {label_by_stem[stem].name}.")
+    report.split_images["train"] = len(images)
+    for stem in sorted(set(image_by_stem) & set(label_by_stem)):
+        try:
+            class_ids = parse_label_text(
+                label_by_stem[stem].read_text(encoding="utf-8-sig"), len(classes),
+                source=f"train/{label_by_stem[stem].name}",
+            )
+        except (OSError, ValueError) as exc:
+            report.add_error(str(exc))
+            continue
+        report.split_labels["train"] += len(class_ids)
+        class_names_by_stem[stem] = [classes[class_id].name for class_id in class_ids]
+        for class_id in class_ids:
+            report.class_counts[classes[class_id].name] += 1
+        try:
+            with image_by_stem[stem].open("rb") as stream:
+                from PIL import Image
+                image = Image.open(stream)
+                image.verify()
+        except Exception as exc:
+            report.add_error(f"Invalid train image {image_by_stem[stem].name}: {exc}")
+
+    manifest_path = dataset_root / "dataset_manifest.csv"
+    required = {
+        "image", "split", "dataset_mode", "evaluation_eligible", "source_group",
+        "source_group_status", "source_dataset", "source_image", "source_annotation",
+        "target_annotations", "completeness_status", "original_hash", "source_license", "source_url",
+    }
+    covered: set[str] = set()
+    source_group_counts: Counter[str] = Counter()
+    try:
+        with manifest_path.open(encoding="utf-8-sig", newline="") as stream:
+            reader = csv.DictReader(stream)
+            if not reader.fieldnames or not required.issubset(reader.fieldnames):
+                report.add_error("Development dataset_manifest.csv is missing required provenance/development columns.")
+            else:
+                for row_number, row in enumerate(reader, start=2):
+                    image = (row.get("image") or "").replace("\\", "/").strip()
+                    if row.get("split") != "train" or row.get("dataset_mode") != "development_train_only" or row.get("evaluation_eligible") != "false":
+                        report.add_error(f"dataset_manifest.csv:{row_number}: invalid development-only markers.")
+                    if row.get("source_group_status") not in {"verified", "unverified"}:
+                        report.add_error(f"dataset_manifest.csv:{row_number}: invalid source_group_status.")
+                    else:
+                        source_group_counts[row["source_group_status"]] += 1
+                    if not row.get("source_group"):
+                        report.add_error(f"dataset_manifest.csv:{row_number}: missing source_group candidate.")
+                    if row.get("completeness_status") != "complete":
+                        report.add_error(f"dataset_manifest.csv:{row_number}: image completeness is not complete.")
+                    if not image or image not in {f"images/train/{path.name}" for path in images}:
+                        report.add_error(f"dataset_manifest.csv:{row_number}: image path is missing or unexpected.")
+                    if image in covered:
+                        report.add_error(f"dataset_manifest.csv:{row_number}: duplicate image entry {image}.")
+                    covered.add(image)
+                    source_hash = (row.get("original_hash") or "").lower()
+                    if len(source_hash) != 64 or any(char not in "0123456789abcdef" for char in source_hash):
+                        report.add_error(f"dataset_manifest.csv:{row_number}: invalid original_hash.")
+                    elif image in {f"images/train/{path.name}" for path in images}:
+                        if _sha256(dataset_root / image) != source_hash:
+                            report.add_error(f"dataset_manifest.csv:{row_number}: copied image hash mismatch.")
+                    try:
+                        annotations = json.loads(row.get("target_annotations") or "")
+                        label_path = label_by_stem.get(Path(image).stem.casefold())
+                        label_count = len(label_path.read_text(encoding="utf-8").splitlines()) if label_path else -1
+                        if not isinstance(annotations, list) or len(annotations) != label_count:
+                            report.add_error(f"dataset_manifest.csv:{row_number}: target_annotations do not match label rows.")
+                        elif any(item.get("review_status") != "approved" for item in annotations):
+                            report.add_error(f"dataset_manifest.csv:{row_number}: unapproved annotation in output manifest.")
+                        elif [item.get("target_class") for item in annotations] != class_names_by_stem.get(Path(image).stem.casefold(), []):
+                            report.add_error(f"dataset_manifest.csv:{row_number}: annotation classes/order do not match YOLO labels.")
+                    except (ValueError, OSError, AttributeError) as exc:
+                        report.add_error(f"dataset_manifest.csv:{row_number}: invalid target_annotations: {exc}")
+    except OSError as exc:
+        report.add_error(f"Could not read development dataset_manifest.csv: {exc}")
+    expected_images = {f"images/train/{path.name}" for path in images}
+    if covered != expected_images:
+        report.add_error("Development manifest does not cover each train image exactly once.")
+
+    report_path = dataset_root / "conversion_report.json"
+    try:
+        conversion = json.loads(report_path.read_text(encoding="utf-8"))
+        if conversion.get("dataset_mode") != "development_train_only" or conversion.get("evaluation_eligible") is not False:
+            report.add_error("conversion_report.json does not mark this as development-only/non-evaluation data.")
+        if conversion.get("images") != len(images) or conversion.get("boxes") != report.total_labels:
+            report.add_error("conversion_report.json image/box totals do not match validated data.")
+        if conversion.get("class_counts") != report.class_counts:
+            report.add_error("conversion_report.json class counts do not match YOLO labels.")
+        if conversion.get("source_group_status_counts") != dict(source_group_counts):
+            report.add_error("conversion_report.json source-group status counts do not match images.")
+    except (OSError, ValueError, TypeError) as exc:
+        report.add_error(f"Could not validate conversion_report.json: {exc}")
     return report

@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -18,6 +19,8 @@ from ai_vision.training.dataset_preparation import (  # noqa: E402
     convert_reviewed_dataset,
     create_review_preview,
     create_annotation_workbench,
+    build_development_train_only_plan,
+    convert_development_train_only_dataset,
     dry_run_summary,
     parse_cvat_archive,
     parse_roboflow_archive,
@@ -40,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-id", action="append", default=[], help="Image ID to scope review/conversion to; repeat as needed.")
     parser.add_argument("--image-ids-csv", type=Path, help="CSV with an image_id column to scope dry-run/review/conversion to a sample batch.")
     parser.add_argument("--additional-annotations-csv", type=Path, help="Human-reviewed new-box sidecar CSV.")
+    parser.add_argument("--image-completeness-checklist-csv", type=Path, help="Per-class human completeness checklist; required in development train-only mode.")
+    parser.add_argument("--development-train-only", action="store_true", help="Use the isolated non-evaluation train-only workflow; does not verify or split source groups.")
     parser.add_argument("--box-id", action="append", default=[], help="Box ID to include in previews; repeat as needed.")
     parser.add_argument("--apply", action="store_true", help="Write a derived dataset (requires reviews, output path, and image cap).")
     parser.add_argument("--output", type=Path, help="Derived dataset output directory; must be absent or empty.")
@@ -76,6 +81,18 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("--apply requires " + ", ".join(missing) + ".")
         if args.max_images <= 0:
             raise SystemExit("--max-images must be positive.")
+    if args.development_train_only:
+        missing = [name for name, value in (
+            ("--box-review-csv", args.box_review_csv),
+            ("--image-review-csv", args.image_review_csv),
+            ("--image-completeness-checklist-csv", args.image_completeness_checklist_csv),
+            ("--additional-annotations-csv", args.additional_annotations_csv),
+            ("--image-ids-csv", args.image_ids_csv),
+        ) if value is None]
+        if missing:
+            raise SystemExit("--development-train-only requires " + ", ".join(missing) + ".")
+    elif args.image_completeness_checklist_csv:
+        raise SystemExit("--image-completeness-checklist-csv is only used with --development-train-only.")
 
     try:
         selected_ids = list(args.image_id)
@@ -100,7 +117,27 @@ def main(argv: list[str] | None = None) -> int:
             )
             summary["review_manifests_written"] = 2
             summary["review_manifest_dir"] = str(args.write_review_dir.resolve())
-        if args.box_review_csv and args.image_review_csv:
+        if args.development_train_only:
+            dev_plan = build_development_train_only_plan(
+                images, args.box_review_csv, args.image_review_csv,
+                args.image_completeness_checklist_csv, args.additional_annotations_csv,
+            )
+            summary["development_train_only"] = {
+                "evaluation_eligible": False,
+                "source_group_status_preserved": True,
+                "approved_images_ready": len(dev_plan.eligible),
+                "reviewed_negative_excluded": dev_plan.image_counts.get("reviewed_negative_excluded", 0),
+                "source_group_status_counts": dict(Counter(item.source_group_status for item in dev_plan.eligible)),
+                "box_review_counts": dict(dev_plan.box_counts),
+                "image_review_counts": dict(dev_plan.image_counts),
+                "review_queue_items": len(dev_plan.review_queue),
+                "review_queue": [
+                    {"image_id": image_id, "reason": reason}
+                    for image_id, reason in dev_plan.review_queue
+                ],
+                "files_written": False,
+            }
+        elif args.box_review_csv and args.image_review_csv:
             plan = build_review_plan(
                 images, args.box_review_csv, args.image_review_csv,
                 args.additional_annotations_csv,
@@ -139,13 +176,22 @@ def main(argv: list[str] | None = None) -> int:
             summary["previews_written"] = len(output_files)
             summary["preview_files"] = [str(path.resolve()) for path in output_files]
         if args.apply:
-            result = convert_reviewed_dataset(
-                images, args.box_review_csv, args.image_review_csv, args.output,
-                max_images=args.max_images, seed=args.seed,
-                mapping_path=ROOT / "ai_vision/training/class_mapping_3class.json",
-                additional_annotations=args.additional_annotations_csv,
-                apply=True,
-            )
+            if args.development_train_only:
+                result = convert_development_train_only_dataset(
+                    images, args.box_review_csv, args.image_review_csv,
+                    args.image_completeness_checklist_csv, args.additional_annotations_csv,
+                    args.output, max_images=args.max_images,
+                    mapping_path=ROOT / "ai_vision/training/class_mapping_3class.json",
+                    apply=True,
+                )
+            else:
+                result = convert_reviewed_dataset(
+                    images, args.box_review_csv, args.image_review_csv, args.output,
+                    max_images=args.max_images, seed=args.seed,
+                    mapping_path=ROOT / "ai_vision/training/class_mapping_3class.json",
+                    additional_annotations=args.additional_annotations_csv,
+                    apply=True,
+                )
             summary["conversion"] = {
                 "output_dir": str(result.output_dir),
                 "images": result.converted_images,

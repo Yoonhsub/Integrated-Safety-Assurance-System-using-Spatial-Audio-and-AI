@@ -16,6 +16,7 @@ from ai_vision.training.dataset_validation import (  # noqa: E402
     DEFAULT_TAXONOMY,
     DatasetReport,
     validate_dataset,
+    validate_development_train_only_dataset,
 )
 
 
@@ -40,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_TAXONOMY,
         help="Project taxonomy JSON.",
+    )
+    parser.add_argument(
+        "--development-train-only",
+        action="store_true",
+        help="Validate the isolated train-only development layout; never treats it as evaluation data.",
     )
     return parser
 
@@ -67,7 +73,8 @@ def format_report(report: DatasetReport) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = validate_dataset(args.data, mapping_path=args.mapping, taxonomy_path=args.taxonomy)
+    validator = validate_development_train_only_dataset if args.development_train_only else validate_dataset
+    report = validator(args.data, mapping_path=args.mapping, taxonomy_path=args.taxonomy)
     print(format_report(report))
     return 1 if report.errors else 0
 

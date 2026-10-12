@@ -24,6 +24,7 @@ from ai_vision.training.dataset_validation import (
     DEFAULT_TAXONOMY,
     load_training_classes,
     validate_dataset,
+    validate_development_train_only_dataset,
 )
 
 
@@ -103,6 +104,7 @@ class ReviewedImage:
     labels: tuple[tuple[str, tuple[float, float, float, float], str], ...]
     original_hash: str
     label_provenance: tuple[dict[str, str], ...] = ()
+    source_group_status: str = "unverified"
 
 
 @dataclass
@@ -587,6 +589,9 @@ def build_review_plan(
     box_manifest: Path,
     image_manifest: Path,
     additional_annotations: Path | None = None,
+    *,
+    require_verified_groups: bool = True,
+    approved_or_rejected_only: bool = False,
 ) -> ReviewPlan:
     """Join image/box review separately and queue anything not fully approved."""
     boxes = _read_csv(box_manifest, "box_id")
@@ -647,9 +652,14 @@ def build_review_plan(
             continue
         group = (image_row.get("source_group") or "").strip()
         source_group_reason = (image_row.get("source_group_reason") or "").strip()
-        if image_row.get("source_group_status") != "verified" or not group or not source_group_reason:
+        group_status = (image_row.get("source_group_status") or "").strip()
+        if require_verified_groups and (group_status != "verified" or not group or not source_group_reason):
             plan.review_queue.append((image.image_id, "source_group is unverified"))
             plan.image_counts["unverified_group"] += 1
+            continue
+        if not group or group_status not in {"verified", "unverified"}:
+            plan.review_queue.append((image.image_id, "source group identity/status is invalid"))
+            plan.image_counts["invalid_source_group"] += 1
             continue
         if image.parse_issues:
             plan.review_queue.append((image.image_id, "; ".join(image.parse_issues)))
@@ -687,6 +697,10 @@ def build_review_plan(
             if status not in REVIEW_STATUSES:
                 raise PreparationError(f"Invalid review status {status!r} for {box.box_id}.")
             plan.box_counts[status] += 1
+            if approved_or_rejected_only and status not in {"approved", "rejected"}:
+                plan.review_queue.append((image.image_id, f"box {box.box_id} must be approved or rejected for development conversion"))
+                blocked = True
+                continue
             reason = (row.get("review_reason") or "").strip()
             if status in {"needs_correction", "rejected", "uncertain"} and not reason:
                 plan.review_queue.append((image.image_id, f"box {box.box_id} requires a review_reason"))
@@ -718,7 +732,10 @@ def build_review_plan(
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise PreparationError(f"Invalid reviewed bbox for {box.box_id}: {exc}") from exc
             labels.append((box.target_class, coords, fmt))
-            label_provenance.append({"annotation_source": "source", "box_id": box.box_id})
+            label_provenance.append({
+                "annotation_source": "source", "box_id": box.box_id, "review_status": "approved",
+                "review_reason": reason,
+            })
         for row in additions_by_image.get(image.image_id, []):
             new_box_id = row["new_box_id"]
             status = row.get("review_status", "unreviewed")
@@ -807,10 +824,200 @@ def build_review_plan(
         original_hash = (image_row.get("original_hash") or "").strip()
         plan.eligible.append(ReviewedImage(
             image, group, source_group_reason, completeness_reason, tuple(labels), original_hash,
-            tuple(label_provenance),
+            tuple(label_provenance), group_status,
         ))
         plan.image_counts[completeness] += 1
     return plan
+
+
+def build_development_train_only_plan(
+    images: Sequence[ImageCandidate],
+    box_manifest: Path,
+    image_manifest: Path,
+    completeness_checklist: Path,
+    additional_annotations: Path | None = None,
+) -> ReviewPlan:
+    """Build a development-only plan while preserving (not verifying) source groups.
+
+    This path still requires image-level and box-level human decisions. It does
+    not assign evaluation splits and is not suitable for model evaluation.
+    """
+    plan = build_review_plan(
+        images, box_manifest, image_manifest, additional_annotations,
+        require_verified_groups=False, approved_or_rejected_only=True,
+    )
+    with Path(completeness_checklist).open(encoding="utf-8-sig", newline="") as stream:
+        checklist_reader = csv.DictReader(stream)
+        required_checklist_columns = {
+            "image_id", "source_dataset", "source_image", "contains_bus", "bus_annotation_complete",
+            "contains_bus_door", "bus_door_annotation_complete", "contains_bus_stop", "bus_stop_annotation_complete",
+        }
+        if not checklist_reader.fieldnames or not required_checklist_columns.issubset(checklist_reader.fieldnames):
+            raise PreparationError("Completeness checklist is missing image identity or required class review columns.")
+        checklist_rows = list(checklist_reader)
+    checklist: dict[str, dict[str, str]] = {}
+    for row in checklist_rows:
+        image_id = (row.get("image_id") or "").strip()
+        if not image_id or image_id in checklist:
+            raise PreparationError(f"Completeness checklist has an empty or duplicate image_id: {image_id!r}.")
+        checklist[image_id] = row
+    selected_ids = {image.image_id for image in images}
+    extra = set(checklist) - selected_ids
+    if extra:
+        raise PreparationError(f"Completeness checklist contains {len(extra)} image(s) outside the selected source batch.")
+    checklist_by_id = checklist
+    image_rows = _read_csv(image_manifest, "image_id")
+    checked: list[ReviewedImage] = []
+    blocked_ids: set[str] = set()
+    negative_ids = {
+        image_id for image_id, row in image_rows.items()
+        if image_id in selected_ids and row.get("completeness_status") == "reviewed_negative"
+    }
+    candidate_by_id = {image.image_id: image for image in images}
+    for image_id in sorted(selected_ids - set(checklist_by_id)):
+        plan.review_queue.append((image_id, "missing per-class completeness checklist row"))
+        plan.image_counts["missing_class_completeness"] += 1
+        blocked_ids.add(image_id)
+    for image_id, row in checklist_by_id.items():
+        candidate = candidate_by_id.get(image_id)
+        if candidate is None:
+            continue
+        if row.get("source_dataset") != candidate.source_dataset or row.get("source_image") != candidate.source_image:
+            raise PreparationError(f"Completeness checklist image identity mismatch for {image_id}.")
+    source_reviews_for_integrity = _read_csv(box_manifest, "box_id")
+    from io import BytesIO
+    from PIL import Image
+    for image in images:
+        row = image_rows.get(image.image_id, {})
+        try:
+            payload = _source_image_bytes(image)
+            actual_hash = hashlib.sha256(payload).hexdigest()
+            if not row.get("original_hash") or row["original_hash"].lower() != actual_hash:
+                raise ValueError("original_hash does not match source image bytes")
+            with Image.open(BytesIO(payload)) as picture:
+                width, height = picture.size
+                picture.verify()
+            for box in image.boxes:
+                if source_reviews_for_integrity.get(box.box_id, {}).get("review_status") == "approved":
+                    bbox_to_yolo(box.bbox, box.bbox_format, width, height)
+        except (OSError, ValueError) as exc:
+            blocked_ids.add(image.image_id)
+            reason = f"source image/hash/bbox integrity check failed: {exc}"
+            plan.review_queue.append((image.image_id, reason))
+            plan.image_counts["source_integrity_error"] += 1
+    for item in plan.eligible:
+        if item.candidate.image_id in blocked_ids:
+            continue
+        if item.candidate.image_id in negative_ids:
+            continue
+        row = checklist_by_id.get(item.candidate.image_id)
+        if row is None:
+            plan.review_queue.append((item.candidate.image_id, "missing per-class completeness checklist row"))
+            plan.image_counts["missing_class_completeness"] += 1
+            blocked_ids.add(item.candidate.image_id)
+            continue
+        for target_class in ("bus", "bus_door", "bus_stop"):
+            contains = (row.get(f"contains_{target_class}") or "").strip().lower()
+            complete = (row.get(f"{target_class}_annotation_complete") or "").strip().lower()
+            if contains not in {"yes", "no"} or complete not in {"yes", "no"}:
+                plan.review_queue.append((item.candidate.image_id, f"{target_class} presence/completeness is not a definite yes/no"))
+                plan.image_counts[f"{target_class}_checklist_uncertain"] += 1
+                blocked_ids.add(item.candidate.image_id)
+                continue
+            if complete != "yes":
+                plan.review_queue.append((item.candidate.image_id, f"{target_class} annotation completeness is not approved"))
+                plan.image_counts[f"{target_class}_annotation_incomplete"] += 1
+                blocked_ids.add(item.candidate.image_id)
+            if contains == "yes" and not any(label[0] == target_class for label in item.labels):
+                plan.review_queue.append((item.candidate.image_id, f"{target_class} is marked visible but has no approved bbox"))
+                plan.image_counts[f"{target_class}_missing_approved_box"] += 1
+                blocked_ids.add(item.candidate.image_id)
+            if contains == "no" and any(label[0] == target_class for label in item.labels):
+                plan.review_queue.append((item.candidate.image_id, f"approved {target_class} bbox conflicts with checklist absence"))
+                plan.image_counts[f"{target_class}_approved_box_conflict"] += 1
+                blocked_ids.add(item.candidate.image_id)
+        if item.candidate.is_augmented and item.candidate.source_dataset == "roboflow" and item.candidate.source_split != "train":
+            plan.review_queue.append((item.candidate.image_id, "augmentation/source-split provenance is inconsistent"))
+            plan.image_counts["augmentation_provenance_conflict"] += 1
+            blocked_ids.add(item.candidate.image_id)
+        if item.candidate.image_id not in blocked_ids:
+            payload = _source_image_bytes(item.candidate)
+            digest = hashlib.sha256(payload).hexdigest()
+            try:
+                from io import BytesIO
+                from PIL import Image
+                with Image.open(BytesIO(payload)) as picture:
+                    width, height = picture.size
+                pixel_boxes: list[tuple[str, tuple[float, float, float, float], str]] = []
+                for target_class, bbox, fmt in item.labels:
+                    bbox_to_yolo(bbox, fmt, width, height)
+                    if fmt == "xyxy_pixel":
+                        pixel_bbox = tuple(float(value) for value in bbox)
+                    else:
+                        pixel_bbox = (bbox[0] * width, bbox[1] * height, bbox[2] * width, bbox[3] * height)
+                    if pixel_bbox[2] - pixel_bbox[0] <= 0 or pixel_bbox[3] - pixel_bbox[1] <= 0:
+                        raise ValueError("bbox must have positive area")
+                    pixel_boxes.append((target_class, pixel_bbox, fmt))
+                duplicate = _duplicate_reviewed_boxes(pixel_boxes)
+                if duplicate is not None:
+                    raise ValueError(f"approved annotations overlap as a duplicate ({duplicate})")
+            except (OSError, ValueError) as exc:
+                plan.review_queue.append((item.candidate.image_id, f"image/bbox integrity check failed: {exc}"))
+                plan.image_counts["image_or_bbox_integrity_error"] += 1
+                continue
+            checked.append(item)
+    approved_classes: dict[str, set[str]] = defaultdict(set)
+    source_reviews = _read_csv(box_manifest, "box_id")
+    for image in images:
+        for box in image.boxes:
+            row = source_reviews.get(box.box_id, {})
+            if row.get("review_status") == "approved":
+                approved_classes[image.image_id].add(box.target_class)
+    additional_reviews = _read_csv(additional_annotations, "new_box_id") if additional_annotations else {}
+    for row in additional_reviews.values():
+        if row.get("review_status") == "approved":
+            approved_classes[(row.get("image_id") or "").strip()].add((row.get("target_class") or "").strip())
+    queue_set = set(plan.review_queue)
+    for image in images:
+        if image.image_id in negative_ids:
+            continue
+        row = checklist_by_id.get(image.image_id)
+        if row is None:
+            continue  # Missing rows are reported for otherwise eligible items above.
+        for target_class in ("bus", "bus_door", "bus_stop"):
+            contains = (row.get(f"contains_{target_class}") or "").strip().lower()
+            complete = (row.get(f"{target_class}_annotation_complete") or "").strip().lower()
+            if contains not in {"yes", "no"} or complete not in {"yes", "no"}:
+                reason = f"{target_class} presence/completeness is not a definite yes/no"
+            elif complete != "yes":
+                reason = f"{target_class} annotation completeness is not approved"
+            elif contains == "yes" and target_class not in approved_classes[image.image_id]:
+                reason = f"{target_class} is marked visible but has no approved bbox"
+            elif contains == "no" and target_class in approved_classes[image.image_id]:
+                reason = f"approved {target_class} bbox conflicts with checklist absence"
+            else:
+                continue
+            blocked_ids.add(image.image_id)
+            if (image.image_id, reason) not in queue_set:
+                plan.review_queue.append((image.image_id, reason))
+                plan.image_counts[f"{target_class}_checklist_conflict"] += 1
+                queue_set.add((image.image_id, reason))
+    plan.eligible = [item for item in checked if item.candidate.image_id not in blocked_ids]
+    plan.image_counts["reviewed_negative_excluded"] = len(negative_ids)
+    return plan
+
+
+def _duplicate_reviewed_boxes(
+    boxes: Sequence[tuple[str, tuple[float, float, float, float], str]],
+) -> str | None:
+    """Find near-identical same-class boxes after coordinates are in pixels."""
+    for index, (class_a, box_a, _) in enumerate(boxes):
+        for class_b, box_b, _ in boxes[index + 1:]:
+            if class_a != class_b:
+                continue
+            if all(abs(a - b) <= 1.0 for a, b in zip(box_a, box_b)):
+                return class_a
+    return None
 
 
 def _validate_positive_xyxy(bbox: Sequence[float]) -> None:
@@ -1017,6 +1224,171 @@ def convert_reviewed_dataset(
             raise PreparationError(f"Generated dataset failed validator: {result.validation_errors[:3]}")
     except Exception:
         # Do not leave a partial dataset that could be mistaken for a successful conversion.
+        if not output_preexisted:
+            shutil.rmtree(output_dir, ignore_errors=True)
+        else:
+            for child in output_dir.iterdir():
+                shutil.rmtree(child, ignore_errors=True) if child.is_dir() else child.unlink(missing_ok=True)
+        raise
+    result.output_dir = output_dir
+    return result
+
+
+def convert_development_train_only_dataset(
+    images: Sequence[ImageCandidate],
+    box_manifest: Path,
+    image_manifest: Path,
+    completeness_checklist: Path,
+    additional_annotations: Path | None,
+    output_dir: Path,
+    *,
+    max_images: int,
+    mapping_path: Path,
+    taxonomy_path: Path = DEFAULT_TAXONOMY,
+    apply: bool = False,
+) -> ConversionResult:
+    """Write a non-evaluation, train-only copy using explicit human reviews."""
+    if max_images <= 0:
+        raise ValueError("max_images must be a positive limit; unbounded conversion is disabled")
+    plan = build_development_train_only_plan(
+        images, box_manifest, image_manifest, completeness_checklist, additional_annotations
+    )
+    result = ConversionResult(output_dir=None, review_queue=plan.review_queue)
+    if not apply:
+        return result
+    if plan.review_queue:
+        causes = Counter(reason for _, reason in plan.review_queue)
+        details = "; ".join(f"{count}× {reason}" for reason, count in causes.most_common(5))
+        raise PreparationError(
+            f"Development train-only conversion blocked: {len(plan.review_queue)} review item(s) remain. {details}"
+        )
+    if not plan.eligible:
+        raise PreparationError("No approved non-negative images are available for development conversion.")
+    classes = load_training_classes(mapping_path, taxonomy_path)
+    taxonomy_to_id = {item.taxonomy_id: item.yolo_id for item in classes}
+    expected = {"bus", "bus_door", "bus_stop"}
+    if set(taxonomy_to_id) != expected:
+        raise PreparationError(f"Development converter requires exactly the three-class mapping {sorted(expected)}.")
+    if len(plan.eligible) > max_images:
+        raise PreparationError(
+            f"Approved development images ({len(plan.eligible)}) exceed --max-images={max_images}; no partial silent conversion."
+        )
+    output_dir = Path(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise PreparationError(f"Output directory must be absent or empty: {output_dir}")
+    output_preexisted = output_dir.exists()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for relative in ("images/train", "labels/train"):
+        (output_dir / relative).mkdir(parents=True, exist_ok=True)
+
+    manifest_rows: list[dict[str, str]] = []
+    class_counts: Counter[str] = Counter()
+    try:
+        for item in plan.eligible:
+            candidate = item.candidate
+            payload = _source_image_bytes(candidate)
+            digest = hashlib.sha256(payload).hexdigest()
+            if not item.original_hash or item.original_hash.lower() != digest:
+                raise PreparationError(f"original_hash mismatch for {candidate.source_image}.")
+            from io import BytesIO
+            from PIL import Image
+            with Image.open(BytesIO(payload)) as picture:
+                width, height = picture.size
+                picture.verify()
+            suffix = Path(candidate.source_image).suffix.lower() or ".jpg"
+            filename = f"{candidate.image_id[:20]}{suffix}"
+            image_rel = f"images/train/{filename}"
+            (output_dir / image_rel).write_bytes(payload)
+            label_lines: list[str] = []
+            review_records: list[dict[str, str]] = []
+            for index, (target_class, bbox, bbox_format) in enumerate(item.labels):
+                if target_class not in taxonomy_to_id:
+                    raise PreparationError(f"Unsupported reviewed class {target_class!r} in {candidate.image_id}.")
+                cx, cy, box_width, box_height = bbox_to_yolo(bbox, bbox_format, width, height)
+                # Preserve round-trip precision for boxes touching an image edge.
+                label_lines.append(
+                    f"{taxonomy_to_id[target_class]} {cx:.17g} {cy:.17g} {box_width:.17g} {box_height:.17g}"
+                )
+                class_counts[target_class] += 1
+                provenance = dict(item.label_provenance[index]) if item.label_provenance else {}
+                review_records.append({
+                    "target_class": target_class,
+                    "bbox": list(bbox),
+                    "coordinate_format": bbox_format,
+                    **provenance,
+                })
+            label_rel = f"labels/train/{Path(filename).stem}.txt"
+            (output_dir / label_rel).write_text("\n".join(label_lines) + "\n", encoding="utf-8")
+            manifest_rows.append({
+                "image": image_rel,
+                "split": "train",
+                "dataset_mode": "development_train_only",
+                "evaluation_eligible": "false",
+                "source_group": item.source_group,
+                "source_group_status": item.source_group_status,
+                "source_group_reason": item.source_group_reason,
+                "source_dataset": candidate.source_dataset,
+                "source_image": candidate.source_image,
+                "source_annotation": candidate.source_annotation,
+                "source_frame_id": candidate.source_frame_id,
+                "is_augmented_source": str(candidate.is_augmented).lower(),
+                "target_annotations": json.dumps(review_records, ensure_ascii=False, separators=(",", ":")),
+                "completeness_status": "complete",
+                "completeness_reason": item.completeness_reason,
+                "original_hash": digest,
+                "image_width": str(width),
+                "image_height": str(height),
+                "source_license": candidate.source_license,
+                "source_url": candidate.source_url,
+                "review_status": "approved",
+                "transformation": "source copy; normalized xyxy to YOLO xywh",
+            })
+            result.converted_images += 1
+            result.converted_boxes += len(item.labels)
+            result.split_counts["train"] += 1
+
+        fields = (
+            "image", "split", "dataset_mode", "evaluation_eligible", "source_group",
+            "source_group_status", "source_group_reason", "source_dataset", "source_image",
+            "source_annotation", "source_frame_id", "is_augmented_source", "target_annotations",
+            "completeness_status", "completeness_reason", "original_hash", "image_width",
+            "image_height", "source_license", "source_url", "review_status", "transformation",
+        )
+        with (output_dir / "dataset_manifest.csv").open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(manifest_rows)
+        data_yaml = (
+            "# Development-only YOLO files; NOT a runnable Ultralytics training YAML.\n"
+            "# Ultralytics requires both train and val; do not reuse train as val.\n"
+            "path: .\ntrain: images/train\n"
+            "names:\n  0: bus\n  1: bus_door\n  2: bus_stop\n"
+        )
+        (output_dir / "data.yaml").write_text(data_yaml, encoding="utf-8")
+        report_data = {
+            "dataset_mode": "development_train_only",
+            "evaluation_eligible": False,
+            "all_source_groups_verified": all(item.source_group_status == "verified" for item in plan.eligible),
+            "source_group_policy": "preserve review CSV status; no group split or verification implied",
+            "warning": "Do not use this dataset for validation, test, or performance claims.",
+            "images": result.converted_images,
+            "labels": result.converted_images,
+            "boxes": result.converted_boxes,
+            "class_counts": {name: class_counts[name] for name in ("bus", "bus_door", "bus_stop")},
+            "source_group_status_counts": dict(Counter(item.source_group_status for item in plan.eligible)),
+            "excluded_reviewed_negative_images": plan.image_counts.get("reviewed_negative_excluded", 0),
+            "source_archives_modified": False,
+        }
+        (output_dir / "conversion_report.json").write_text(
+            json.dumps(report_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        report = validate_development_train_only_dataset(
+            output_dir / "data.yaml", mapping_path=mapping_path, taxonomy_path=taxonomy_path
+        )
+        result.validation_errors = [issue.message for issue in report.errors]
+        if result.validation_errors:
+            raise PreparationError(f"Development dataset failed validation: {result.validation_errors[:5]}")
+    except Exception:
         if not output_preexisted:
             shutil.rmtree(output_dir, ignore_errors=True)
         else:

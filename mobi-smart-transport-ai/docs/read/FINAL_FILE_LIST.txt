@@ -459,3 +459,4 @@ packages/mobile_sensors/test/beacon_ingest_bridge_test.dart
 services/public_data/public_data_client/bus_location_service.py
 services/public_data/public_data_client/bus_route_service.py
 인수인계.md
+ai_vision/training/tests/test_development_train_only.py

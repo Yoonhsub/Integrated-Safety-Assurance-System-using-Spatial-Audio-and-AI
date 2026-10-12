@@ -135,6 +135,46 @@ three-class mapping. Start with a small cap and inspect the resulting manifest
 before increasing it. This workflow does not merge datasets, download data,
 train a model, or make a runtime model change.
 
+### Development-only train-only export
+
+When capture sessions cannot be verified, do not weaken the formal split gate.
+The separate `--development-train-only` mode can prepare a non-evaluation
+artifact after explicit image/bbox review. It keeps each source group's actual
+`verified`/`unverified` state, writes every included image to `images/train`,
+creates no `val` or `test` directory, and marks the manifest/report
+`evaluation_eligible=false`. It requires all four current review CSVs and an
+explicit image-ID selection. Per-class `image_completeness_checklist.csv`
+entries must show each class presence as yes/no and each class completeness as
+yes. A visible class without an approved bbox, an unapproved bbox, a hash or
+bbox integrity problem, or a checklist uncertainty blocks that image. A
+`reviewed_negative` image is excluded from this development export.
+
+Example dry run and export:
+
+```powershell
+python scripts/prepare_ai_vision_dataset.py `
+  --aihub-zip C:\path\to\Bbox_1_new.zip `
+  --roboflow-zip C:\path\to\bus-open-door-v2-yolov8.zip `
+  --image-ids-csv C:\path\to\selected-image-ids.csv `
+  --box-review-csv C:\path\to\box_review.csv `
+  --image-review-csv C:\path\to\image_review.csv `
+  --image-completeness-checklist-csv C:\path\to\image_completeness_checklist.csv `
+  --additional-annotations-csv C:\path\to\additional_annotations.csv `
+  --development-train-only
+```
+
+Add `--apply --output C:\path\to\bus_safety_dev_train_only --max-images 74`
+only after the dry-run reports an empty review queue. Validate the generated
+artifact with `scripts/validate_ai_vision_dataset.py --development-train-only
+--data <output>\data.yaml --mapping ai_vision/training/class_mapping_3class.json`.
+The generated image and label files follow YOLO detection layout and the
+three-class ID mapping. However, this intentionally train-only `data.yaml` is
+not a runnable Ultralytics trainer configuration: current Ultralytics dataset
+validation requires both `train` and `val` entries. Do not point `val` at the
+training images to satisfy that requirement; obtain independent validation
+recordings first. The development export is for pipeline/data inspection only,
+not training performance or model evaluation.
+
 ## Dataset preparation and annotation
 
 Prepare authorized images locally at:
