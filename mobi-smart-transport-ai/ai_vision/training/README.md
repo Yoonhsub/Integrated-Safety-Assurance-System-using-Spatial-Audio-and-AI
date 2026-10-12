@@ -56,7 +56,12 @@ classes in the full image, including checking for missing `bus` labels in
 Roboflow frames and missing `bus_door` labels in AI-Hub frames. Each candidate
 box needs an explicit decision (`approved`, `needs_correction`, `rejected`,
 `uncertain`, or `unreviewed`). Corrected coordinates are written in
-`corrected_bbox`; source annotation coordinates remain untouched. Source group
+`corrected_bbox`; source annotation coordinates remain untouched.
+Only a final `approved` decision applies corrected coordinates. An approved row
+uses nonempty `corrected_bbox` first and otherwise uses its original `bbox`.
+Invalid corrections fail validation instead of falling back to the original.
+`needs_correction` remains in the review queue until the human approves the final
+coordinates; `rejected` boxes are never emitted. Source group
 identity must be reviewed and marked `verified` with a nonempty reason before
 conversion. Image completeness decisions also require a reason; non-approval box
 decisions require a `review_reason`. The tool rejects stale review rows and
@@ -244,6 +249,26 @@ precision/recall/AP. Test data should only be used for final evaluation, not
 repeated tuning.
 
 ## Acceptance and model promotion
+
+### Known visual QA limitations of the 2026-10-13 development dataset
+
+The local `bus_safety_dev_train_only_final_20261013` dataset contains 73 images
+and 107 approved boxes. Structural validation does not establish semantic label
+accuracy. Two visual QA items remain:
+
+- `IMG_6434_frame_0855`: the approved `bus` box ends at pixel y=473.48 while
+  visible vehicle structure extends below it. The right `bus_door` box ends at
+  y=488.46 while the lower threshold/steps extend below it. Review these
+  boundaries against the annotation guidelines before further training use.
+- `Bbox_0063/MP_SEL_006803.jpg`: the expanded `bus_stop` box is human-approved,
+  but the sign/facility identity cannot be independently confirmed from the
+  image alone. Obtain supporting evidence or request another semantic review.
+
+These are unresolved label-quality questions, not corrected-coordinate export
+failures. Keep human review records unchanged until a new explicit decision.
+All source groups remain unverified; this train-only dataset must not be used
+for validation, test, or performance claims. Images, review CSVs, and generated
+datasets remain outside the repository.
 
 Do not accept a model from one aggregate mAP score alone. Review per-class
 precision and recall, especially `bus_door` and `bus_stop` recall; inspect

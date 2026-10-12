@@ -707,21 +707,23 @@ def build_review_plan(
                 blocked = True
                 continue
             if status == "approved":
-                bbox_json_value = row.get("bbox", "")
-            elif status == "needs_correction" and row.get("corrected_bbox", "").strip():
-                bbox_json_value = row["corrected_bbox"]
+                bbox_json_value = row.get("corrected_bbox", "").strip() or row.get("bbox", "")
             elif status == "rejected":
                 continue
             else:
-                plan.review_queue.append((image.image_id, f"box {box.box_id} is {status} or lacks corrected_bbox"))
+                plan.review_queue.append((image.image_id, f"box {box.box_id} is {status}; final approval is required"))
                 blocked = True
                 continue
             try:
+                # Approval applies to the final sidecar coordinates; the source
+                # bbox remains immutable for provenance and stale-row checks.
+                original = json.loads(row.get("bbox", ""))
+                if original["format"] != box.bbox_format or tuple(float(value) for value in original["xyxy"]) != box.bbox:
+                    raise ValueError("source bbox must preserve source coordinates; use corrected_bbox")
                 payload = json.loads(bbox_json_value)
                 fmt = payload["format"]
                 coords = tuple(float(value) for value in payload["xyxy"])
-                if status == "approved" and (fmt != box.bbox_format or coords != box.bbox):
-                    raise ValueError("approved bbox must preserve source coordinates; use needs_correction")
+                _validate_positive_xyxy(coords)
                 if fmt == "xyxy_pixel":
                     # Image dimensions are obtained from the archive only during conversion/preview.
                     _validate_positive_xyxy(coords)

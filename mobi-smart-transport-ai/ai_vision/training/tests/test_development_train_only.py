@@ -87,6 +87,91 @@ def _fixture(tmp_path: Path, *, bus_bbox=(3, 4, 60, 70)):
     return source, images, box_csv, image_csv, checklist, additional
 
 
+def _set_box_review(path: Path, box_id: str, **updates: str) -> None:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+        fields = tuple(rows[0])
+    next(row for row in rows if row["box_id"] == box_id).update(updates)
+    _write_rows(path, fields, rows)
+
+
+def test_approved_correction_is_used_in_actual_development_labels(tmp_path: Path) -> None:
+    _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
+    corrected = {"format": "xyxy_pixel", "xyxy": [12, 9, 120, 81]}
+    _set_box_review(boxes, images[0].boxes[0].box_id, corrected_bbox=json.dumps(corrected))
+    output = tmp_path / "corrected"
+    result = convert_development_train_only_dataset(
+        images, boxes, image_review, checklist, additional, output,
+        max_images=3, mapping_path=Path(__file__).parents[1] / "class_mapping_3class.json", apply=True,
+    )
+    assert result.converted_images == 3
+    label = output / "labels/train" / f"{images[0].image_id[:20]}.txt"
+    values = list(map(float, label.read_text().splitlines()[0].split()))
+    assert values == pytest.approx([0, .55, .5, .9, .8])
+    assert not validate_development_train_only_dataset(
+        output / "data.yaml", mapping_path=Path(__file__).parents[1] / "class_mapping_3class.json"
+    ).errors
+
+
+def test_approved_without_correction_preserves_original_and_rejected_is_omitted(tmp_path: Path) -> None:
+    _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
+    plan = build_development_train_only_plan(images, boxes, image_review, checklist, additional)
+    assert plan.eligible[0].labels[0][1] == images[0].boxes[0].bbox
+    _set_box_review(boxes, images[0].boxes[1].box_id, review_status="rejected",
+                    review_reason="not a bus stop", corrected_bbox="invalid ignored correction")
+    # The absent class must also be explicitly reviewed at image level.
+    with checklist.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+        fields = tuple(rows[0])
+    next(row for row in rows if row["image_id"] == images[0].image_id)["contains_bus_stop"] = "no"
+    _write_rows(checklist, fields, rows)
+    plan = build_development_train_only_plan(images, boxes, image_review, checklist, additional)
+    assert not plan.review_queue
+    assert len(plan.eligible[0].labels) == 1
+    assert plan.eligible[0].labels[0][0] == "bus"
+
+
+@pytest.mark.parametrize("correction", [
+    "not JSON", "{}", "null", '[]',
+    '{"format":"xyxy_normalized","xyxy":[0.1,0.2,0.3]}',
+    '{"format":"xyxy_pixel","xyxy":[12,9,12,81]}',
+    '{"format":"xyxy_pixel","xyxy":[-1,9,60,81]}',
+    '{"format":"xyxy_pixel","xyxy":[12,9,NaN,81]}',
+    '{"format":"xyxy_normalized","xyxy":[0.1,0.1,1.1,0.9]}',
+    '{"format":"unsupported","xyxy":[12,9,60,81]}',
+])
+def test_invalid_approved_correction_fails_without_original_fallback(tmp_path: Path, correction: str) -> None:
+    _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
+    _set_box_review(boxes, images[0].boxes[0].box_id, corrected_bbox=correction)
+    with pytest.raises(PreparationError, match="Invalid reviewed bbox"):
+        build_development_train_only_plan(images, boxes, image_review, checklist, additional)
+
+
+@pytest.mark.parametrize("xyxy", [[12,9,121,81], [12,9,120,91]])
+def test_corrected_pixel_bbox_uses_actual_image_bounds_and_rolls_back(tmp_path: Path, xyxy: list[int]) -> None:
+    _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
+    _set_box_review(boxes, images[0].boxes[0].box_id,
+                    corrected_bbox=json.dumps({"format":"xyxy_pixel","xyxy":xyxy}))
+    output = tmp_path / "invalid"
+    with pytest.raises((PreparationError, ValueError), match="bounds"):
+        convert_development_train_only_dataset(
+            images, boxes, image_review, checklist, additional, output,
+            max_images=3, mapping_path=Path(__file__).parents[1] / "class_mapping_3class.json", apply=True,
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("status", ["unreviewed", "uncertain", "needs_correction"])
+def test_unapproved_corrections_block_development_conversion(tmp_path: Path, status: str) -> None:
+    _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
+    _set_box_review(boxes, images[0].boxes[0].box_id, review_status=status,
+                    review_reason="await final decision",
+                    corrected_bbox='{"format":"xyxy_pixel","xyxy":[12,9,120,81]}')
+    plan = build_development_train_only_plan(images, boxes, image_review, checklist, additional)
+    assert any(image_id == images[0].image_id for image_id, _ in plan.review_queue)
+    assert all(item.candidate.image_id != images[0].image_id for item in plan.eligible)
+
+
 def test_development_train_only_converts_only_train_preserves_unverified_groups_and_validates(tmp_path: Path) -> None:
     _, images, boxes, image_review, checklist, additional = _fixture(tmp_path)
     plan = build_development_train_only_plan(images, boxes, image_review, checklist, additional)

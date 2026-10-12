@@ -152,7 +152,7 @@ def test_review_gate_blocks_unreviewed_boxes_incomplete_images_and_unverified_gr
     assert "incomplete" in plan.review_queue[0][1]
 
 
-def test_needs_correction_uses_separate_reviewed_coordinates(tmp_path: Path) -> None:
+def test_needs_correction_waits_for_final_approval(tmp_path: Path) -> None:
     source = tmp_path / "aihub.zip"
     _write_cvat_zip(source)
     images = parse_cvat_archive(source)
@@ -162,6 +162,10 @@ def test_needs_correction_uses_separate_reviewed_coordinates(tmp_path: Path) -> 
     _edit_csv(box_csv, "box_id", {images[0].boxes[0].box_id: {"review_status": "needs_correction", "review_reason": "tighten left edge", "corrected_bbox": corrected}})
     _edit_csv(box_csv, "box_id", {images[0].boxes[1].box_id: {"review_status": "approved"}})
     _edit_csv(image_csv, "image_id", {images[0].image_id: {"source_group": "session-verified", "source_group_status": "verified", "source_group_reason": "verified source sequence", "completeness_status": "complete", "completeness_reason": "all three target classes checked"}})
+    plan = build_review_plan(images, box_csv, image_csv)
+    assert not plan.eligible
+    assert any("needs_correction" in reason for _, reason in plan.review_queue)
+    _edit_csv(box_csv, "box_id", {images[0].boxes[0].box_id: {"review_status": "approved"}})
     plan = build_review_plan(images, box_csv, image_csv)
     assert len(plan.eligible) == 1
     assert plan.eligible[0].labels[0][1] == (12.0, 10.0, 48.0, 46.0)
@@ -273,7 +277,7 @@ def test_approved_review_cannot_silently_change_original_bbox(tmp_path: Path) ->
     write_review_manifests(images, box_csv, image_csv)
     _edit_csv(box_csv, "box_id", {images[0].boxes[0].box_id: {"review_status": "approved", "bbox": '{"format":"xyxy_pixel","xyxy":[12,10,48,46]}'}})
     _edit_csv(image_csv, "image_id", {images[0].image_id: {"source_group": "session-verified", "source_group_status": "verified", "source_group_reason": "verified source sequence", "completeness_status": "complete", "completeness_reason": "all three target classes checked"}})
-    with pytest.raises(PreparationError, match="use needs_correction"):
+    with pytest.raises(PreparationError, match="use corrected_bbox"):
         build_review_plan(images, box_csv, image_csv)
 
 
