@@ -460,3 +460,13 @@ services/public_data/public_data_client/bus_location_service.py
 services/public_data/public_data_client/bus_route_service.py
 인수인계.md
 ai_vision/training/tests/test_development_train_only.py
+backend/api/tests/test_ride_request_concurrency.py
+backend/api/tests/test_ride_creation_idempotency.py
+backend/api/app/security.py
+backend/api/tests/conftest.py
+backend/api/tests/test_security.py
+docs/rw/AUTHENTICATION.md
+backend/api/app/cloud_run.py
+backend/api/app/local_demo.py
+backend/api/app/local_emulator.py
+backend/api/tests/test_local_demo.py

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import RLock
 from datetime import datetime
 from typing import Callable, Any
 
+from app.security import auth_error, require_role
 from app.schemas.v3 import BeaconDecision, GuidanceSessionState, GuidanceState, new_session_id, utc_now
 
 
 @dataclass
 class V3SessionRecord:
     session_id: str
+    owner_uid: str | None = None
     wake_word: str = "자비스"
     state: GuidanceState = GuidanceState.IDLE
     selected_destination: str | None = None
@@ -37,6 +40,8 @@ class V3SessionRecord:
     conversation_history: list[dict[str, Any]] = field(default_factory=list)
     geofence_armed: bool = False
     last_decision: BeaconDecision | None = None
+    # Internal freshness marker; not part of the public session contract.
+    last_decision_at: datetime | None = None
     nearest_beacon: dict | None = None
     target_bus: dict | None = None
     updated_at: datetime = field(default_factory=utc_now)
@@ -98,6 +103,7 @@ class V3GuidanceStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, V3SessionRecord] = {}
+        self._lock = RLock()
 
     def _persist(self, record: V3SessionRecord) -> None:
         # Imported lazily to avoid any import-time Firebase side effects.
@@ -107,19 +113,47 @@ class V3GuidanceStore:
         snapshot = record.to_response().model_dump(mode="json", by_alias=True)
         client.set(f"v3GuidanceSessions/{record.session_id}", snapshot)
 
+    def _check_owner(self, record: V3SessionRecord) -> None:
+        principal = require_role("passenger")
+        if principal.role != "admin" and record.owner_uid != principal.uid:
+            raise auth_error(403, "Session access denied")
+
     def create(self, *, session_id: str | None = None, wake_word: str = "자비스") -> V3SessionRecord:
-        sid = session_id or new_session_id()
-        record = V3SessionRecord(session_id=sid, wake_word=wake_word, on_touch=self._persist)
-        record.touch()
-        self._sessions[sid] = record
-        return record
+        principal = require_role("passenger")
+        if principal.role != "admin" and session_id is not None:
+            raise auth_error(403, "Create a session without a client-supplied ID")
+        with self._lock:
+            sid = session_id or new_session_id()
+            existing = self._sessions.get(sid)
+            if existing:
+                self._check_owner(existing)
+            record = V3SessionRecord(
+                session_id=sid, owner_uid=existing.owner_uid if existing else principal.uid,
+                wake_word=wake_word, on_touch=self._persist,
+            )
+            record.touch()
+            self._sessions[sid] = record
+            return record
 
     def get(self, session_id: str = "demo-session", *, wake_word: str = "자비스") -> V3SessionRecord:
-        return self._sessions.get(session_id) or self.create(session_id=session_id, wake_word=wake_word)
+        principal = require_role("passenger")
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is None:
+                if principal.role != "admin":
+                    raise auth_error(404, "Create a new guidance session first")
+                return self.create(session_id=session_id, wake_word=wake_word)
+            self._check_owner(record)
+            return record
 
     def reset(self, session_id: str = "demo-session") -> V3SessionRecord:
-        wake_word = self._sessions.get(session_id).wake_word if session_id in self._sessions else "자비스"
-        return self.create(session_id=session_id, wake_word=wake_word)
+        with self._lock:
+            old = self.get(session_id)
+            record = V3SessionRecord(session_id=session_id, owner_uid=old.owner_uid,
+                                     wake_word=old.wake_word, on_touch=self._persist)
+            record.touch()
+            self._sessions[session_id] = record
+            return record
 
     def clear(self) -> None:
         self._sessions.clear()

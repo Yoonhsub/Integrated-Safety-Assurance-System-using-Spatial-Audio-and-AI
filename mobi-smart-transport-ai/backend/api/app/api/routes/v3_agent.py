@@ -22,6 +22,7 @@ from app.schemas.v3 import (
     RoutePlanStatus,
     TtsMode,
     V3Cue,
+    utc_now,
 )
 from app.services import cheongju_route_catalog
 from app.services.v3_agent_tools import (
@@ -65,6 +66,7 @@ from app.services.v3_openai_live_audio_service import (
     stream_openai_realtime_pcm,
 )
 from app.services.v3_guidance_store import V3SessionRecord, v3_guidance_store
+from app.services.v3_beacon_service import LOST_TIMEOUT_SEC
 
 
 def _live_audio_provider() -> str:
@@ -405,6 +407,13 @@ async def converse_live(websocket: WebSocket) -> None:
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=10)
         payload = AgentConverseRequest.model_validate(raw)
+        # Verify ownership before starting external tools or streaming thoughts.
+        v3_guidance_store.get(payload.sessionId, wake_word=payload.wakeWord)
+    except WebSocketDisconnect:
+        return
+    except HTTPException:
+        await websocket.close(code=1008, reason="Session access denied")
+        return
     except (asyncio.TimeoutError, ValidationError):
         await _send_live_audio_error(
             websocket,
@@ -658,40 +667,25 @@ def _run_converse(
 
     elif intent == AgentIntent.ASK_CAN_BOARD_CURRENT_BUS:
         if live:
-            route_id = session.selected_route_id
-            stop_id = session.selected_stop_id
-            if not route_id or not stop_id:
+            # The live beacon-ingest store is not joined to this guidance session,
+            # and the live vehicle-location contract does not identify the exact
+            # selected vehicle. Do not let a language model infer boarding safety.
+            if not session.selected_route_id or not session.selected_stop_id:
                 message = "먼저 목적지 경로를 선택해 주세요."
             else:
-                try:
-                    locations_res = get_bus_locations_tool(
-                        route_id=route_id,
-                        route_no=session.selected_route_no or "",
-                        mode=payload.mode,
-                        trace=trace,
-                    )
-                    buses_at_stop = [l for l in locations_res.locations if l.nodeId == stop_id]
-                    context_data = {
-                        "beacon_status": session.last_decision or "NO_BEACON",
-                        "live_buses_at_current_stop": [b.model_dump(mode="json") for b in buses_at_stop],
-                    }
-                    dynamic_msg = generate_dynamic_response(
-                        intent=intent,
-                        utterance=utterance,
-                        wake_word=wake_word,
-                        context_data=context_data,
-                        history=history,
-                    )
-                    message = dynamic_msg or "아직 타야 할 버스가 오지 않은 것 같습니다."
-                    used_gemini = bool(dynamic_msg)
-                    if used_gemini:
-                        fallback_source = FallbackSource.PUBLIC_API
-                        tts_mode = TtsMode.GEMINI_OPTIONAL
-                except Exception:
-                    message = "버스 위치 조회를 실패했어요. 비프음이 가까워질 때까지 기다려 주세요."
+                message = (
+                    "현재 정보만으로 이 버스가 타실 버스인지 안전하게 확인하지 못했어요. "
+                    "버스 번호와 방향을 확인하고, 확신이 없으면 기다려 주세요."
+                )
+            if session.state == GuidanceState.BOARDING_CONFIRMATION:
+                session.state = GuidanceState.WAITING_FOR_BUS
+            tts_mode = TtsMode.SAFETY_LOCAL
         else:
             tts_mode = TtsMode.SAFETY_LOCAL
-            if session.last_decision == BeaconDecision.TARGET_BUS_NEAR:
+            can_board = _has_current_target_bus_confirmation(session)
+            if not can_board and session.state == GuidanceState.BOARDING_CONFIRMATION:
+                session.state = GuidanceState.WAITING_FOR_BUS
+            if can_board:
                 message = "네, 지금 가까이 온 버스가 타야 할 버스예요. 조심해서 탑승해 주세요."
                 cue = V3Cue(
                     type=CueType.TARGET_BUS_NEAR,
@@ -700,7 +694,10 @@ def _run_converse(
                     shouldBeep=True,
                     message="타야 할 버스가 가까이 왔습니다.",
                 )
-            elif session.last_decision == BeaconDecision.WRONG_BUS_NEAR:
+            elif (
+                session.last_decision == BeaconDecision.WRONG_BUS_NEAR
+                and _has_recent_beacon_observation(session)
+            ):
                 message = "아닙니다. 지금 가까운 버스는 타야 할 버스가 아니에요. 기다려 주세요."
                 cue = V3Cue(
                     type=CueType.WRONG_BUS_NEAR,
@@ -717,6 +714,7 @@ def _run_converse(
         session.state = GuidanceState.WAITING_FOR_BUS
         session.target_bus_id = _next_target_bus_id(session.selected_route_no, session.target_bus_id)
         session.last_decision = None
+        session.last_decision_at = None
         session.nearest_beacon = None
         session.target_bus = None
         message = "괜찮습니다. 다음 버스를 다시 안내해 드릴게요."
@@ -756,6 +754,34 @@ def _run_converse(
         used_gemini=used_gemini,
         fallback_source=fallback_source,
         route_plan=route_plan,
+    )
+
+
+def _has_recent_beacon_observation(session: V3SessionRecord) -> bool:
+    observed_at = session.last_decision_at
+    if observed_at is None or not isinstance(session.nearest_beacon, dict):
+        return False
+    try:
+        age_seconds = (utc_now() - observed_at).total_seconds()
+    except TypeError:
+        return False
+    return 0 <= age_seconds <= LOST_TIMEOUT_SEC
+
+
+def _has_current_target_bus_confirmation(session: V3SessionRecord) -> bool:
+    """Only a fresh, explicitly matched target beacon can authorize this mock cue."""
+    target = session.target_bus
+    return bool(
+        session.state == GuidanceState.BOARDING_CONFIRMATION
+        and session.last_decision == BeaconDecision.TARGET_BUS_NEAR
+        and _has_recent_beacon_observation(session)
+        and isinstance(target, dict)
+        and session.target_bus_id
+        and target.get("busId") == session.target_bus_id
+        and (
+            session.selected_route_no is None
+            or target.get("routeNo") == session.selected_route_no
+        )
     )
 
 
@@ -1340,6 +1366,7 @@ def _apply_route_plan(session: V3SessionRecord, route_plan: RoutePlanResponse) -
     session.current_leg_index = 0
     session.target_bus_id = None
     session.last_decision = None
+    session.last_decision_at = None
     session.nearest_beacon = None
     session.target_bus = None
     session.last_route_plan = route_plan.model_dump(mode="json")
@@ -1401,6 +1428,7 @@ def _clear_selected_route_context(session: V3SessionRecord) -> None:
     session.current_leg_index = 0
     session.last_route_plan = None
     session.last_decision = None
+    session.last_decision_at = None
     session.nearest_beacon = None
     session.target_bus = None
     session.state = GuidanceState.IDLE

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 
 from app.schemas.ride_request import RideRequestCreate, RideRequestRecord, RideRequestStatusUpdate
 from app.services.ride_request_service import RideRequestService
@@ -8,8 +8,11 @@ _service = RideRequestService()
 
 
 @router.post("", response_model=RideRequestRecord)
-def create_ride_request(payload: RideRequestCreate) -> RideRequestRecord:
-    return _service.create(payload)
+def create_ride_request(
+    payload: RideRequestCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> RideRequestRecord:
+    return _service.create(payload, idempotency_key=idempotency_key)
 
 
 @router.get("/{requestId}", response_model=RideRequestRecord)

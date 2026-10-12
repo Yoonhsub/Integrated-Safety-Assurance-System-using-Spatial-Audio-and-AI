@@ -15,6 +15,7 @@ import os
 import time
 from dataclasses import dataclass
 
+from app.security import current_principal
 from app.schemas.v3 import FallbackSource, RoutePlanSegment, RoutePlanStop, utc_now
 from app.schemas.v3_map import GeoPoint, LiveStatusResponse, NearbyStop
 from app.services import nearby_stops_service, walking_route_service
@@ -198,6 +199,8 @@ def get_live_status(
         alight_stop_name,
         live,
     )
+    principal = current_principal.get()
+    key = (principal.uid if principal else None, session_id, dest_name, key)
     now = time.monotonic()
     cached = _CACHE.get(key)
     if cached is not None and cached[0] > now:

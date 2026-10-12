@@ -4,10 +4,12 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from threading import RLock
+from typing import Any, Callable
 from uuid import uuid4
 
 from dotenv import load_dotenv
+from fastapi import HTTPException
 
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
@@ -41,14 +43,20 @@ class FirebaseSettings:
     service_account_path: Path | None
     storage_bucket: str | None
     use_mock_data: bool
+    use_application_default: bool = False
+    require_real_storage: bool = False
+    use_emulator: bool = False
 
     @property
     def credentials_ready(self) -> bool:
         return bool(
             self.project_id
             and self.database_url
-            and self.service_account_path
-            and self.service_account_path.exists()
+            and (
+                self.service_account_path.exists()
+                if self.service_account_path
+                else self.use_application_default or self.use_emulator
+            )
         )
 
     @property
@@ -60,6 +68,10 @@ class FirebaseSettings:
 
 def load_firebase_settings() -> FirebaseSettings:
     _load_env()
+    from app.local_emulator import emulator_requested, validate_local_emulators
+    local_demo = emulator_requested()
+    if local_demo:
+        validate_local_emulators()
     root = _project_root()
     raw_service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
     service_account_path: Path | None = None
@@ -75,6 +87,9 @@ def load_firebase_settings() -> FirebaseSettings:
         service_account_path=service_account_path,
         storage_bucket=os.getenv("FIREBASE_STORAGE_BUCKET") or None,
         use_mock_data=_env_bool("FIREBASE_USE_MOCK", default=_env_bool("USE_MOCK_DATA", default=True)),
+        use_application_default=_env_bool("FIREBASE_USE_ADC", default=False),
+        require_real_storage=os.getenv("APP_ENV", "development").lower() in {"production", "staging", "local-demo"},
+        use_emulator=local_demo,
     )
 
 
@@ -83,41 +98,45 @@ class InMemoryRealtimeDatabase:
 
     def __init__(self) -> None:
         self._store: dict[str, Any] = {}
+        self._lock = RLock()
 
     @staticmethod
     def _parts(path: str) -> list[str]:
         return [part for part in path.strip("/").split("/") if part]
 
     def get(self, path: str) -> Any:
-        node: Any = self._store
-        for part in self._parts(path):
-            if not isinstance(node, dict) or part not in node:
-                return None
-            node = node[part]
-        return deepcopy(node)
+        with self._lock:
+            node: Any = self._store
+            for part in self._parts(path):
+                if not isinstance(node, dict) or part not in node:
+                    return None
+                node = node[part]
+            return deepcopy(node)
 
     def set(self, path: str, value: Any) -> None:
-        parts = self._parts(path)
-        if not parts:
-            if not isinstance(value, dict):
-                raise ValueError("RTDB root value must be a dictionary in mock mode.")
-            self._store = deepcopy(value)
-            return
-        node = self._store
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-            if not isinstance(node, dict):
-                raise ValueError(f"Cannot create child under non-object path segment: {part}")
-        node[parts[-1]] = deepcopy(value)
+        with self._lock:
+            parts = self._parts(path)
+            if not parts:
+                if not isinstance(value, dict):
+                    raise ValueError("RTDB root value must be a dictionary in mock mode.")
+                self._store = deepcopy(value)
+                return
+            node = self._store
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+                if not isinstance(node, dict):
+                    raise ValueError(f"Cannot create child under non-object path segment: {part}")
+            node[parts[-1]] = deepcopy(value)
 
     def update(self, path: str, value: dict[str, Any]) -> None:
-        current = self.get(path)
-        if current is None:
-            current = {}
-        if not isinstance(current, dict):
-            raise ValueError("RTDB update target must be an object.")
-        current.update(deepcopy(value))
-        self.set(path, current)
+        with self._lock:
+            current = self.get(path)
+            if current is None:
+                current = {}
+            if not isinstance(current, dict):
+                raise ValueError("RTDB update target must be an object.")
+            current.update(deepcopy(value))
+            self.set(path, current)
 
     def push(self, path: str, value: Any) -> str:
         key = uuid4().hex
@@ -125,29 +144,39 @@ class InMemoryRealtimeDatabase:
         return key
 
     def delete(self, path: str) -> None:
-        parts = self._parts(path)
-        if not parts:
-            self._store.clear()
-            return
-        node: Any = self._store
-        for part in parts[:-1]:
-            if not isinstance(node, dict) or part not in node:
+        with self._lock:
+            parts = self._parts(path)
+            if not parts:
+                self._store.clear()
                 return
-            node = node[part]
-        if isinstance(node, dict):
-            node.pop(parts[-1], None)
+            node: Any = self._store
+            for part in parts[:-1]:
+                if not isinstance(node, dict) or part not in node:
+                    return
+                node = node[part]
+            if isinstance(node, dict):
+                node.pop(parts[-1], None)
 
     def clear(self) -> None:
-        self._store.clear()
+        with self._lock:
+            self._store.clear()
+
+    def transaction(self, path: str, transform: Callable[[Any], Any]) -> Any:
+        # Same atomic read/validate/write semantics within this mock store instance.
+        with self._lock:
+            result = transform(self.get(path))
+            self.set(path, result)
+            return deepcopy(result)
 
 
 class FirebaseClient:
-    """Firebase Admin SDK wrapper with a safe mock fallback.
+    """Firebase Admin SDK wrapper with a development-only mock fallback.
 
     Importing this module never requires Firebase credentials. The real Admin
     SDK is imported only when `initialize()` is called and the environment is
     fully configured. Without credentials, helpers use an in-memory RTDB-like
-    store so local tests remain deterministic.
+    store so local tests remain deterministic. Staging/production storage calls
+    reject fallback; Cloud Run can explicitly opt into ADC without a key file.
     """
 
     # Safe, RTDB-key-compatible probe path. Keys cannot contain "." or "/" so
@@ -202,9 +231,16 @@ class FirebaseClient:
             import firebase_admin
             from firebase_admin import credentials, db
 
-            if not firebase_admin._apps:
-                cred = credentials.Certificate(str(self.settings.service_account_path))
-                options = {"databaseURL": self.settings.database_url}
+            try:
+                firebase_admin.get_app()
+            except ValueError:
+                from app.local_emulator import EmulatorCredential
+                cred = EmulatorCredential() if self.settings.use_emulator else (
+                    credentials.Certificate(str(self.settings.service_account_path))
+                    if self.settings.service_account_path
+                    else credentials.ApplicationDefault()
+                )
+                options = {"databaseURL": self.settings.database_url, "projectId": self.settings.project_id}
                 if self.settings.storage_bucket:
                     options["storageBucket"] = self.settings.storage_bucket
                 firebase_admin.initialize_app(cred, options)
@@ -225,9 +261,9 @@ class FirebaseClient:
             reasons.append("FIREBASE_PROJECT_ID 미설정")
         if not self.settings.database_url:
             reasons.append("FIREBASE_DATABASE_URL 미설정")
-        if not self.settings.service_account_path:
+        if not self.settings.service_account_path and not self.settings.use_application_default:
             reasons.append("FIREBASE_SERVICE_ACCOUNT_PATH 미설정")
-        elif not self.settings.service_account_path.exists():
+        elif self.settings.service_account_path and not self.settings.service_account_path.exists():
             reasons.append(
                 f"서비스 계정 json 파일 없음 ({self.settings.service_account_path})"
             )
@@ -273,7 +309,7 @@ class FirebaseClient:
         timestamp = datetime.now(timezone.utc).isoformat()
         payload = {"ts": timestamp, "ok": True}
 
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             try:
                 self._memory_db.set(self.PROBE_PATH, payload)
                 read_back = self._memory_db.get(self.PROBE_PATH)
@@ -321,31 +357,53 @@ class FirebaseClient:
             raise RuntimeError("Firebase Admin SDK is not configured for real RTDB access.")
         return self._db_module.reference(path)
 
+    def _use_memory(self) -> bool:
+        use_memory = self._using_mock or not self.initialize()
+        if use_memory and self.settings.require_real_storage:
+            raise HTTPException(status_code=503, detail="Firebase storage unavailable")
+        return use_memory
+
     def get(self, path: str) -> Any:
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             return self._memory_db.get(path)
         return self._real_reference(path).get()
 
     def set(self, path: str, value: Any) -> None:
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             self._memory_db.set(path, value)
             return
         self._real_reference(path).set(value)
 
     def update(self, path: str, value: dict[str, Any]) -> None:
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             self._memory_db.update(path, value)
             return
         self._real_reference(path).update(value)
 
+    def transaction(self, path: str, transform: Callable[[Any], Any]) -> Any:
+        """Commit against the latest record; callbacks must be side-effect free.
+
+        Real RTDB uses SDK ETag compare-and-set retries, not a process-local lock.
+        Failures never fall back to memory or an unconditional write.
+        """
+        if self._use_memory():
+            return self._memory_db.transaction(path, transform)
+        from firebase_admin import db, exceptions
+        try:
+            return self._real_reference(path).transaction(transform)
+        except db.TransactionAbortedError as exc:
+            raise HTTPException(409, "Concurrent update conflict; reload the request") from exc
+        except exceptions.FirebaseError as exc:
+            raise HTTPException(503, "Firebase transaction unavailable") from exc
+
     def push(self, path: str, value: Any) -> str:
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             return self._memory_db.push(path, value)
         ref = self._real_reference(path).push(value)
         return str(ref.key)
 
     def delete(self, path: str) -> None:
-        if self._using_mock or not self.initialize():
+        if self._use_memory():
             self._memory_db.delete(path)
             return
         self._real_reference(path).delete()

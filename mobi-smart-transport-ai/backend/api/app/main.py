@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +28,7 @@ from app.api.routes import (
 )
 
 from app.services.firebase_client import get_firebase_client
+from app.security import authorize_api
 from pydantic import BaseModel
 
 class DataModeRequest(BaseModel):
@@ -87,9 +88,10 @@ def _http_error_code(status_code: int) -> str:
 
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
     if isinstance(exc.detail, dict) and isinstance(exc.detail.get("error"), dict):
-        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=exc.headers)
     return JSONResponse(
         status_code=exc.status_code,
+        headers=exc.headers,
         content={
             "error": {
                 "code": _http_error_code(exc.status_code),
@@ -106,6 +108,7 @@ CORS_ORIGINS = _csv_env("BACKEND_CORS_ORIGINS", ("http://localhost:3000", "http:
 PASSENGER_WEB_BUILD_DIR = _project_root() / "apps" / "passenger_app" / "build" / "web"
 
 app = FastAPI(
+    dependencies=[Depends(authorize_api)],
     title="MOBI Backend API",
     version="0.1.0-v3-section1",
     description="FastAPI backend for geofencing, Firebase/FCM, ride matching, bus info gateway, and V3 bus guidance demo routes.",
@@ -154,7 +157,7 @@ def health() -> dict[str, object]:
         "firebaseMode": "mock" if firebase.using_mock else "firebase-admin",
         "firebaseInitialized": firebase.is_initialized,
         "firebaseCredentialsReady": firebase.settings.credentials_ready,
-        "firebaseLastError": firebase.last_error,
+        "firebaseLastError": None,  # Detailed diagnostics require /firebase/status authentication.
         "dataMode": "mock" if os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("true", "1", "yes") else "live",
     }
 
@@ -175,3 +178,25 @@ def set_data_mode(request: DataModeRequest) -> dict[str, str]:
 
 if PASSENGER_WEB_BUILD_DIR.is_dir():
     app.mount("/app", StaticFiles(directory=PASSENGER_WEB_BUILD_DIR, html=True), name="passenger-app")
+
+
+def authenticated_openapi():
+    """Document bearer auth without exposing any token or credentials."""
+    from fastapi.openapi.utils import get_openapi
+    from app.security import PUBLIC
+    if app.openapi_schema is None:
+        schema = get_openapi(title=app.title, version=app.version,
+                             description=app.description, routes=app.routes)
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})["FirebaseIdToken"] = {
+            "type": "http", "scheme": "bearer", "bearerFormat": "Firebase ID token",
+        }
+        for path, methods in schema["paths"].items():
+            for method, operation in methods.items():
+                if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
+                    if (method.upper(), path) not in PUBLIC:
+                        operation["security"] = [{"FirebaseIdToken": []}]
+        app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = authenticated_openapi

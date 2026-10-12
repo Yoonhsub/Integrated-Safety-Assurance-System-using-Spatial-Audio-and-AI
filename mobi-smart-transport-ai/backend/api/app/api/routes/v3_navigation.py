@@ -35,6 +35,9 @@ def live_status(
     destName: str | None = Query(default=None),
     mode: str | None = Query(default=None),
 ) -> LiveStatusResponse:
+    if sessionId is not None:
+        from app.services.v3_guidance_store import v3_guidance_store
+        v3_guidance_store.get(sessionId)
     response = live_status_service.get_live_status(
         session_id=sessionId,
         route_no=routeNo,

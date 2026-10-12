@@ -774,3 +774,21 @@ POST /ride-requests request body: packages/shared_contracts/api/ride_request.cre
 PATCH /ride-requests/{requestId}/status request body: packages/shared_contracts/api/ride_request.status_update.request.schema.json
 Ride request record response: packages/shared_contracts/api/ride_request.schema.json
 ```
+
+
+## POST /ride-requests 멱등성 헤더
+
+기존 JSON 요청/응답 형식과 HTTP200을 유지한다. 선택 헤더 `Idempotency-Key`는
+16~128자의 ASCII 영문/숫자/`.`/`_`/`:`/`-`이며 UUID 또는 충분한 무작위 값을 권장한다.
+누락 시 기존 신규 생성 동작으로 호환되며 **중복 방지가 보장되지 않는다**.
+승객 앱은 새 사용자 행동에서 키를 만들고 미확인/실패/401 갱신/타임아웃 재시도에 같은 키를 쓴다.
+인증된 UID별로 키를 격리한다. 본문의 userId는 여전히 실제 UID와 일치해야 한다.
+
+- 같은 UID/키/정규화된 원본 본문: 동일 requestId와 현재 상태를 반환한다.
+- 같은 UID/키/다른 본문:409 IDEMPOTENCY_KEY_CONFLICT. 서버 배정 전 본문으로 비교한다.
+- 잘못된 키 형식:400. 인증/권한 오류는 기존401/403.
+- 취소/완료된 요청에 같은 키: 해당 종료 요청 반환. 새 행동은 새 키.
+- 서버 재시작/저장 응답 유실 후에도 RTDB에 커밋된 생성 정보로 복구한다.
+
+응답 본문에 내부 `_creation`은 포함되지 않는다. 무키 클라이언트는 단계적으로 헤더를
+추가해야 한다. 동일 내용의 별도 사용자 행동을 서버가 임의로 합치지 않는다.

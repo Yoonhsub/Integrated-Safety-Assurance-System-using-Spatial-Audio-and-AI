@@ -1,8 +1,12 @@
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.firebase_client import get_firebase_client
 from app.services.v3_guidance_store import v3_guidance_store
+from app.api.routes import v3_agent
+from app.schemas.v3 import utc_now
 
 client = TestClient(app)
 
@@ -205,6 +209,126 @@ def test_beacon_wrong_bus_target_mid_target_near_and_session_persistence() -> No
     ask_yes = _say("s1", "자비스, 지금 앞에 온 버스 타도 돼?")
     assert ask_yes.status_code == 200
     assert "네" in ask_yes.json()["message"]
+
+
+def test_stale_target_beacon_cannot_authorize_boarding() -> None:
+    _seed_waiting_session("stale-target")
+    client.post(
+        "/mock/beacons",
+        json={
+            "sessionId": "stale-target",
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_2", "routeNo": "502", "distanceMeters": 2.0}],
+        },
+    )
+    session = v3_guidance_store.get("stale-target")
+    session.last_decision_at = utc_now() - timedelta(seconds=10)
+
+    response = _say("stale-target", "자비스, 지금 앞에 온 버스 타도 돼?")
+
+    assert response.status_code == 200
+    assert "타야 할 버스예요" not in response.json()["message"]
+    assert "확인되지 않았어요" in response.json()["message"]
+
+
+def test_stale_wrong_bus_observation_is_not_reported_as_current() -> None:
+    _seed_waiting_session("stale-wrong")
+    client.post(
+        "/mock/beacons",
+        json={
+            "sessionId": "stale-wrong",
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_1", "routeNo": "511", "distanceMeters": 1.5}],
+        },
+    )
+    session = v3_guidance_store.get("stale-wrong")
+    session.last_decision_at = utc_now() - timedelta(seconds=10)
+
+    response = _say("stale-wrong", "자비스, 지금 앞에 온 버스 타도 돼?")
+
+    assert response.status_code == 200
+    assert "지금 가까운 버스는 타야 할 버스가 아니" not in response.json()["message"]
+    assert "확인되지 않았어요" in response.json()["message"]
+
+
+def test_beacon_lost_or_unknown_cannot_authorize_boarding() -> None:
+    _seed_waiting_session("lost-target")
+    client.post(
+        "/mock/beacons",
+        json={
+            "sessionId": "lost-target",
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_2", "routeNo": "502", "distanceMeters": 2.0}],
+        },
+    )
+    state = client.get("/guidance/state", params={"sessionId": "lost-target"}).json()
+    assert state["state"] == "BOARDING_CONFIRMATION"
+    client.post(
+        "/mock/beacons",
+        json={"sessionId": "lost-target", "targetBusId": "BUS_2", "targetRouteNo": "502", "beacons": []},
+    )
+
+    response = _say("lost-target", "자비스, 지금 앞에 온 버스 타도 돼?")
+
+    assert response.status_code == 200
+    assert "타야 할 버스예요" not in response.json()["message"]
+    assert "확인되지 않았어요" in response.json()["message"]
+    assert response.json()["state"] == "WAITING_FOR_BUS"
+
+
+def test_wrong_bus_after_target_near_clears_boarding_confirmation() -> None:
+    _seed_waiting_session("wrong-after-target")
+    client.post(
+        "/mock/beacons",
+        json={
+            "sessionId": "wrong-after-target",
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_2", "routeNo": "502", "distanceMeters": 2.0}],
+        },
+    )
+    wrong = client.post(
+        "/mock/beacons",
+        json={
+            "sessionId": "wrong-after-target",
+            "targetBusId": "BUS_2",
+            "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_1", "routeNo": "511", "distanceMeters": 1.5}],
+        },
+    )
+
+    assert wrong.json()["decision"] == "WRONG_BUS_NEAR"
+    state = client.get("/guidance/state", params={"sessionId": "wrong-after-target"}).json()
+    assert state["state"] == "WAITING_FOR_BUS"
+    assert state["lastDecision"] == "WRONG_BUS_NEAR"
+
+
+def test_live_boarding_question_does_not_delegate_safety_to_llm(monkeypatch) -> None:
+    _seed_waiting_session("live-unknown")
+    llm_calls = []
+
+    def unsafe_affirmative(**kwargs):
+        llm_calls.append(kwargs)
+        return "네, 지금 탑승해 주세요."
+
+    monkeypatch.setattr(v3_agent, "generate_dynamic_response", unsafe_affirmative)
+    response = client.post(
+        "/agent/converse",
+        json={
+            "sessionId": "live-unknown",
+            "wakeWord": "자비스",
+            "utterance": "자비스, 지금 앞에 온 버스 타도 돼?",
+            "mode": "live",
+        },
+    )
+
+    assert response.status_code == 200
+    assert llm_calls == []
+    assert "확인하지 못했어요" in response.json()["message"]
+    assert response.json()["ttsMode"] == "SAFETY_LOCAL"
 
 
 def test_beacon_empty_mid_and_rssi_tie_break() -> None:

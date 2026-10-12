@@ -509,10 +509,14 @@ def validate_runtime_constraints() -> None:
 
 
 
-def _assert_strict_current_location_rule(rule: str, label: str) -> None:
+def _assert_strict_current_location_rule(node: dict, label: str) -> None:
+    rule = node.get(".validate", "")
+    if node.get("$other", {}).get(".validate") is not False:
+        raise AssertionError(f"{label} must reject unknown location fields")
+    if {key for key in node if not key.startswith(".")} != {"lat", "lng", "updatedAt", "$other"}:
+        raise AssertionError(f"{label} must permit exactly the three location fields")
     required_fragments = [
         "newData.hasChildren(['lat', 'lng', 'updatedAt'])",
-        "newData.childrenCount() === 3",
         "newData.child('lat').isNumber()",
         "newData.child('lat').val() >= -90",
         "newData.child('lat').val() <= 90",
@@ -535,8 +539,8 @@ def validate_fcm_and_firebase_policy() -> None:
     if rtdb["users"]["$userId"].get("userType") != "visually_impaired | elderly | general | unknown":
         raise AssertionError("userType enum mismatch")
     rules_json = load_json("infrastructure/firebase/database.rules.json")
-    user_location_rule = rules_json["rules"]["users"]["$uid"]["currentLocation"].get(".validate", "")
-    driver_location_rule = rules_json["rules"]["drivers"]["$driverId"]["currentLocation"].get(".validate", "")
+    user_location_rule = rules_json["rules"]["users"]["$uid"]["currentLocation"]
+    driver_location_rule = rules_json["rules"]["drivers"]["$driverId"]["currentLocation"]
     _assert_strict_current_location_rule(user_location_rule, "users/{uid}")
     _assert_strict_current_location_rule(driver_location_rule, "drivers/{driverId}")
     ride_rules = rules_json["rules"].get("rideRequests", {})
@@ -1084,11 +1088,11 @@ def validate_section20_final_patch() -> None:
 
     rules = load_json("infrastructure/firebase/database.rules.json")
     _assert_strict_current_location_rule(
-        rules["rules"]["users"]["$uid"]["currentLocation"].get(".validate", ""),
+        rules["rules"]["users"]["$uid"]["currentLocation"],
         "users/{uid}",
     )
     _assert_strict_current_location_rule(
-        rules["rules"]["drivers"]["$driverId"]["currentLocation"].get(".validate", ""),
+        rules["rules"]["drivers"]["$driverId"]["currentLocation"],
         "drivers/{driverId}",
     )
 
