@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'pages/agent_name_setup_page.dart';
 import 'pages/data_mode_selection_page.dart';
 import 'pages/home_page.dart';
@@ -6,7 +7,9 @@ import 'pages/v3_guidance_page.dart';
 import 'services/agent_name_store.dart';
 
 class MobiApp extends StatefulWidget {
-  const MobiApp({super.key});
+  const MobiApp({super.key, this.firebaseConfigured = false});
+
+  final bool firebaseConfigured;
 
   @override
   State<MobiApp> createState() => _MobiAppState();
@@ -68,9 +71,7 @@ class _MobiAppState extends State<MobiApp> {
 
     Widget home;
     if (_isLoadingAgentName) {
-      home = const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      home = const Scaffold(body: Center(child: CircularProgressIndicator()));
     } else if (dataMode == null) {
       home = DataModeSelectionPage(onModeSelected: _onModeSelected);
     } else if (agentName == null) {
@@ -93,12 +94,20 @@ class _MobiAppState extends State<MobiApp> {
     return MaterialApp(
       title: 'MOBI Passenger App',
       theme: ThemeData(useMaterial3: true),
-      home: home,
+      home: AuthGate(
+        configurationReady: widget.firebaseConfigured,
+        appLabel: 'MOBI 승객 앱',
+        builder: (context, account) => home,
+      ),
       routes: <String, WidgetBuilder>{
-        '/v3-guidance': (_) => V3GuidancePage(
-              agentName: agentName ?? '모비',
-              onReturnToModeSelection: _resetToModeSelection,
-              dataMode: dataMode ?? 'mock',
+        '/v3-guidance': (_) => AuthGate(
+              configurationReady: widget.firebaseConfigured,
+              appLabel: 'MOBI 승객 앱',
+              builder: (context, account) => V3GuidancePage(
+                agentName: agentName ?? '모비',
+                onReturnToModeSelection: _resetToModeSelection,
+                dataMode: dataMode ?? 'mock',
+              ),
             ),
       },
     );

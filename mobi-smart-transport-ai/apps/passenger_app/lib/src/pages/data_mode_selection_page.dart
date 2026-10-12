@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/api_base_url.dart';
 
@@ -20,21 +20,25 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
   bool _isSwitching = false;
 
   // 백엔드에 데이터 모드 전환 요청을 보내는 메서드
- Future<void> _selectMode(String mode) async {
-  if (_isSwitching) return;
+  Future<void> _selectMode(String mode) async {
+    if (_isSwitching) return;
 
-  if (mode == 'mock') {
-    widget.onModeSelected(mode);
-    return;
-  }
-  setState(() => _isSwitching = true);
+    if (mode == 'mock') {
+      widget.onModeSelected(mode);
+      return;
+    }
+    setState(() => _isSwitching = true);
 
     try {
-      final response = await http.post(
-        Uri.parse('$_apiBaseUrl/config/data-mode'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'mode': mode}),
-      ).timeout(const Duration(seconds: 5));
+      final response = await AuthenticatedApiClient(
+        onUnauthorized: FirebaseAuthSession.instance.signOut,
+      )
+          .post(
+            Uri.parse('$_apiBaseUrl/config/data-mode'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'mode': mode}),
+          )
+          .timeout(const Duration(seconds: 5));
 
       if (!mounted) return;
 
@@ -47,9 +51,9 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('백엔드 연결 실패: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('백엔드 연결 실패: $e')));
     } finally {
       if (mounted) setState(() => _isSwitching = false);
     }
@@ -67,14 +71,18 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // 앱 로고 아이콘
-                Icon(Icons.directions_bus, size: 64, color: colorScheme.primary),
+                Icon(
+                  Icons.directions_bus,
+                  size: 64,
+                  color: colorScheme.primary,
+                ),
                 const SizedBox(height: 16),
                 // 앱 제목
                 Text(
                   'MOBI 스마트 교통 시스템',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
@@ -82,15 +90,16 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                 Text(
                   '데모 테스트 모드를 선택해주세요',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
                 ),
                 const SizedBox(height: 48),
                 // Mock 데이터 모드 카드
                 _ModeCard(
                   icon: Icons.science_outlined,
                   title: 'Mock 데이터 테스트',
-                  description: '미리 준비된 시연용 데이터로 테스트합니다.\n버스 도착 정보가 고정된 mock 데이터로 제공됩니다.',
+                  description:
+                      '미리 준비된 시연용 데이터로 테스트합니다.\n버스 도착 정보가 고정된 mock 데이터로 제공됩니다.',
                   color: colorScheme.tertiary,
                   isBusy: _isSwitching,
                   onTap: () => _selectMode('mock'),
@@ -171,16 +180,19 @@ class _ModeCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         description,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withValues(alpha: 0.6),
+                            ),
                       ),
                     ],
                   ),

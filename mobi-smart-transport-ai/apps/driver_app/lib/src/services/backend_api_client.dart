@@ -2,17 +2,23 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 class BackendApiClient {
-  const BackendApiClient({
+  BackendApiClient({
     required this.baseUrl,
     this.useMockData = true,
     this.timeout = const Duration(seconds: 5),
-  });
+    AuthenticatedApiClient? authClient,
+  }) : _authClient = authClient ??
+            AuthenticatedApiClient(
+              onUnauthorized: FirebaseAuthSession.instance.signOut,
+            );
 
   final String baseUrl;
   final bool useMockData;
   final Duration timeout;
+  final AuthenticatedApiClient _authClient;
 
   // V2 driver app refreshes ride requests through explicit HTTP polling.
   // TODO(윤현섭): FCM 수신 핸들러 연동은 Firebase Messaging setup 확정 후
@@ -74,7 +80,7 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http
+      final response = await _authClient
           .get(_buildUri('/drivers/$driverId/ride-requests'))
           .timeout(timeout);
 
@@ -138,9 +144,8 @@ class BackendApiClient {
             return DriverRideRequestItem(
               requestId: requestId,
               requestLabel: title,
-              statusLabel: status == null || status.isEmpty
-                  ? '상태 확인 필요'
-                  : status,
+              statusLabel:
+                  status == null || status.isEmpty ? '상태 확인 필요' : status,
               description: details.isEmpty
                   ? '탑승 요청 세부 정보는 응답 계약 확정 후 표시합니다.'
                   : details.join(', '),
@@ -194,7 +199,7 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http
+      final response = await _authClient
           .patch(
             _buildUri('/ride-requests/$requestId/status'),
             headers: const {'Content-Type': 'application/json'},

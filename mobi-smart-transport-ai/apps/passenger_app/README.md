@@ -4,6 +4,26 @@
 
 ## Web demo 실행 방법
 
+> 현재 인증 연동 기준: 이 문서의 아래쪽에 남은 Firebase 데모 초기화 안내는 이전 무인증 데모 절차다. 새 Firebase 프로젝트로 이전 중인 현재 실행에는 적용하지 않는다. 보호 API는 로그인 후 ID token으로 호출하며, Firebase 설정이 없으면 앱은 설정 안내 화면에서 멈춘다.
+
+새 Firebase 프로젝트에서 Email/Password 로그인을 활성화하고 Passenger Web 앱과 Driver Web 앱을 각각 등록한다. 사전 등록 계정만 허용하며 역할 선택이나 계정 생성 UI는 제공하지 않는다. 각 앱을 실행할 때 Console의 공개 Web 설정값을 다음 Dart define으로 전달한다.
+
+```powershell
+flutter run -d chrome `
+  --dart-define=MOBI_API_BASE_URL=http://127.0.0.1:8000 `
+  --dart-define=MOBI_FIREBASE_API_KEY=<web-api-key> `
+  --dart-define=MOBI_FIREBASE_APP_ID=<this-web-app-id> `
+  --dart-define=MOBI_FIREBASE_MESSAGING_SENDER_ID=<sender-id> `
+  --dart-define=MOBI_FIREBASE_PROJECT_ID=<new-project-id> `
+  --dart-define=MOBI_FIREBASE_AUTH_DOMAIN=<new-project-id>.firebaseapp.com
+```
+
+Passenger와 Driver는 같은 project ID를 쓰되 각각 자기 Web app의 `APP_ID` 값을 사용한다. 로그인 계정에는 서버 측 `mobi_role` claim이 사전 등록되어야 하며, 기사에는 별도의 실제 `mobi_driver_id` mapping도 필요하다. UID와 기사 ID는 같다고 가정하지 않는다. Web API key는 공개 클라이언트 설정이고, Admin service account나 관리자 토큰은 앱에 넣지 않는다.
+
+ID token은 보호 HTTP 요청에 Bearer 헤더로 전송하며, 401이면 한 번 강제 갱신 후 재시도한다. 재시도 후에도 401이면 로그아웃된다. 403은 권한 거부, 503은 인증 서비스 장애다. 브라우저 WebSocket은 현재 인증 헤더를 설정할 수 없어 보호 스트리밍을 사용할 수 없고, 토큰을 URL로 보내는 우회는 하지 않는다. `/guidance/event`, `/firebase/initialize`, BLE ingest 및 mock mutation은 운영자 전용이므로 passenger/driver 앱에서 관리자 권한으로 호출하지 않는다.
+
+실제 통합에는 백엔드의 `FIREBASE_PROJECT_ID`도 새 프로젝트 ID와 일치해야 하며, 그 프로젝트의 Admin SDK credential을 서버 환경에 따로 설정해야 한다. GCP VM 부재는 Firebase 프로젝트 생성과 Web 로그인 개발을 막지 않지만 배포 백엔드가 없으면 보호 API를 end-to-end로 확인할 수 없다.
+
 iPhone 빌드가 병목이므로 우선 Flutter Web 으로 데모를 확인한다. 데모 데이터 쓰기는
 Flutter 클라이언트가 아니라 FastAPI 백엔드의 Firebase Admin SDK 가 수행한다.
 
@@ -24,15 +44,7 @@ curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/firebase/status
 ```
 
-### 3. Firebase 데모 초기화 (백엔드 Admin SDK)
-
-```bash
-curl -X POST http://127.0.0.1:8000/firebase/initialize \
-  -H "Content-Type: application/json" \
-  -d '{"reset": false}'
-```
-
-### 4. Flutter Web 실행
+### 3. Flutter Web 실행
 
 ```bash
 cd apps/passenger_app
@@ -40,30 +52,21 @@ flutter pub get
 flutter run -d chrome \
   --web-hostname localhost \
   --web-port 5173 \
-  --dart-define MOBI_API_BASE_URL=http://127.0.0.1:8000
+  --dart-define=MOBI_API_BASE_URL=http://127.0.0.1:8000 \
+  --dart-define=MOBI_FIREBASE_API_KEY=<web-api-key> \
+  --dart-define=MOBI_FIREBASE_APP_ID=<this-web-app-id> \
+  --dart-define=MOBI_FIREBASE_MESSAGING_SENDER_ID=<sender-id> \
+  --dart-define=MOBI_FIREBASE_PROJECT_ID=<new-project-id> \
+  --dart-define=MOBI_FIREBASE_AUTH_DOMAIN=<new-project-id>.firebaseapp.com
 ```
-
-### 5. 앱에서 확인
-
-- 홈 화면의 **Firebase 데모 DB 초기화** 버튼을 누른다(백엔드 카드 바로 아래의 "Firebase 데모 DB" 카드).
-  - 실제 Firebase 연결이면 `Firebase 데모 DB 초기화 완료` SnackBar 와 seed 경로 Dialog 가 표시된다.
-  - 서비스 계정이 없으면 `서비스 계정이 없어 mock DB에 초기화됨` 으로 표시된다.
-  - `기존 데모 데이터 덮어쓰기(reset)` 스위치를 켜면 demo 경로만 삭제 후 재 seed 한다.
-- `V3 버스 탑승 보조 열기` 로 V3 화면을 연다.
-- mock geofence/beacon 버튼으로 시나리오를 확인한다.
 
 ### 참고 / 주의
 
-- 서비스 계정 json 이 없으면 백엔드는 자동으로 mock DB 로 동작한다.
-- 실제 Firebase RTDB 에 쓰려면 `backend/api/secrets/firebase-service-account.json` 이 필요하다.
-- `FIREBASE_DATABASE_URL` 이 실제 콘솔 URL 과 다르면 루트 `.env` 를 수정한다.
-  연결 실패 시 `/firebase/status` 의 `probe.message` 에 "Realtime Database URL 확인 필요" 안내가 표시된다.
-- 데모 개발버전에서는 `.env` 를 로컬에 포함하지만 **공개 저장소에는 올리지 않는다**(.gitignore 처리됨).
-- 클라이언트 측 FlutterFire 구성은 `lib/firebase_options.dart`(web) 가 생성되어 있으며,
-  `lib/src/firebase/firebase_bootstrap.dart` 에서 `Firebase.initializeApp` 을 안전하게 호출한다.
-  이 파일이 없는 환경에서도 데모는 백엔드 endpoint 만으로 동작한다.
-  iOS 용 구성이 필요하면 `flutterfire configure --platforms=ios` 를 추가 실행한다
-  (현재 환경에서는 ruby `xcodeproj` gem 부재로 iOS 등록 단계가 실패하여 web 만 구성됨).
+- Firebase Console에서 Email/Password provider를 사용 설정하고, 관리자 사전 등록 계정으로만 로그인한다.
+- Passenger와 Driver Web 앱은 별도 등록 후 각각의 공개 Web 앱 설정을 사용한다. Admin service account나 관리자 토큰을 Flutter 앱에 넣지 않는다.
+- 백엔드 보호 API는 새 Firebase 프로젝트에 대한 서버 측 Firebase Admin credential과 `FIREBASE_PROJECT_ID` 설정 전까지 사용할 수 없다.
+- GCP VM이 없더라도 Firebase 인증 개발은 가능하지만, 배포 백엔드가 없으면 보호 API의 end-to-end 검증은 불가능하다.
+- 운영자 전용 Firebase 초기화 버튼은 passenger app에서 제거됐다. WebSocket 인증은 미구현 상태이며 token-in-query 우회는 하지 않는다.
 
 
 ## 목적
@@ -144,3 +147,15 @@ grounding, 음성 응답은 `Sulafat` voice를 우선 사용한다.
 경로 계산 중에는 화면에 `생각 중...` 오버레이를 표시한다. 결과 화면은 Google Maps
 위치 증빙, 실제 청주시 공공 API 정류소 증빙, 별도 도착정보 출처 카드를 구분해서
 표시한다. 도착정보가 mock이면 `시연 데이터 · 실제 공공 API 아님`으로 표시한다.
+
+
+### 탑승 요청 생성 재시도
+
+실제 API 요청에는 Idempotency-Key를 보낸다. 현재 화면에서 첫 클릭 시 무작위 키를 만들고,
+기존 shared_preferences에 UID별 미확인 요청 본문/키만 보관한다(토큰/비밀번호 없음).
+응답으로 requestId가 확인되기 전에는 같은 키를 재사용한다. 실패 후 다른 노선을 선택하면
+미확인 요청 안내를 표시하며 원래 선택으로 재시도해야 한다. 성공 확인 후에는 다음 명시적
+클릭을 새 행동으로 취급해 새 키를 만든다. 취소된 요청의 같은 키 응답은 취소 상태 그대로다.
+브라우저 저장소 삭제/시크릿 세션/다른 기기/동시 탭까지 같은 사용자 행동을 식별하지는 못한다.
+공용 PC에서는 저장된 UID/요청 정보가 남을 수 있다. 자동 만료로 새 키를 발급하지 않는다.
+서버409 충돌에서 자동으로 새 키로 재시도하지 않는다. 무키 외부 클라이언트는 이전 동작이다.

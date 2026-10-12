@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 class RideRequestDraft {
   const RideRequestDraft({
@@ -61,15 +62,20 @@ class RideRequestStatusResult {
 }
 
 class BackendApiClient {
-  const BackendApiClient({
+  BackendApiClient({
     required this.baseUrl,
     this.useMockData = true,
     this.timeout = const Duration(seconds: 5),
-  });
+    AuthenticatedApiClient? authClient,
+  }) : _authClient = authClient ??
+            AuthenticatedApiClient(
+              onUnauthorized: FirebaseAuthSession.instance.signOut,
+            );
 
   final String baseUrl;
   final bool useMockData;
   final Duration timeout;
+  final AuthenticatedApiClient _authClient;
 
   Future<BackendHealthStatus> fetchHealthStatus() async {
     if (useMockData) {
@@ -186,6 +192,7 @@ class BackendApiClient {
 
       String? selectedRouteId;
       String? selectedBusNo;
+      final options = <BusArrivalOption>[];
 
       final arrivalSummaries = arrivals
           .whereType<Map<String, dynamic>>()
@@ -193,6 +200,13 @@ class BackendApiClient {
             final busNo = arrival['busNo']?.toString();
             final routeId = arrival['routeId']?.toString();
             final congestion = arrival['congestion']?.toString();
+            if (routeId != null &&
+                routeId.isNotEmpty &&
+                busNo != null &&
+                busNo.isNotEmpty &&
+                !options.any((item) => item.routeId == routeId)) {
+              options.add(BusArrivalOption(routeId: routeId, busNo: busNo));
+            }
 
             if (busNo == null || busNo.isEmpty) {
               return null;
@@ -235,6 +249,7 @@ class BackendApiClient {
         stopId: stopId,
         selectedRouteId: selectedRouteId,
         selectedBusNo: selectedBusNo,
+        options: options,
         statusLabel: '${arrivalSummaries.first} 도착 정보',
         description:
             '버스 도착 정보 ${arrivalSummaries.join(', ')}를 수신했습니다. 도착 시간, 남은 정류장, 저상버스 여부는 계약 확정 후 확장합니다.',
@@ -259,6 +274,7 @@ class BackendApiClient {
 
   Future<RideRequestCreateResult> createRideRequest({
     required RideRequestDraft draft,
+    required String idempotencyKey,
   }) async {
     if (useMockData) {
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -274,12 +290,10 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http
+      final response = await _authClient
           .post(
             _buildUri('/ride-requests'),
-            headers: const {
-              'Content-Type': 'application/json',
-            },
+            headers: {'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey},
             body: jsonEncode(draft.toJson()),
           )
           .timeout(timeout);
@@ -288,7 +302,9 @@ class BackendApiClient {
         return RideRequestCreateResult(
           isSuccess: false,
           statusLabel: '요청 실패',
-          description: '탑승 요청 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+          description: response.statusCode == 409
+              ? '요청 키와 내용이 일치하지 않습니다. 기존 요청을 확인해 주세요.'
+              : '탑승 요청 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
           semanticHint: '탑승 요청 생성 API 응답 실패 상태입니다.',
         );
       }
@@ -306,14 +322,18 @@ class BackendApiClient {
 
       final status = decodedBody['status']?.toString();
       final requestId = decodedBody['requestId']?.toString();
+      if (requestId == null || requestId.isEmpty) {
+        throw const FormatException('Missing requestId');
+      }
+      final assignedDriverId = decodedBody['targetDriverId']?.toString();
 
       return RideRequestCreateResult(
         isSuccess: true,
         statusLabel:
             status == null || status.isEmpty ? '요청 생성 완료' : '요청 상태 $status',
-        description: requestId == null || requestId.isEmpty
-            ? '탑승 요청이 생성되었습니다. 요청 식별자는 응답 계약 확정 후 표시합니다.'
-            : '탑승 요청이 생성되었습니다. 요청 식별자: $requestId',
+        description: assignedDriverId == null || assignedDriverId.isEmpty
+                ? '탑승 요청 $requestId 이 생성됐지만 담당 기사에 배정되지 않았습니다. 서버 배정 기능이 필요합니다.'
+                : '탑승 요청이 생성되었습니다. 요청 식별자: $requestId',
         semanticHint: '탑승 요청 생성 성공 상태입니다.',
         requestId: requestId,
       );
@@ -349,7 +369,7 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http
+      final response = await _authClient
           .get(_buildUri('/ride-requests/$requestId'))
           .timeout(timeout);
 
@@ -407,10 +427,24 @@ class BackendApiClient {
     }
   }
 
+  Future<RideRequestStatusResult> cancelRideRequest(String requestId) async {
+    final response = await _authClient
+        .patch(
+          _buildUri('/ride-requests/$requestId/status'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'status': 'CANCELLED'}),
+        )
+        .timeout(timeout);
+    if (response.statusCode != 200) {
+      throw StateError('탑승 요청을 취소하지 못했습니다 (HTTP ${response.statusCode}).');
+    }
+    return fetchRideRequestStatus(requestId: requestId);
+  }
+
   Future<FirebaseStatusResult> fetchFirebaseStatus() async {
     try {
       final response =
-          await http.get(_buildUri('/firebase/status')).timeout(timeout);
+          await _authClient.get(_buildUri('/firebase/status')).timeout(timeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return FirebaseStatusResult.failure(
@@ -435,7 +469,7 @@ class BackendApiClient {
     bool reset = false,
   }) async {
     try {
-      final response = await http
+      final response = await _authClient
           .post(
             _buildUri('/firebase/initialize'),
             headers: const {'Content-Type': 'application/json'},
@@ -451,20 +485,22 @@ class BackendApiClient {
 
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) {
-        return FirebaseInitializeResult.failure('Firebase 초기화 응답 형식이 예상과 다릅니다.');
+        return FirebaseInitializeResult.failure(
+          'Firebase 초기화 응답 형식이 예상과 다릅니다.',
+        );
       }
 
       return FirebaseInitializeResult.fromJson(decoded);
     } on TimeoutException {
-      return FirebaseInitializeResult.failure('Firebase 초기화 API 연결 시간이 초과되었습니다.');
+      return FirebaseInitializeResult.failure(
+        'Firebase 초기화 API 연결 시간이 초과되었습니다.',
+      );
     } catch (_) {
       return FirebaseInitializeResult.failure('Firebase 초기화 API에 연결할 수 없습니다.');
     }
   }
 
-  BusArrivalSummary _mockBusArrivalSummary({
-    required String stopId,
-  }) {
+  BusArrivalSummary _mockBusArrivalSummary({required String stopId}) {
     return BusArrivalSummary(
       stopId: stopId,
       selectedRouteId: 'route502',
@@ -486,13 +522,16 @@ class BackendApiClient {
 }
 
 class BackendHealthStatus {
-  const BackendHealthStatus({
-    required this.isAvailable,
-    required this.message,
-  });
+  const BackendHealthStatus({required this.isAvailable, required this.message});
 
   final bool isAvailable;
   final String message;
+}
+
+class BusArrivalOption {
+  const BusArrivalOption({required this.routeId, required this.busNo});
+  final String routeId;
+  final String busNo;
 }
 
 class BusArrivalSummary {
@@ -503,6 +542,7 @@ class BusArrivalSummary {
     required this.semanticHint,
     this.selectedRouteId,
     this.selectedBusNo,
+    this.options = const [],
   });
 
   final String stopId;
@@ -511,6 +551,7 @@ class BusArrivalSummary {
   final String semanticHint;
   final String? selectedRouteId;
   final String? selectedBusNo;
+  final List<BusArrivalOption> options;
 }
 
 class PassengerHomeSnapshot {

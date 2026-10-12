@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../models/v3_guidance_models.dart';
 import 'converse_live.dart';
@@ -28,17 +29,23 @@ class V3HealthStatus {
 }
 
 class V3AgentApiClient {
-  const V3AgentApiClient({
+  V3AgentApiClient({
     required this.baseUrl,
     this.timeout = const Duration(seconds: 60),
     http.Client? httpClient,
-  }) : _httpClient = httpClient;
+    AuthenticatedApiClient? authClient,
+  })  : _httpClient = httpClient,
+        _authClient = authClient ??
+            AuthenticatedApiClient(
+              onUnauthorized: FirebaseAuthSession.instance.signOut,
+            );
 
   static const Duration _converseTimeout = Duration(seconds: 45);
 
   final String baseUrl;
   final Duration timeout;
   final http.Client? _httpClient;
+  final AuthenticatedApiClient _authClient;
 
   Future<V3HealthStatus> fetchHealth() async {
     try {
@@ -50,19 +57,19 @@ class V3AgentApiClient {
       );
     } on TimeoutException {
       return const V3HealthStatus(
-          isAvailable: false, message: '백엔드 연결 시간이 초과됐습니다.');
+        isAvailable: false,
+        message: '백엔드 연결 시간이 초과됐습니다.',
+      );
     } catch (_) {
       return const V3HealthStatus(
-          isAvailable: false, message: '백엔드에 연결할 수 없습니다.');
+        isAvailable: false,
+        message: '백엔드에 연결할 수 없습니다.',
+      );
     }
   }
 
-  Future<V3GuidanceState> createSession({
-    required String sessionId,
-    required String wakeWord,
-  }) async {
+  Future<V3GuidanceState> createSession({required String wakeWord}) async {
     final json = await _postJson('/guidance/session', <String, Object?>{
-      'sessionId': sessionId,
       'wakeWord': wakeWord,
     });
     return V3GuidanceState.fromJson(json);
@@ -152,7 +159,7 @@ class V3AgentApiClient {
     String? model,
   }) async {
     try {
-      final response = await _client
+      final response = await _authClient
           .post(
             _buildUri('/agent/tts'),
             headers: const <String, String>{'Content-Type': 'application/json'},
@@ -172,6 +179,8 @@ class V3AgentApiClient {
       return response.bodyBytes;
     } on TimeoutException {
       throw const V3ApiException('Gemini TTS 연결 시간이 초과됐습니다.');
+    } on AuthenticatedApiException catch (error) {
+      throw V3ApiException(error.userMessage, statusCode: error.statusCode);
     } on V3ApiException {
       rethrow;
     } catch (_) {
@@ -186,9 +195,7 @@ class V3AgentApiClient {
     String? mode,
     String? nluProvider,
   }) async {
-    final query = <String, String>{
-      'destination': destination,
-    };
+    final query = <String, String>{'destination': destination};
     if (originLat != null && originLng != null) {
       query['originLat'] = originLat.toString();
       query['originLng'] = originLng.toString();
@@ -209,9 +216,7 @@ class V3AgentApiClient {
     double? originLng,
     String? mode,
   }) async {
-    final query = <String, String>{
-      'q': q,
-    };
+    final query = <String, String>{'q': q};
     if (originLat != null && originLng != null) {
       query['originLat'] = originLat.toString();
       query['originLng'] = originLng.toString();
@@ -369,12 +374,14 @@ class V3AgentApiClient {
     Map<String, String> queryParameters,
   ) async {
     try {
-      final response = await _client
+      final response = await _authClient
           .get(_buildUri(path, queryParameters: queryParameters))
           .timeout(timeout);
       return _decodeResponse(response);
     } on TimeoutException {
       throw const V3ApiException('API 연결 시간이 초과됐습니다.');
+    } on AuthenticatedApiException catch (error) {
+      throw V3ApiException(error.userMessage, statusCode: error.statusCode);
     } on V3ApiException {
       rethrow;
     } catch (_) {
@@ -388,7 +395,7 @@ class V3AgentApiClient {
     Duration? customTimeout,
   }) async {
     try {
-      final response = await _client
+      final response = await _authClient
           .post(
             _buildUri(path),
             headers: const <String, String>{'Content-Type': 'application/json'},
@@ -398,6 +405,8 @@ class V3AgentApiClient {
       return _decodeResponse(response);
     } on TimeoutException {
       throw const V3ApiException('API 연결 시간이 초과됐습니다.');
+    } on AuthenticatedApiException catch (error) {
+      throw V3ApiException(error.userMessage, statusCode: error.statusCode);
     } on V3ApiException {
       rethrow;
     } catch (_) {
