@@ -292,3 +292,10 @@ def test_certificate_fetch_outage_is_503(client, monkeypatch):
     response = client.get('/firebase/status', headers=headers('admin'))
     assert response.status_code == 503
     assert 'transport details' not in response.text
+
+
+@pytest.mark.parametrize("expiry", [None, False, 0, -1, float("nan"), float("inf"), "9999999999"])
+def test_expiry_required_even_when_sdk_accepts_emulator_token(client, monkeypatch, expiry):
+    monkeypatch.setattr(security.auth, "verify_id_token", lambda *a, **k: {"uid": "alice", "exp": expiry})
+    response = client.get("/guidance/state", headers={"Authorization": "Bearer alice"})
+    assert response.status_code == 401

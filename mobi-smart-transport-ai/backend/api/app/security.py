@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 from contextvars import ContextVar
@@ -135,6 +136,12 @@ def verify_user(token: str) -> Principal:
     app = firebase_auth_app()
     try:
         claims = auth.verify_id_token(token, app=app, check_revoked=True, clock_skew_seconds=0)
+        # Emulator verification skips cryptographic JWT time validation. Preserve
+        # the same expiration boundary as production without trusting missing exp.
+        expires = claims.get("exp")
+        if (isinstance(expires, bool) or not isinstance(expires, (int, float))
+                or not math.isfinite(expires) or expires <= time.time()):
+            raise auth_error(401, "Invalid or expired authentication")
         uid = claims["uid"]
         # Current server-managed claims, not potentially stale role claims in token.
         user = auth.get_user(uid, app=app)

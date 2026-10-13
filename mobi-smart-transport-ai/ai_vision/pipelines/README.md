@@ -592,3 +592,7 @@ python ai_vision/pipelines/mock_inference_pipeline.py
 - 파이프라인 책임자: 김도성 (담당 영역)
 - 본 placeholder는 2학기 시작 시점에 정식 모듈로 대체된다.
 
+
+## Local v2 Producer Client
+
+`vision_producer_client.py` provides immutable DetectionResult envelopes, local Auth Emulator token renewal, bounded same-body retries and per-camera sequential sending. Legacy SafetyInterpretation transport is retained. See `../../docs/rw/VISION_PRODUCER_CLIENT.md` for restart and failure policies. No Streaming or Live passenger delivery is enabled.

@@ -515,3 +515,8 @@ docs/rw/VISION_PRODUCER_LOCAL.md
 packages/shared_contracts/api/vision_v2.state.response.schema.json
 backend/api/app/services/vision_event_ledger.py
 backend/api/tests/test_vision_event_ledger.py
+ai_vision/pipelines/vision_producer_client.py
+ai_vision/pipelines/tests/test_vision_producer_client.py
+scripts/send_vision_v2_fixture.py
+scripts/smoke_vision_producer_client.py
+docs/rw/VISION_PRODUCER_CLIENT.md
