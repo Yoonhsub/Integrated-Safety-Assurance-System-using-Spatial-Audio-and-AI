@@ -604,6 +604,7 @@ def _run_converse(
         message = "네, 말씀하세요."
 
     elif intent == AgentIntent.END_CONVERSATION:
+        v3_guidance_store.close_vision(session.session_id)
         # 종료 의사는 Gemini가 자연어로 판별한다(키워드 매칭 아님).
         message = "지금 수행할 작업은 없는 것 같습니다. 언제든 필요하면 다시 불러 주세요."
 

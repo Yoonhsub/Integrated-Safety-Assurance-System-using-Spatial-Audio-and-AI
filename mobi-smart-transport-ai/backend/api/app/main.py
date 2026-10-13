@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import (
     ai_vision_events,
+    vision_v2,
     bus_info_gateway,
     driver_ride_requests,
     firebase_admin,
@@ -132,6 +133,7 @@ app.include_router(driver_ride_requests.router, prefix="/drivers", tags=["driver
 app.include_router(driver_ride_requests.alias_router, prefix="/driver", tags=["driver-ride-requests"])
 app.include_router(safety_events.router, prefix="/safety-events", tags=["safety-events"])
 app.include_router(ai_vision_events.router, prefix="/ai-vision", tags=["ai-vision"])
+app.include_router(vision_v2.router, prefix="/ai-vision/v2", tags=["vision-v2-local"])
 app.include_router(firebase_admin.router, prefix="/firebase", tags=["firebase-admin"])
 
 # V3 voice-first bus boarding assistant routes.

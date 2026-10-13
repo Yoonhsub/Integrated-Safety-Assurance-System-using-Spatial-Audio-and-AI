@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from uuid import uuid4
 from dataclasses import dataclass, field
 from threading import RLock
 from datetime import datetime
@@ -13,6 +15,8 @@ from app.schemas.v3 import BeaconDecision, GuidanceSessionState, GuidanceState, 
 class V3SessionRecord:
     session_id: str
     owner_uid: str | None = None
+    vision_generation: str = field(default_factory=lambda: str(uuid4()))
+    vision_closed: bool = False
     wake_word: str = "자비스"
     state: GuidanceState = GuidanceState.IDLE
     selected_destination: str | None = None
@@ -155,8 +159,28 @@ class V3GuidanceStore:
             self._sessions[session_id] = record
             return record
 
+    @contextmanager
+    def vision_scope(self, session_id: str):
+        """Internal producer/admin lookup without creating or transferring sessions."""
+        require_role("vision_producer", "admin")
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is None or record.owner_uid is None or record.vision_closed:
+                raise auth_error(403, "Vision session is not active")
+            if record.state == GuidanceState.BOARDED:
+                raise auth_error(403, "Boarding session has ended")
+            yield record
+
+    def close_vision(self, session_id: str) -> None:
+        """Invalidate bindings on explicit session end, without altering guidance."""
+        with self._lock:
+            record = self.get(session_id)
+            record.vision_closed = True
+            record.vision_generation = str(uuid4())
+
     def clear(self) -> None:
-        self._sessions.clear()
+        with self._lock:
+            self._sessions.clear()
 
 
 v3_guidance_store = V3GuidanceStore()

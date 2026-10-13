@@ -76,6 +76,7 @@ def apply_event(payload: GuidanceEventRequest) -> GuidanceSessionState:
     elif event == "BOARDED":
         if session.state != GuidanceState.BOARDING_CONFIRMATION:
             raise _bad_transition(event, session.state)
+        v3_guidance_store.close_vision(session.session_id)
         session.state = GuidanceState.BOARDED
     elif event == "MISSED_BUS":
         if session.state not in {GuidanceState.BOARDING_CONFIRMATION, GuidanceState.WAITING_FOR_BUS, GuidanceState.REPLAN_NEXT_BUS}:

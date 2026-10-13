@@ -503,3 +503,15 @@ scripts/smoke_ride_concurrency.py
 scripts/smoke_ride_idempotency.py
 apps/passenger_app/test/ride_cancellation_test.dart
 apps/passenger_app/test/ride_idempotency_test.dart
+backend/api/app/schemas/vision_v2.py
+backend/api/app/services/vision_binding_service.py
+backend/api/app/api/routes/vision_v2.py
+backend/api/tests/test_vision_v2.py
+packages/shared_contracts/api/vision_v2.request.schema.json
+packages/shared_contracts/api/vision_v2.response.schema.json
+scripts/provision_local_vision_account.py
+scripts/smoke_vision_producer.py
+docs/rw/VISION_PRODUCER_LOCAL.md
+packages/shared_contracts/api/vision_v2.state.response.schema.json
+backend/api/app/services/vision_event_ledger.py
+backend/api/tests/test_vision_event_ledger.py

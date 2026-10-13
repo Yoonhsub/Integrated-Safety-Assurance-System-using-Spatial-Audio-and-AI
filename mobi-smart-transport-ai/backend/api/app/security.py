@@ -32,6 +32,11 @@ PUBLIC = {
 }
 # Deliberate per-operation allowlist: newly added endpoints default to denied.
 POLICY = {
+    ("GET", "/ai-vision/v2/cameras/{cameraId}/state"): {"admin", "vision_producer"},
+    ("PUT", "/ai-vision/v2/cameras/{cameraId}"): {"admin"},
+    ("POST", "/ai-vision/v2/bindings"): {"admin"},
+    ("DELETE", "/ai-vision/v2/cameras/{cameraId}/bindings/{bindingId}"): {"admin"},
+    ("POST", "/ai-vision/v2/events"): {"vision_producer"},
     ("POST", "/ride-requests"): {"passenger", "admin"},
     ("GET", "/ride-requests/{requestId}"): {"passenger", "driver", "admin"},
     ("PATCH", "/ride-requests/{requestId}/status"): {"passenger", "driver", "admin"},
@@ -145,7 +150,7 @@ def verify_user(token: str) -> Principal:
     role_claims = user.custom_claims or {}
     role = role_claims.get("mobi_role")
     driver_id = role_claims.get("mobi_driver_id")
-    if not valid_key(uid) or not isinstance(role, str) or role not in {"passenger", "driver", "admin"}:
+    if not valid_key(uid) or not isinstance(role, str) or role not in {"passenger", "driver", "admin", "vision_producer"}:
         raise auth_error(403, "Account role is not provisioned")
     if role == "driver" and not valid_key(driver_id):
         raise auth_error(403, "Driver mapping is not provisioned")

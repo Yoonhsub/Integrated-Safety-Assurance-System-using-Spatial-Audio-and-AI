@@ -1,0 +1,134 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cameraId": {
+      "title": "Cameraid",
+      "type": "string"
+    },
+    "bindingStatus": {
+      "enum": [
+        "inactive",
+        "active",
+        "invalidated",
+        "expired"
+      ],
+      "title": "Bindingstatus",
+      "type": "string"
+    },
+    "connectionStatus": {
+      "enum": [
+        "closed",
+        "waiting",
+        "connected",
+        "lost",
+        "replay"
+      ],
+      "title": "Connectionstatus",
+      "type": "string"
+    },
+    "observationStatus": {
+      "enum": [
+        "unknown",
+        "observed",
+        "no_detection",
+        "unavailable",
+        "error",
+        "expired",
+        "ineligible"
+      ],
+      "title": "Observationstatus",
+      "type": "string"
+    },
+    "sourceType": {
+      "enum": [
+        "live",
+        "replay"
+      ],
+      "title": "Sourcetype",
+      "type": "string"
+    },
+    "cameraEpoch": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cameraepoch"
+    },
+    "lastFrameIndex": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Lastframeindex"
+    },
+    "lastCapturedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Lastcapturedat"
+    },
+    "lastReceivedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Lastreceivedat"
+    },
+    "captureClock": {
+      "enum": [
+        "unknown",
+        "host_read",
+        "sensor"
+      ],
+      "title": "Captureclock",
+      "type": "string"
+    },
+    "freshnessVerified": {
+      "const": false,
+      "default": false,
+      "title": "Freshnessverified",
+      "type": "boolean"
+    },
+    "guidanceEligible": {
+      "const": false,
+      "default": false,
+      "title": "Guidanceeligible",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "cameraId",
+    "bindingStatus",
+    "connectionStatus",
+    "observationStatus",
+    "sourceType",
+    "cameraEpoch",
+    "lastFrameIndex",
+    "lastCapturedAt",
+    "lastReceivedAt",
+    "captureClock"
+  ],
+  "title": "VisionCameraState",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

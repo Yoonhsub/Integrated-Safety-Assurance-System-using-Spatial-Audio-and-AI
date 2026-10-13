@@ -1,0 +1,91 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "envelopeVersion": {
+      "const": "2.0.0",
+      "title": "Envelopeversion",
+      "type": "string"
+    },
+    "producerId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producerid",
+      "type": "string"
+    },
+    "cameraId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Cameraid",
+      "type": "string"
+    },
+    "sessionId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "bindingId": {
+      "format": "uuid",
+      "title": "Bindingid",
+      "type": "string"
+    },
+    "cameraEpoch": {
+      "format": "uuid",
+      "title": "Cameraepoch",
+      "type": "string"
+    },
+    "visionEventId": {
+      "format": "uuid",
+      "title": "Visioneventid",
+      "type": "string"
+    },
+    "sourceType": {
+      "enum": [
+        "live",
+        "replay"
+      ],
+      "title": "Sourcetype",
+      "type": "string"
+    },
+    "capturedAt": {
+      "format": "date-time",
+      "title": "Capturedat",
+      "type": "string"
+    },
+    "captureClock": {
+      "default": "unknown",
+      "enum": [
+        "unknown",
+        "host_read",
+        "sensor"
+      ],
+      "title": "Captureclock",
+      "type": "string"
+    },
+    "frameIndex": {
+      "minimum": 0,
+      "title": "Frameindex",
+      "type": "integer"
+    },
+    "detectionResult": {
+      "$ref": "vision_detection.response.schema.json"
+    }
+  },
+  "required": [
+    "envelopeVersion",
+    "producerId",
+    "cameraId",
+    "sessionId",
+    "bindingId",
+    "cameraEpoch",
+    "visionEventId",
+    "sourceType",
+    "capturedAt",
+    "frameIndex",
+    "detectionResult"
+  ],
+  "title": "VisionEnvelope",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Local-only envelope. Camera captureClock is a declaration, not verified sensor time. Server applies binding/order/time-window validation, never Live eligibility."
+}
