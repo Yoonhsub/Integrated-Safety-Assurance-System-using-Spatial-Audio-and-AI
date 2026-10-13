@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,17 @@ class YOLOVisionProvider:
             name=self.model_path.stem,
             identifier=str(self.model_path),
         )
+        self.last_timings: dict[str, float] = {}
+
+    def warm_up(self) -> float:
+        """Initialize prediction before source acquisition; no observation is emitted."""
+        started = time.perf_counter()
+        try:
+            import numpy as np
+            self._model.predict(source=np.zeros((640, 640, 3), dtype=np.uint8), verbose=False)
+        except Exception as exc:
+            raise ProviderConfigurationError("YOLO warm-up failed.") from exc
+        return time.perf_counter() - started
 
     def infer(self, request: VisionInferenceRequest) -> DetectionResult:
         """Infer from one image file and return a schema-compatible result."""
@@ -92,6 +104,8 @@ class YOLOVisionProvider:
                 f"YOLO provider does not support source {request.source.value!r}."
             )
 
+        self.last_timings = {}
+        started = time.perf_counter()
         try:
             predictions = self._model.predict(
                 source=inference_source,
@@ -99,7 +113,9 @@ class YOLOVisionProvider:
             )
         except Exception as exc:
             return self._error_result(request, "INFERENCE_FAILED", str(exc))
+        self.last_timings["predictionSeconds"] = time.perf_counter() - started
 
+        started = time.perf_counter()
         try:
             detections, image_size = self._convert_predictions(predictions)
         except Exception as exc:
@@ -108,6 +124,7 @@ class YOLOVisionProvider:
                 "RESULT_CONVERSION_FAILED",
                 str(exc),
             )
+        self.last_timings["conversionSeconds"] = time.perf_counter() - started
 
         return DetectionResult(
             schema_version=SCHEMA_VERSION,

@@ -251,7 +251,7 @@ Ultralytics에 전달하므로 frame마다 임시 이미지 파일을 만들지 
 공유 request contract의 import-time dependency로 노출하지 않는다.
 
 video EOF는 정상 종료다. webcam open/read 실패, malformed frame, backend 통신 실패는 오류로
-전달되며 자동 retry나 mock fallback은 없다. Ctrl+C는 source를 release하고 현재 통계를 출력한다.
+전달된다. Streaming CLI는 인증된 v2 Producer Client를 사용하며, 동일 불변 Envelope에만 제한적 재시도를 적용한다. Ctrl+C는 source를 release하고 현재 통계를 출력한다.
 GUI preview는 실행하지 않는다.
 
 `--frame-interval N`은 source frame index가 0부터 시작할 때 index가 N의 배수인 frame만 처리한다.
@@ -268,12 +268,9 @@ webcam 실행은 opt-in이다.
 python -B scripts/run_ai_vision_stream.py --help
 ```
 
-로컬 backend는 프로젝트 루트의 별도 PowerShell에서 실행한다.
-
-```powershell
-$env:PYTHONPATH = Join-Path $PWD "backend\api"
-& ".\backend\api\.venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
+로컬 Backend와 Emulator는 [로컬 Producer 설정](../../docs/rw/VISION_PRODUCER_LOCAL.md)을 따른다.
+이미 실행 중인 시연 서비스를 재사용하고, 별도 테스트 Backend는 8011 포트를 사용한다.
+일반 app.main 실행만으로 Emulator 전용 환경이 설정되지는 않는다.
 
 AI Vision 환경은 Ultralytics/OpenCV runtime을 설치한 `mobi-yolo` Python을 사용한다.
 
@@ -283,7 +280,9 @@ AI Vision 환경은 Ultralytics/OpenCV runtime을 설치한 `mobi-yolo` Python�
   --source video `
   --video "C:\mobi-ai\videos\bus_stop.mp4" `
   --model "C:\mobi-ai\models\yolo11n.pt" `
-  --backend-url "http://127.0.0.1:8000" `
+  --backend-url "http://127.0.0.1:8011" `
+  --binding "C:\mobi-ai\local\server-created-binding.json" `
+  --email "producer@example.test" `
   --frame-interval 2
 ```
 
@@ -294,7 +293,9 @@ webcam은 Ctrl+C로 종료하며, 짧은 검증은 `--max-frames 120`처럼 입�
   --source webcam `
   --camera 0 `
   --model "C:\mobi-ai\models\yolo11n.pt" `
-  --backend-url "http://127.0.0.1:8000" `
+  --backend-url "http://127.0.0.1:8011" `
+  --binding "C:\mobi-ai\local\server-created-binding.json" `
+  --email "producer@example.test" `
   --frame-interval 2 `
   --max-frames 120
 ```
@@ -302,6 +303,33 @@ webcam은 Ctrl+C로 종료하며, 짧은 검증은 `--max-frames 120`처럼 입�
 pretrained taxonomy mapping은 `bus`에 한정된다. depth, temporal risk reasoning, custom model,
 passenger app 및 spatial audio integration은 이 단계에 포함되지 않는다. 따라서 bus detection 후
 `no_event` 결과가 정상일 수 있으며, bus를 approaching_bus나 HIGH risk로 추론하지 않는다.
+
+### 인증된 v2 Streaming 실행 조건
+
+위 예제는 demo-mobi-local Auth/RTDB Emulator와 로컬 전용 Backend가 필요하다.
+관리자가 등록한 카메라와 서버가 생성한 활성 Binding JSON을 사용한다.
+영상 파일에는 replay Binding, 웹캠에는 live Binding을 각각 사용한다.
+로그인 비밀번호는 숨김 입력 또는 프로세스 한정 `MOBI_VISION_PASSWORD` 환경 변수로 전달한다.
+관리자 키나 토큰을 Producer Client에 넣지 않는다. 기존 단일 이미지 legacy endpoint는 admin 보호를 유지한다.
+Producer Client 준비는 [VISION_PRODUCER_CLIENT.md](../../docs/rw/VISION_PRODUCER_CLIENT.md)를 참조한다.
+
+모델 로딩과 검은 640x640 배열 Warm-up은 영상/카메라를 열기 전에 수행한다.
+Warm-up 실패는 실행 실패로 처리한다. Warm-up 결과는 관측 이벤트로 전송하지 않는다.
+Client의 기본 4초 만료 정책은 변경하지 않는다. 확실히 전송되지 않은 `EVENT_EXPIRED`만 폐기하고
+다음 frameIndex로 진행한다. 결과 불확실·권한 오류·순서 오류는 실행을 중단하고 source를 해제한다.
+이전 이벤트의 timestamp, ID 또는 DetectionResult를 바꿔 새로운 관측으로 재전송하지 않는다.
+
+OpenCV `capturedAt`은 host-read 시각이며, `captureClock=host_read`로 명시한다.
+영상 파일에서는 녹화 촬영 시각이 아닌 재생 읽기 시각이다. 원본 녹화 시각은 확인되지 않았다.
+웹캠도 센서 노출 시각이나 드라이버 버퍼 지연을 검증한 것은 아니다.
+성공 응답은 `accepted=true`, `stored=false`, `guidanceEligible=false`, `freshnessVerified=false`다.
+Vision 관찰로 목표 버스 식별 또는 승차 허용을 생성하지 않는다.
+
+`--report <새 JSON 경로> --max-frames N`을 함께 주면 frame별 read/prediction/conversion/HTTP/전체
+시간, 불변 Envelope와 receipt, expired/submitted 집계를 기록한다. 기존 보고서를 덮어쓰지 않는다.
+FPS는 실제 처리량이며 안전성이 검증된 실시간 임계값을 의미하지 않는다.
+카메라별 순차 전송이며 RTSP, 자동 재연결, 버퍼 지연 상한 보장은 아직 구현하지 않았다.
+재시작은 서버에서 새 Binding/epoch를 발급받아야 한다. 기존 epoch를 임의 재생성하지 않는다.
 
 ## 2. 추론 위치 후보 (2학기 결정)
 

@@ -8,6 +8,62 @@ from typing import Callable
 from ai_vision.pipelines.frame_sources import FrameSource
 from ai_vision.pipelines.safety_interpreter import InterpretationStatus
 from ai_vision.pipelines.vision_safety_pipeline import VisionSafetyPipeline
+from ai_vision.pipelines.vision_producer_client import VisionEvent, ProducerError
+from ai_vision.pipelines.safety_interpreter import SafetyInterpreter
+from ai_vision.pipelines.vision_input import VisionInputSource
+
+
+@dataclass(frozen=True)
+class ProducerFrameResult:
+    detection_count: int
+    interpretation_status: InterpretationStatus
+    receipt: dict | None
+    backend_stored: bool = False
+    expired: bool = False
+
+
+class ProducerStreamPipeline:
+    """Sequential v2 submission; transport errors stop the runner and release input.
+
+    Source timestamps are host-read times, including replay playback. They are
+    never attested camera exposure times. Server binding determines live/replay.
+    """
+
+    def __init__(self, provider, client, binding):
+        import copy
+        self.provider, self.client = provider, client
+        self.binding = copy.deepcopy(binding)
+        self.interpreter = SafetyInterpreter()
+        self.client.attach_binding(self.binding)
+        self.last_event = None
+        self.last_receipt = None
+        self.expired_frames = 0
+        self.last_http_seconds = 0.0
+
+    def run(self, request):
+        expected = {VisionInputSource.VIDEO_FILE: "replay", VisionInputSource.WEBCAM: "live"}
+        if expected.get(request.source) != self.binding["sourceType"]:
+            raise ProducerError("STREAM_SOURCE_BINDING_MISMATCH")
+        detection = self.provider.infer(request)
+        interpretation = self.interpreter.interpret(detection)
+        self.last_event = VisionEvent.create(
+            self.binding, detection, frame_index=request.frame_index,
+            captured_at=request.captured_at, capture_clock="host_read",
+        )
+        self.last_receipt = None
+        started = time.perf_counter()
+        try:
+            self.last_receipt = self.client.send(self.last_event)
+        except ProducerError as exc:
+            # Only certainly unsent expiration can advance to the next frame.
+            # Pending/uncertain delivery must stop, preserving Client's barrier.
+            if exc.code != "EVENT_EXPIRED" or exc.uncertain:
+                raise
+            self.expired_frames += 1
+            return ProducerFrameResult(len(detection.detections), interpretation.status, None, expired=True)
+        finally:
+            self.last_http_seconds = time.perf_counter() - started
+        return ProducerFrameResult(len(detection.detections), interpretation.status, self.last_receipt)
 
 
 @dataclass(frozen=True)
@@ -24,6 +80,8 @@ class VisionStreamStatistics:
     elapsed_seconds: float
     processing_fps: float
     interrupted: bool = False
+    expired: int = 0
+    submitted: int = 0
 
 
 class VisionStreamRunner:
@@ -31,7 +89,7 @@ class VisionStreamRunner:
 
     def __init__(
         self,
-        pipeline: VisionSafetyPipeline,
+        pipeline: VisionSafetyPipeline | ProducerStreamPipeline,
         *,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
@@ -44,6 +102,7 @@ class VisionStreamRunner:
         *,
         frame_interval: int = 1,
         max_frames: int | None = None,
+        on_frame: Callable | None = None,
     ) -> VisionStreamStatistics:
         """Process every Nth acquired frame; max_frames limits source reads."""
         if (
@@ -61,10 +120,13 @@ class VisionStreamRunner:
         frames_read = frames_processed = frames_skipped = 0
         detections = events = no_events = unavailable = errors = backend_stored = 0
         interrupted = False
+        expired = submitted = 0
         try:
             source.open()
             while max_frames is None or frames_read < max_frames:
+                frame_started = time.perf_counter()
                 request = source.read()
+                read_seconds = time.perf_counter() - frame_started
                 if request is None:
                     break
                 frames_read += 1
@@ -75,7 +137,13 @@ class VisionStreamRunner:
                     continue
 
                 result = self.pipeline.run(request)
+                if on_frame is not None:
+                    on_frame(request, result, read_seconds, time.perf_counter() - frame_started)
                 frames_processed += 1
+                if getattr(result, "expired", False):
+                    expired += 1
+                elif getattr(result, "receipt", None) is not None:
+                    submitted += 1
                 detections += result.detection_count
                 status = result.interpretation_status
                 if status is InterpretationStatus.EVENT:
@@ -107,4 +175,6 @@ class VisionStreamRunner:
             elapsed_seconds=elapsed,
             processing_fps=(frames_processed / elapsed if elapsed > 0 else 0.0),
             interrupted=interrupted,
+            expired=expired,
+            submitted=submitted,
         )

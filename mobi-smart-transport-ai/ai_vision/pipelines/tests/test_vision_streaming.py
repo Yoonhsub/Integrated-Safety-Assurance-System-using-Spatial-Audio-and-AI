@@ -410,4 +410,130 @@ def test_yolo_receives_in_memory_frame_without_temporary_file() -> None:
 )
 def test_cli_rejects_missing_or_source_incompatible_options(arguments: list[str]) -> None:
     with pytest.raises(SystemExit):
-        run_stream_cli(arguments)
+        run_stream_cli(arguments + ["--binding", "server-binding.json", "--email", "producer@example.test"])
+
+@pytest.mark.parametrize("failure", [None, 403, 409, 422, 503])
+def test_v2_stream_preserves_envelope_and_stops_on_transport_failure(failure):
+    from ai_vision.pipelines.vision_stream_runner import ProducerStreamPipeline
+    from ai_vision.pipelines.vision_producer_client import ProducerError
+    binding = dict(producerId="producer", cameraId="camera", sessionId=str(uuid4()),
+                   bindingId=str(uuid4()), cameraEpoch=str(uuid4()), sourceType="live")
+    events = []
+    class Client:
+        def attach_binding(self, value):
+            assert value == binding
+        def send(self, event):
+            events.append(event)
+            if failure:
+                raise ProducerError("TRANSPORT_FAILURE", status=failure, uncertain=failure == 503)
+            return dict(accepted=True, stored=False, guidanceEligible=False, freshnessVerified=False)
+    source = FakeFrameSource(2)
+    pipeline = ProducerStreamPipeline(FakeProvider(), Client(), binding)
+    if failure:
+        with pytest.raises(ProducerError):
+            VisionStreamRunner(pipeline).run(source)
+        assert source.read_count == 1
+    else:
+        result = VisionStreamRunner(pipeline).run(source)
+        assert result.frames_processed == 2 and result.backend_stored == 0
+        assert events[0].payload()["visionEventId"] != events[1].payload()["visionEventId"]
+    assert source.closed
+    assert events[0].payload()["captureClock"] == "host_read"
+    assert events[0].payload()["frameIndex"] == 0
+
+
+def test_v2_stream_refuses_live_binding_for_replay_before_inference():
+    from ai_vision.pipelines.vision_stream_runner import ProducerStreamPipeline
+    from ai_vision.pipelines.vision_producer_client import ProducerError
+    from dataclasses import replace
+    provider = FakeProvider()
+    client = SimpleNamespace(attach_binding=lambda value: None)
+    pipeline = ProducerStreamPipeline(provider, client, {"sourceType": "live"})
+    request = replace(FakeFrameSource(1).requests[0], source=VisionInputSource.VIDEO_FILE)
+    with pytest.raises(ProducerError, match="STREAM_SOURCE_BINDING_MISMATCH"):
+        pipeline.run(request)
+    assert provider.indices == []
+
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_v2_expired_frame_can_advance_only_when_certainly_unsent(uncertain):
+    from ai_vision.pipelines.vision_stream_runner import ProducerStreamPipeline
+    from ai_vision.pipelines.vision_producer_client import ProducerError
+    binding = dict(producerId="producer", cameraId="camera", sessionId=str(uuid4()),
+                   bindingId=str(uuid4()), cameraEpoch=str(uuid4()), sourceType="live")
+    events = []
+    class Client:
+        def attach_binding(self, value): pass
+        def send(self, event):
+            events.append(event)
+            if len(events) == 1:
+                raise ProducerError("EVENT_EXPIRED", uncertain=uncertain)
+            return dict(accepted=True, stored=False, guidanceEligible=False, freshnessVerified=False)
+    source = FakeFrameSource(2)
+    pipeline = ProducerStreamPipeline(FakeProvider(), Client(), binding)
+    if uncertain:
+        with pytest.raises(ProducerError): VisionStreamRunner(pipeline).run(source)
+        assert source.read_count == 1
+    else:
+        stats = VisionStreamRunner(pipeline).run(source)
+        assert stats.expired == 1 and stats.submitted == 1
+        assert events[0].payload()["frameIndex"] == 0 and events[1].payload()["frameIndex"] == 1
+        assert events[0].payload()["capturedAt"] == "2026-10-06T00:00:00+00:00"
+    assert source.closed
+
+
+def test_yolo_warm_up_failure_is_configuration_error(tmp_path):
+    from ai_vision.pipelines.vision_provider import ProviderConfigurationError
+    weights = tmp_path / "model.pt"
+    weights.write_bytes(b"fixture")
+    class Model:
+        def predict(self, **kwargs): raise RuntimeError("failed")
+    provider = YOLOVisionProvider(weights, model_factory=lambda path: Model())
+    with pytest.raises(ProviderConfigurationError, match="warm-up failed"):
+        provider.warm_up()
+
+@pytest.mark.parametrize("warm_failure", [False, True])
+def test_stream_cli_warms_model_before_source_open_and_closes_auth(monkeypatch, tmp_path, warm_failure):
+    import scripts.run_ai_vision_stream as cli
+    from ai_vision.pipelines.vision_provider import ProviderConfigurationError
+    from dataclasses import replace
+    import json
+    steps = []
+    binding = dict(producerId="producer", cameraId="camera", sessionId=str(uuid4()),
+                   bindingId=str(uuid4()), cameraEpoch=str(uuid4()), sourceType="replay")
+    path = tmp_path / "binding.json"
+    path.write_text(json.dumps(binding), encoding="utf-8")
+    class Source(FakeFrameSource):
+        source = VisionInputSource.VIDEO_FILE
+        def open(self): steps.append("open")
+    source = Source(1)
+    source.requests = [replace(r, source=VisionInputSource.VIDEO_FILE) for r in source.requests]
+    class Provider(FakeProvider):
+        def warm_up(self):
+            steps.append("warm")
+            if warm_failure: raise ProviderConfigurationError("warm-up failed")
+            return 0.1
+    class Auth:
+        def __init__(self, **kwargs): pass
+        def login(self, *args): steps.append("login")
+        def close(self): steps.append("auth-close")
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def attach_binding(self, value): assert value == binding
+        def send(self, event):
+            assert event.payload()["sourceType"] == "replay"
+            return dict(accepted=True, stored=False, guidanceEligible=False, freshnessVerified=False)
+        def close(self): steps.append("client-close")
+    monkeypatch.setattr(cli, "EmulatorProducerAuth", Auth)
+    monkeypatch.setattr(cli, "VisionProducerClient", Client)
+    monkeypatch.setattr(cli, "VideoFileSource", lambda path: source)
+    monkeypatch.setattr(cli, "create_vision_provider", lambda *args, **kwargs: Provider())
+    monkeypatch.setenv("MOBI_VISION_PASSWORD", "local-test-fixture")
+    code = cli.main(["--source", "video", "--video", "fixture.avi", "--model", "fixture.pt",
+                     "--backend-url", "http://127.0.0.1:8011", "--binding", str(path),
+                     "--email", "fixture@example.test", "--max-frames", "1"])
+    assert code == (1 if warm_failure else 0)
+    assert "auth-close" in steps and "client-close" in steps
+    if warm_failure:
+        assert "open" not in steps
+    else:
+        assert steps.index("warm") < steps.index("open") and source.closed
