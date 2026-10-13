@@ -160,6 +160,18 @@ class V3GuidanceStore:
             return record
 
     @contextmanager
+    def observation_scope(self, session_id: str):
+        """Owned, active read scope. Never creates an unknown session."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is None:
+                raise auth_error(403, "Observation session access denied")
+            self._check_owner(record)
+            if record.vision_closed or record.state == GuidanceState.BOARDED:
+                raise auth_error(403, "Observation session is not active")
+            yield record
+
+    @contextmanager
     def vision_scope(self, session_id: str):
         """Internal producer/admin lookup without creating or transferring sessions."""
         require_role("vision_producer", "admin")

@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "VisionObservationPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "producerId": {
+          "title": "Producerid",
+          "type": "string"
+        },
+        "cameraId": {
+          "title": "Cameraid",
+          "type": "string"
+        },
+        "cameraEpoch": {
+          "format": "uuid",
+          "title": "Cameraepoch",
+          "type": "string"
+        },
+        "visionEventId": {
+          "format": "uuid",
+          "title": "Visioneventid",
+          "type": "string"
+        },
+        "frameIndex": {
+          "minimum": 0,
+          "title": "Frameindex",
+          "type": "integer"
+        },
+        "sourceType": {
+          "enum": [
+            "live",
+            "replay"
+          ],
+          "title": "Sourcetype",
+          "type": "string"
+        },
+        "capturedAt": {
+          "format": "date-time",
+          "title": "Capturedat",
+          "type": "string"
+        },
+        "receivedAt": {
+          "format": "date-time",
+          "title": "Receivedat",
+          "type": "string"
+        },
+        "captureClock": {
+          "enum": [
+            "unknown",
+            "host_read",
+            "sensor"
+          ],
+          "title": "Captureclock",
+          "type": "string"
+        },
+        "observedClasses": {
+          "items": {
+            "const": "bus",
+            "type": "string"
+          },
+          "title": "Observedclasses",
+          "type": "array"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "inferenceStatus": {
+          "enum": [
+            "ok",
+            "unavailable",
+            "error"
+          ],
+          "title": "Inferencestatus",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "available",
+            "expired",
+            "lost"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "validForSeconds": {
+          "minimum": 0.0,
+          "title": "Validforseconds",
+          "type": "number"
+        },
+        "freshnessVerified": {
+          "const": false,
+          "default": false,
+          "title": "Freshnessverified",
+          "type": "boolean"
+        },
+        "guidanceEligible": {
+          "const": false,
+          "default": false,
+          "title": "Guidanceeligible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sessionId",
+        "producerId",
+        "cameraId",
+        "cameraEpoch",
+        "visionEventId",
+        "frameIndex",
+        "sourceType",
+        "capturedAt",
+        "receivedAt",
+        "captureClock",
+        "observedClasses",
+        "message",
+        "inferenceStatus",
+        "state",
+        "validForSeconds"
+      ],
+      "title": "VisionObservationPreview",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/VisionObservationPreview"
+      },
+      "title": "Observations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "sessionId",
+    "observations"
+  ],
+  "title": "VisionSessionObservations",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vision_observations.response.schema.json"
+}

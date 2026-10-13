@@ -641,3 +641,53 @@ def test_existing_receipt_does_not_bypass_current_account_role(client, clock, mo
         disabled=False, custom_claims={"mobi_role": "passenger"}))
     assert send(client, value).status_code == 403
     assert len(ledger_data()["events"]) == 1
+
+@pytest.mark.parametrize('source', ['live','replay'])
+def test_owned_observation_preview_and_duplicate_ttl(client, clock, source):
+    payload=frame(prepare(client,source),0,clock)
+    payload['detectionResult']['detections'][0].update(classId='bus', className='버스')
+    response=send(client,payload)
+    assert response.status_code==202 and response.json()['stored'] is False
+    path=f"/ai-vision/v2/sessions/{payload['sessionId']}/observations"
+    first=client.get(path,headers=headers('alice'))
+    assert first.status_code==200
+    item=first.json()['observations'][0]
+    assert item['observedClasses']==['bus'] and item['state']=='available'
+    assert item['sourceType']==source and item['guidanceEligible'] is False
+    assert client.get(path).status_code==401
+    assert client.get(path,headers=headers('bob')).status_code==403
+    assert client.get(path,headers=headers('driver')).status_code==403
+    clock.advance(1)
+    assert send(client,payload).json()==response.json()
+    item=client.get(path,headers=headers('alice')).json()['observations'][0]
+    assert item['validForSeconds']==1 and item['receivedAt']==first.json()['observations'][0]['receivedAt']
+    clock.advance(1)
+    item=client.get(path,headers=headers('alice')).json()['observations'][0]
+    assert item['state']=='expired' and item['observedClasses']==[]
+    clock.advance(2)
+    assert client.get(path,headers=headers('alice')).json()['observations'][0]['state']=='lost'
+
+
+def test_preview_revoke_reset_close_and_reverse_order(client,clock):
+    payload=frame(prepare(client),10,clock)
+    assert send(client,payload).status_code==202
+    path=f"/ai-vision/v2/sessions/{payload['sessionId']}/observations"
+    assert send(client,frame(payload,9,clock)).status_code==409
+    assert client.get(path,headers=headers('alice')).json()['observations'][0]['frameIndex']==10
+    assert client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{payload['bindingId']}",headers=headers()).status_code==204
+    assert client.get(path,headers=headers('alice')).json()['observations']==[]
+    assert send(client,payload).status_code==403
+    from app.security import current_principal,Principal
+    token=current_principal.set(Principal('alice','passenger'))
+    try: v3_guidance_store.close_vision(payload['sessionId'])
+    finally: current_principal.reset(token)
+    assert client.get(path,headers=headers('alice')).status_code==403
+
+
+def test_door_detection_is_not_presented_as_pretrained_model_capability(client,clock):
+    payload=frame(prepare(client,'replay'),0,clock)
+    payload['detectionResult']['detections']=[dict(payload['detectionResult']['detections'][0],classId='bus_door',className='버스 문')]
+    assert send(client,payload).status_code==202
+    item=client.get(f"/ai-vision/v2/sessions/{payload['sessionId']}/observations",headers=headers('alice')).json()['observations'][0]
+    assert item['observedClasses']==[]
+    assert '승차' not in item['message']

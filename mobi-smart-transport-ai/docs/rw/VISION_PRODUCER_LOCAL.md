@@ -320,3 +320,33 @@ Remove-Item Env:RUN_LOCAL_VISION_LEDGER
 기존 사용자 backend를 임의 종료하는 옵션은 제공하지 않는다. 180초 내 재시작 확인이 없으면
 테스트가 실패한다. 재실행에는 새 marker 경로를 사용한다. 실제 HTTP smoke는 본인이 만든
 Auth 계정/RTDB session/ledger만 정리하며 영속 receipt 삭제는 테스트 데이터 정리 용도뿐이다.
+
+## 승객 관찰 전용 조회
+
+`GET /ai-vision/v2/sessions/{sessionId}/observations`는 Firebase passenger(또는 서버 admin) 인증으로
+활성 세션의 소유권을 검사한다. 타인/종료/존재하지 않는 세션은403, 미인증은401이다.
+세션 재생성 generation, Binding 만료·해제·카메라 재등록 이후의 관찰은 반환하지 않는다.
+응답 계약: `packages/shared_contracts/api/vision_observations.response.schema.json`.
+
+응답은 `sessionId`, `observations[]`이며, 각 항목에 producerId/cameraId/sourceType,
+cameraEpoch/frameIndex/visionEventId, 선언 capturedAt/서버 receivedAt, captureClock,
+observedClasses/message, inferenceStatus, state(available/expired/lost), validForSeconds를 포함한다.
+현재 UI 지원 class는 COCO mapping의 bus뿐이다. sourceType=replay는 반드시 녹화 시연으로 표시한다.
+서버 메시지는 고정된 관찰 문구이며 Producer/LLM 문구를 그대로 노출하지 않는다.
+
+관찰 projection은 RTDB producer ledger의 `streams/{bindingId}/observation`에 receipt/watermark와
+같은 Transaction으로 기록한다. receipt와 projection은 다른 구조다. 동일 이벤트 재전송은
+projection/서버 수신시각/TTL을 갱신하지 않는다. 승객 조회는 확인된 commit의 단일 프로세스
+캐시만 읽고, 현재 Binding/세션 상태를 매번 확인한다. 재시작 후 영속 projection을 자동 복원하지
+않으며 Binding부터 다시 발급해야 한다. 불확실한 commit은 cache에 반영하지 않는다.
+
+Live TTL은 기존 정책을 사용하고 Replay preview TTL은 최초 서버 수신 기준 observation_ttl이다.
+조회에서 만료/소실을 계산하며 만료된 class와 현재 관찰 문구는 숨긴다. 오류는 안전함을 뜻하지 않는다.
+Flutter 관찰 카드가1초마다 기존 인증 HTTP Client로 조회하며 네트워크 왕복 시간을 차감한
+validForSeconds로 로컬 만료를 처리한다. 조회 실패/세션 변경은 현재 표시를 지운다.
+폴링 기반이므로 Binding 해제의 UI 반영에는 요청/폴링 지연이 있을 수 있고, 최대 표시 수명은
+서버가 남겨준 TTL로 제한된다. 센서 촬영 시각을 검증한 것은 아니다.
+
+`stored=false`는 기존 안전 이벤트 저장 비활성을 의미하며 변경하지 않는다.
+`guidanceEligible=false`, `freshnessVerified=false`, 기존 Live Hold도 유지한다.
+관찰 카드는 guidance 상태/LLM/TTS/Spatial Audio/승차 허용 API를 호출하지 않는다.

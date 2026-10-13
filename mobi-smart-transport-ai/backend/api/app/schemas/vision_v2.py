@@ -134,3 +134,28 @@ class VisionCameraState(StrictModel):
     captureClock: Literal["unknown", "host_read", "sensor"]
     freshnessVerified: Literal[False] = False
     guidanceEligible: Literal[False] = False
+
+
+class VisionObservationPreview(StrictModel):
+    sessionId: str
+    producerId: str
+    cameraId: str
+    cameraEpoch: UUID
+    visionEventId: UUID
+    frameIndex: int = Field(ge=0)
+    sourceType: Literal["live", "replay"]
+    capturedAt: datetime
+    receivedAt: datetime
+    captureClock: Literal["unknown", "host_read", "sensor"]
+    observedClasses: list[Literal["bus"]]
+    message: str
+    inferenceStatus: Literal["ok", "unavailable", "error"]
+    state: Literal["available", "expired", "lost"]
+    validForSeconds: float = Field(ge=0)
+    freshnessVerified: Literal[False] = False
+    guidanceEligible: Literal[False] = False
+
+
+class VisionSessionObservations(StrictModel):
+    sessionId: str
+    observations: list[VisionObservationPreview]

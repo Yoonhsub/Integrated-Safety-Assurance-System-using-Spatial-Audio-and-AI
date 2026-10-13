@@ -47,7 +47,7 @@ class VisionEventLedger:
         # real-only storage and cannot silently accept a memory fallback.
         self._injected_storage = storage
 
-    def commit(self, uid: str, request: VisionEnvelope, candidate: dict, validate_new) -> dict:
+    def commit(self, uid: str, request: VisionEnvelope, candidate: dict, validate_new, *, observation=None) -> dict:
         storage = self._injected_storage or get_firebase_client()
         if self._injected_storage is None:
             try:
@@ -99,6 +99,10 @@ class VisionEventLedger:
                 "visionEventId": str(request.visionEventId),
                 "receivedAt": candidate["firstProcessedAt"],
             }
+            if observation is not None:
+                # Separate projection, atomically paired with the receipt/watermark.
+                # Identical retries return above and cannot refresh this snapshot.
+                updated["streams"][str(request.bindingId)]["observation"] = deepcopy(observation)
             return updated
 
         try:

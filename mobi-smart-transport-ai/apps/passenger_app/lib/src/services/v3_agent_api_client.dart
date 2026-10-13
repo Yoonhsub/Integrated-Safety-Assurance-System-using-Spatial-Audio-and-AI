@@ -82,6 +82,13 @@ class V3AgentApiClient {
     return V3GuidanceState.fromJson(json);
   }
 
+  Future<
+      Map<String,
+          dynamic>> fetchVisionObservations(String sessionId) => _getJson(
+      '/ai-vision/v2/sessions/${Uri.encodeComponent(sessionId)}/observations',
+      const <String, String>{},
+      customTimeout: const Duration(seconds: 2));
+
   Future<V3GuidanceState> resetSession({required String sessionId}) async {
     final json = await _postJson('/guidance/reset', <String, Object?>{
       'sessionId': sessionId,
@@ -370,13 +377,12 @@ class V3AgentApiClient {
   }
 
   Future<Map<String, dynamic>> _getJson(
-    String path,
-    Map<String, String> queryParameters,
-  ) async {
+      String path, Map<String, String> queryParameters,
+      {Duration? customTimeout}) async {
     try {
       final response = await _authClient
           .get(_buildUri(path, queryParameters: queryParameters))
-          .timeout(timeout);
+          .timeout(customTimeout ?? timeout);
       return _decodeResponse(response);
     } on TimeoutException {
       throw const V3ApiException('API 연결 시간이 초과됐습니다.');

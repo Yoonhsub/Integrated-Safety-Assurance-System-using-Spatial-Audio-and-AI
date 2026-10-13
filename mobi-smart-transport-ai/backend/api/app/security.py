@@ -33,6 +33,7 @@ PUBLIC = {
 }
 # Deliberate per-operation allowlist: newly added endpoints default to denied.
 POLICY = {
+    ("GET", "/ai-vision/v2/sessions/{sessionId}/observations"): {"passenger", "admin"},
     ("GET", "/ai-vision/v2/cameras/{cameraId}/state"): {"admin", "vision_producer"},
     ("PUT", "/ai-vision/v2/cameras/{cameraId}"): {"admin"},
     ("POST", "/ai-vision/v2/bindings"): {"admin"},

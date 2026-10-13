@@ -524,3 +524,7 @@ ai_vision/pipelines/tests/test_vision_producer_client.py
 scripts/send_vision_v2_fixture.py
 scripts/smoke_vision_producer_client.py
 docs/rw/VISION_PRODUCER_CLIENT.md
+
+apps/passenger_app/lib/src/widgets/vision_observation_panel.dart
+apps/passenger_app/test/vision_observation_test.dart
+packages/shared_contracts/api/vision_observations.response.schema.json

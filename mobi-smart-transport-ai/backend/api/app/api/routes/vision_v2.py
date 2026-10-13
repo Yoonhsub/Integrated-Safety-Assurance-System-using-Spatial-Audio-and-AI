@@ -5,8 +5,15 @@ from fastapi import APIRouter, Response
 
 from app.schemas.vision_v2 import BindingCreate, CameraRegistration, VisionEnvelope, VisionReceipt, VisionCameraState
 from app.services.vision_binding_service import vision_binding_service
+from app.schemas.vision_v2 import VisionSessionObservations
 
 router = APIRouter()
+
+
+@router.get("/sessions/{sessionId}/observations", response_model=VisionSessionObservations)
+def session_observations(sessionId: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return vision_binding_service.preview(sessionId)
 
 
 @router.put("/cameras/{cameraId}")

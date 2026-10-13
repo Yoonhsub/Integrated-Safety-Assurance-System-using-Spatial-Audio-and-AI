@@ -82,6 +82,7 @@ class Observation:
     expired: bool = False
     lost: bool = False
     clock_error: bool = False
+    preview: dict | None = None
 
 
 class VisionBindingService:
@@ -254,17 +255,66 @@ class VisionBindingService:
                     "retentionPolicy": "retain-no-automatic-deletion",
                     "attemptId": attempt_id, "response": receipt.model_dump(mode="json"),
                 }
-                record = self.ledger.commit(principal.uid, request, candidate, validate_new)
+                # Only observational, server-selected wording. COCO bus is the
+                # sole display class; no door/stop/boarding claims are projected.
+                classes = ["bus"] if status == "ok" and any(
+                    d["classId"] == "bus" for d in result["detections"]
+                ) else []
+                preview = dict(sessionId=binding.session_id, producerId=principal.uid,
+                    cameraId=request.cameraId, cameraEpoch=binding.epoch,
+                    visionEventId=str(request.visionEventId), frameIndex=request.frameIndex,
+                    sourceType=request.sourceType, capturedAt=request.capturedAt.isoformat(),
+                    receivedAt=now.isoformat(), captureClock=request.captureClock,
+                    observedClasses=classes,
+                    message="버스가 감지되었습니다" if classes else "현재 관찰된 대상 객체가 없습니다",
+                    inferenceStatus=status)
+                record = self.ledger.commit(principal.uid, request, candidate, validate_new,
+                                            observation=preview)
                 if record["attemptId"] == attempt_id:
                     # Cache is only a projection of a CONFIRMED atomic commit.
                     # An uncertain commit leaves this empty/old, never refreshed.
                     self._observations[request.cameraId] = Observation(
                         request.frameIndex, result.get("frameId"), request.capturedAt, now,
                         mono, mono + lifetime, outcome, request.captureClock,
+                        preview=preview,
                     )
                 # Duplicates return the original response without cache/TTL change,
                 # even when newer frames have advanced the persisted watermark.
                 return VisionReceipt.model_validate(record["response"])
+
+    def preview(self, session_id: str) -> dict:
+        """Read-only display projection; never feeds guidance or safety events."""
+        require_local_vision()
+        require_role("passenger")
+        with self._lock, self.sessions.observation_scope(session_id) as session:
+            now, mono, policy = self._now(), self._mono(), self._policy()
+            items = []
+            for binding in self._bindings.values():
+                if (binding.session_id != session.session_id or binding.owner_uid != session.owner_uid
+                        or binding.session_generation != session.vision_generation
+                        or mono >= binding.deadline or now >= binding.expires_at):
+                    continue
+                observation = self._observations.get(binding.camera_id)
+                if observation is None or observation.preview is None:
+                    # No confirmed commit means no object/message can be exposed.
+                    continue
+                elapsed = mono - observation.received_mono
+                wall_elapsed = (now - observation.received_at).total_seconds()
+                invalid_clock = elapsed < 0 or abs(wall_elapsed - elapsed) > policy.future_skew
+                if invalid_clock:
+                    observation.clock_error = True
+                ttl = (policy.observation_ttl - elapsed if binding.source_type == "replay"
+                       else observation.deadline - mono)
+                lost = observation.clock_error or elapsed >= policy.connection_timeout or observation.status == "unavailable"
+                state = "lost" if lost else "expired" if ttl <= 0 or observation.preview["inferenceStatus"] != "ok" else "available"
+                remaining = max(0.0, min(ttl, binding.deadline - mono,
+                                        (binding.expires_at - now).total_seconds())) if state == "available" else 0.0
+                value = dict(observation.preview, state=state, validForSeconds=remaining,
+                             freshnessVerified=False, guidanceEligible=False)
+                if state != "available":
+                    value.update(observedClasses=[], message="카메라 연결이 중단되었습니다" if lost else "현재 관찰 정보가 없습니다")
+                items.append(value)
+            return dict(sessionId=session.session_id, observations=sorted(items, key=lambda x: x["cameraId"]))
 
 
     def state(self, camera_id: str) -> dict:

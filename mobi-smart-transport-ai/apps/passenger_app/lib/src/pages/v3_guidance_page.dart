@@ -23,6 +23,7 @@ import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
+import '../widgets/vision_observation_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
 import '../mock_scenario/mock_scenario_control_panel.dart';
@@ -1818,6 +1819,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_sessionId.isNotEmpty)
+                    VisionObservationPanel(
+                        sessionId: _sessionId,
+                        ownerUid:
+                            FirebaseAuthSession.instance.currentAccount?.uid,
+                        authChanges: FirebaseAuthSession
+                            .instance.authStateChanges
+                            .map((account) => account?.uid),
+                        fetch: _client.fetchVisionObservations),
                   _HeroStatusCard(
                     isBusy: _isBusy,
                     stateLabel: state?.state ?? 'LOADING',
