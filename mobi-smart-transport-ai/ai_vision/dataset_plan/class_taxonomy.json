@@ -27,7 +27,7 @@
     {
       "code": "bus_door_visible",
       "default_risk_level": "info",
-      "ko_message": "버스 문이 보입니다. 안전하게 승차할 수 있습니다.",
+      "ko_message": "버스 문이 보입니다.",
       "trigger_primary_class": "bus_door",
       "description": "버스 문이 명확히 검출된 시점에 승차 위치 안내."
     },
@@ -80,7 +80,7 @@
       "default_risk_level": "info",
       "detection_threshold": 0.55,
       "user_message_templates": {
-        "ko": "버스 문이 보입니다. 안전하게 승차할 수 있습니다."
+        "ko": "버스 문이 보입니다."
       },
       "related_reasons": ["bus_door_visible"]
     },

@@ -69,7 +69,33 @@ class SafetyInterpreterTest(unittest.TestCase):
         self.assertEqual(interpreted.event.reason, "bus_door_visible")
         self.assertEqual(interpreted.event.risk_level, "info")
         self.assertEqual(interpreted.event.primary_class, "bus_door")
-        self.assertEqual(interpreted.event.message, "버스 문이 보입니다. 안전하게 승차할 수 있습니다.")
+        self.assertEqual(interpreted.event.message, "버스 문이 보입니다.")
+
+    def test_all_single_frame_messages_are_observations_only(self) -> None:
+        taxonomy = json.loads((_PIPELINES.parent / "dataset_plan" / "class_taxonomy.json").read_text(encoding="utf-8"))
+        expected = {"bus_door": "버스 문이 보입니다.", "bus_stop": "버스 정류장을 인식했습니다."}
+        for item in taxonomy["classes"]:
+            with self.subTest(class_id=item["id"]):
+                result = self.interpreter.interpret(self.result(self.detection(item["id"], 0.99)))
+                if item["id"] in expected:
+                    self.assertEqual(result.event.message, expected[item["id"]])
+                    self.assertEqual(item["user_message_templates"]["ko"], expected[item["id"]])
+                else:
+                    self.assertEqual(result.status, InterpretationStatus.NO_EVENT)
+                    self.assertIsNone(result.event)
+
+    def test_old_frame_and_multiple_objects_cannot_establish_boarding_permission(self) -> None:
+        # Freshness enforcement belongs to the future ingest contract. An old
+        # frame remains an observation here, never a boarding authorization.
+        self.captured_at = "2000-01-01T00:00:00+00:00"
+        result = self.interpreter.interpret(self.result(
+            self.detection("bus", 0.99), self.detection("bus_door", 0.99),
+            self.detection("bus_stop", 0.90), self.detection("roadway", 0.99),
+        ))
+        self.assertEqual(result.event.message, "버스 문이 보입니다.")
+        self.assertEqual(result.event.reason, "bus_door_visible")
+        self.assertEqual(result.event.captured_at, self.captured_at)
+        self.assertEqual(result.event.risk_level, "info")
 
     def test_detection_below_taxonomy_threshold_produces_no_event(self) -> None:
         result = self.result(self.detection("bus_door", 0.549))

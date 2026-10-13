@@ -22,6 +22,8 @@ from ai_vision.pipelines.detection_result import (
 _TAXONOMY_PATH = Path(__file__).resolve().parents[1] / "dataset_plan" / "class_taxonomy.json"
 # These existing taxonomy reasons can be asserted from one frame alone. The
 # remaining reasons require temporal, user-location, or path context.
+# These messages describe observations only; neither detection confidence nor
+# a visible door establishes target-bus identity or permission to board.
 _SINGLE_FRAME_REASONS = frozenset({"bus_stop_recognized", "bus_door_visible"})
 _RISK_ORDER = {"info": 0, "warn": 1, "danger": 2}
 _CLASS_PRIORITY_ORDER = {"medium": 0, "high": 1}

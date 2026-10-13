@@ -1,12 +1,21 @@
+import json
+from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from ai_vision.pipelines.backend_safety_event_client import serialize_interpretation
+from ai_vision.pipelines.detection_result import DetectionResult
+from ai_vision.pipelines.safety_interpreter import SafetyInterpreter
+from app.api.routes import ai_vision_events, v3_agent
 from app.main import app
-from app.services.firebase_client import get_firebase_client
-from app.services.v3_guidance_store import v3_guidance_store
-from app.api.routes import v3_agent
 from app.schemas.v3 import utc_now
+from app.services.firebase_client import get_firebase_client
+from app.services.safety_event_service import SafetyEventService
+from app.services.v3_guidance_store import v3_guidance_store
+
 
 client = TestClient(app)
 
@@ -389,3 +398,62 @@ def test_missed_bus_report_replans_next_bus_without_stale_beacon_decision() -> N
     assert state["lastDecision"] is None
     assert state["nearestBeacon"] is None
     assert state["targetBus"] is None
+
+
+# This checks the current disconnected Vision intake and Live guidance boundary,
+# not a future camera/session integration or a freshness admission gate.
+@pytest.mark.parametrize("beacon_case", ["absent", "wrong", "expired"])
+@pytest.mark.parametrize("vision_case", ["door", "bus", "uncertain", "old", "empty", "unavailable", "error", "multiple"])
+def test_vision_intake_cannot_authorize_live_boarding(monkeypatch, beacon_case, vision_case):
+    _seed_waiting_session("vision-hold")
+    if beacon_case != "absent":
+        response = client.post("/mock/beacons", json={
+            "sessionId": "vision-hold", "targetBusId": "BUS_2", "targetRouteNo": "502",
+            "beacons": [{"busId": "BUS_1" if beacon_case == "wrong" else "BUS_2",
+                         "routeNo": "511" if beacon_case == "wrong" else "502", "distanceMeters": 1.5}],
+        })
+        assert response.status_code == 200
+        if beacon_case == "expired":
+            v3_guidance_store.get("vision-hold").last_decision_at = utc_now() - timedelta(seconds=10)
+    session = v3_guidance_store.get("vision-hold")
+    before = (session.last_decision, session.last_decision_at, session.target_bus_id)
+    fixture = Path(__file__).resolve().parents[3] / "ai_vision/pipelines/fixtures/mock_detection_results.json"
+    results = json.loads(fixture.read_text(encoding="utf-8"))["results"]
+    index = {"empty": 1, "unavailable": 2, "error": 3}.get(vision_case, 0)
+    detection = DetectionResult.from_dict(results[index])
+    if vision_case in {"door", "bus", "uncertain", "old"}:
+        class_id = "bus" if vision_case == "bus" else "bus_door"
+        boxes = tuple(replace(d, confidence=0.1 if vision_case == "uncertain" else 0.99)
+                      for d in detection.detections if d.class_id == class_id)
+        assert len(boxes) == 1
+        detection = replace(detection, detections=boxes)
+    detection = replace(detection, captured_at=("2000-01-01T00:00:00+00:00" if vision_case == "old" else utc_now().isoformat()))
+    interpretation = SafetyInterpreter().interpret(detection)
+    expected_status = {
+        "bus": "no_event", "uncertain": "no_event", "empty": "no_event",
+        "unavailable": "unavailable", "error": "error",
+    }.get(vision_case, "event")
+    assert interpretation.status.value == expected_status
+    monkeypatch.setattr(ai_vision_events, "_service", SafetyEventService(get_firebase_client()))
+    response = client.post("/ai-vision/events", json=serialize_interpretation(interpretation))
+    assert response.status_code == (201 if interpretation.event else 200)
+    if interpretation.event:
+        assert response.json()["safetyEvent"]["message"] == "버스 문이 보입니다."
+    else:
+        assert response.json()["stored"] is False
+    assert before == (session.last_decision, session.last_decision_at, session.target_bus_id)
+
+    def unexpected_llm(**kwargs):
+        pytest.fail("Live boarding decision must not delegate to an LLM")
+
+    monkeypatch.setattr(v3_agent, "generate_dynamic_response", unexpected_llm)
+    monkeypatch.setattr(v3_agent, "generate_optional_reply", unexpected_llm)
+    answer = client.post("/agent/converse", json={
+        "sessionId": "vision-hold", "wakeWord": "자비스",
+        "utterance": "자비스, 지금 앞에 온 버스 타도 돼?", "mode": "live",
+    })
+    assert answer.status_code == 200
+    assert answer.json()["state"] == "WAITING_FOR_BUS"
+    assert "확인하지 못했어요" in answer.json()["message"]
+    assert answer.json()["ttsMode"] == "SAFETY_LOCAL"
+    assert answer.json()["usedGemini"] is False

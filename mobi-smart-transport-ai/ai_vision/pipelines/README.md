@@ -1,5 +1,16 @@
 # AI Vision Inference Pipeline
 
+## 안전 문구와 Streaming 통합 계약 (2026-10-13)
+
+`bus_door_visible`은 **버스 문이 보입니다.**라는 관찰만 안내한다. 문 검출은 목표
+버스 식별이나 승차 허용이 아니다. reason 메시지와 클래스 fallback을 동일하게 수정했다.
+기존 Live Hold 및 DetectionResult 계약은 유지한다.
+
+[Streaming 안전 통합 계약](STREAMING_SAFETY_CONTRACT.md)에 producer 인증, 출처·신선도,
+서버 세션 연결, 멱등성 설계를 기록했다. 해당 계약은 아직 미구현이며 Streaming 브랜치는
+통합하지 않았다. 현재 ingestion은 admin 전용이고 HTTP client 인증 및 승객 안내 연결은
+후속 작업이다.
+
 이 폴더는 DetectionResult contract, mock provider, local single-image YOLO inference,
 deterministic single-frame SafetyInterpreter를 제공한다.
 YOLO provider는 `ultralytics` 패키지를 명시적으로 설치하고 local model weight 경로를 전달해야

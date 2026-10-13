@@ -27,6 +27,7 @@ ai_vision/training/tests/test_additional_annotations.py
 ai_vision/training/tests/test_dataset_training.py
 ai_vision/training/tests/test_development_train_only.py
 ai_vision/pipelines/README.md
+ai_vision/pipelines/STREAMING_SAFETY_CONTRACT.md
 ai_vision/pipelines/backend_safety_event_client.py
 ai_vision/pipelines/vision_safety_pipeline.py
 ai_vision/pipelines/tests/test_backend_safety_event_client.py
