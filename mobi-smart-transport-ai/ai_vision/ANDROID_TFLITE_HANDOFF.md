@@ -10,6 +10,8 @@
 | --- | --- | --- |
 | 버스 문 TFLite 모델 | `ai_vision/models/yolo11n_bus_door_v1_float32.tflite` | 휴대폰 내 버스·버스 문 탐지 |
 | 일반 버스 기준선 | `ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite` | 버스 단일 클래스 비교용 |
+| 전동 킥보드 현장 검증 모델 | `ai_vision/models/yolo11n_parked_pm_pilot_v1_float32.tflite` | `parked_pm` 탐지 현장 검증 |
+| 기둥·나무 현장 검증 모델 | `ai_vision/models/yolo11n_sidewalk_pole_tree_v1_float32.tflite` | `pole`·`tree_trunk` 탐지 현장 검증 |
 | PC 참조 어댑터 | `ai_vision/pipelines/tflite_bus_inference.py` | Android 결과와 비교할 기준 구현 |
 | Android 실행 기준 | `ai_vision/pipelines/android_live_profile.json` | 후면 카메라·15 FPS·latest-only 정책 |
 | 정지/영상 검증법 | `ai_vision/models/README.md` | 모델과 출력 해석 재검증 |
@@ -17,6 +19,10 @@
 앱 연동에는 버스 문 TFLite 모델을 사용한다. 이는 `bus`와 `bus_door` 두 클래스를
 탐지한다. 일반 버스 기준선은 COCO 사전학습 **bus 단일 모델**이므로, 버스 문 안내에
 사용하면 안 된다. 장애물·점자블록은 이 모델의 대상이 아니다.
+
+전동 킥보드와 기둥·나무 모델도 Android용 TFLite 변환을 마쳤다. 다만 이 두 파일은
+현장 성능을 측정하고 fine-tuning할 목적으로 제공하는 후보다. 클래스 순서와 결과 기록
+방식은 [장애물 TFLite 현장 검증 인계서](OBSTACLE_TFLITE_FIELD_TEST_HANDOFF.md)를 따른다.
 
 ## 2. 카메라에서 모델까지
 
