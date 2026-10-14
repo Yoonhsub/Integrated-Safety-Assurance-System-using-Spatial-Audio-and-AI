@@ -5,6 +5,7 @@ import 'pages/data_mode_selection_page.dart';
 import 'pages/home_page.dart';
 import 'pages/v3_guidance_page.dart';
 import 'services/agent_name_store.dart';
+import 'local_vision/local_vision_page.dart';
 
 class MobiApp extends StatefulWidget {
   const MobiApp({super.key, this.firebaseConfigured = false});
@@ -100,6 +101,11 @@ class _MobiAppState extends State<MobiApp> {
         builder: (context, account) => home,
       ),
       routes: <String, WidgetBuilder>{
+        '/local-vision': (_) => AuthGate(
+              configurationReady: widget.firebaseConfigured,
+              appLabel: 'MOBI 승객 앱',
+              builder: (context, account) => const LocalVisionPage(),
+            ),
         '/v3-guidance': (_) => AuthGate(
               configurationReady: widget.firebaseConfigured,
               appLabel: 'MOBI 승객 앱',

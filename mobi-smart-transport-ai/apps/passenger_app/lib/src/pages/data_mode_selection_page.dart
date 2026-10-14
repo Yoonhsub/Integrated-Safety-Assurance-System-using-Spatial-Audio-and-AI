@@ -114,6 +114,12 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                   isBusy: _isSwitching,
                   onTap: () => _selectMode('live'),
                 ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).pushNamed('/local-vision'),
+                  icon: const Icon(Icons.camera_alt_outlined),
+                  label: const Text('휴대폰 로컬 카메라 관찰'),
+                ),
                 // 전환 중 로딩 표시
                 if (_isSwitching) ...[
                   const SizedBox(height: 24),
