@@ -27,12 +27,18 @@ def create_vision_provider(
     fixture_path: Path | None = None,
     model_path: str | Path | None = None,
     model_factory: Callable[[str], Any] | None = None,
+    tflite_profile: str | None = None,
 ) -> VisionProvider:
     """Create an explicitly selected provider; never silently fall back to mock."""
     if provider == "mock":
         from ai_vision.pipelines.mock_vision_provider import MockVisionProvider
 
         return MockVisionProvider(scenario=scenario, fixture_path=fixture_path)
+    if provider == "tflite":
+        if model_path is None:
+            raise ProviderConfigurationError("TFLite requires local model_path")
+        from ai_vision.pipelines.tflite_vision_provider import TFLiteVisionProvider
+        return TFLiteVisionProvider(model_path, profile=tflite_profile)
     if provider == "yolo":
         if model_path is None:
             raise ProviderConfigurationError(

@@ -528,3 +528,8 @@ docs/rw/VISION_PRODUCER_CLIENT.md
 apps/passenger_app/lib/src/widgets/vision_observation_panel.dart
 apps/passenger_app/test/vision_observation_test.dart
 packages/shared_contracts/api/vision_observations.response.schema.json
+ai_vision/pipelines/TFLITE_V2_INTEGRATION.md
+ai_vision/pipelines/tests/test_tflite_vision_provider.py
+ai_vision/pipelines/tflite_decoding.py
+ai_vision/pipelines/tflite_vision_provider.py
+ai_vision/requirements-tflite.txt

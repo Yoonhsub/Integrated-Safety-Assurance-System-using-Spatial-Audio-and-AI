@@ -691,3 +691,19 @@ def test_door_detection_is_not_presented_as_pretrained_model_capability(client,c
     item=client.get(f"/ai-vision/v2/sessions/{payload['sessionId']}/observations",headers=headers('alice')).json()['observations'][0]
     assert item['observedClasses']==[]
     assert '승차' not in item['message']
+
+@pytest.mark.parametrize('recognized', [True,False])
+def test_verified_tflite_profile_door_preview_remains_observation_only(client,clock,recognized):
+    payload=frame(prepare(client,'replay'),0,clock)
+    payload['detectionResult']['modelInfo']={'provider':'tflite','name':'yolo11n_bus_door_v1_float32',
+        'version':'0d2b911','identifier':'sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85' if recognized else 'unknown'}
+    payload['detectionResult']['detections']=[dict(payload['detectionResult']['detections'][0],classId='bus_door',className='버스 문')]
+    response=send(client,payload)
+    assert response.status_code==202
+    assert all(response.json()[k] is False for k in ('stored','guidanceEligible','freshnessVerified'))
+    path=f"/ai-vision/v2/sessions/{payload['sessionId']}/observations"
+    item=client.get(path,headers=headers('alice')).json()['observations'][0]
+    assert item['observedClasses']==(['bus_door'] if recognized else [])
+    assert '승차' not in item['message']
+    clock.advance(3)
+    assert client.get(path,headers=headers('alice')).json()['observations'][0]['observedClasses']==[]

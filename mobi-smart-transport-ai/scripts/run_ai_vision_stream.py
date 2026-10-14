@@ -29,6 +29,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run each selected video/webcam frame through the AI Vision pipeline."
     )
+    parser.add_argument("--provider", choices=("yolo", "tflite"), default="yolo")
+    parser.add_argument("--tflite-profile", choices=("coco-bus", "bus-door"))
     parser.add_argument("--source", choices=("video", "webcam"), required=True)
     parser.add_argument("--video", type=Path, help="Required only when --source video.")
     parser.add_argument("--camera", type=int, help="Webcam index (default: 0).")
@@ -36,7 +38,7 @@ def _parser() -> argparse.ArgumentParser:
         "--model",
         type=Path,
         required=True,
-        help="Existing local YOLO weight file.",
+        help="Existing local model weight file.",
     )
     parser.add_argument("--backend-url", required=True, help="FastAPI backend base URL.")
     parser.add_argument("--binding", type=Path, required=True, help="Server-created Binding JSON")
@@ -60,6 +62,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if (args.provider == "tflite") != (args.tflite_profile is not None):
+        parser.error("--tflite-profile is required only for TFLite")
     if args.frame_interval < 1:
         parser.error("--frame-interval must be at least 1")
     if args.max_frames is not None and args.max_frames < 1:
@@ -85,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--video is only valid when --source video")
             source = WebcamSource(0 if args.camera is None else args.camera)
         started = time.perf_counter()
-        provider = create_vision_provider("yolo", model_path=args.model)
+        provider = create_vision_provider(args.provider, model_path=args.model, tflite_profile=args.tflite_profile)
         model_load_seconds = time.perf_counter() - started
         binding = json.loads(args.binding.read_text(encoding="utf-8-sig"))
         auth.login(args.email, os.environ.get("MOBI_VISION_PASSWORD") or getpass.getpass("Local Producer password: "))

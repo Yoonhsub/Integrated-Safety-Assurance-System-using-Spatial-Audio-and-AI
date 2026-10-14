@@ -255,18 +255,24 @@ class VisionBindingService:
                     "retentionPolicy": "retain-no-automatic-deletion",
                     "attemptId": attempt_id, "response": receipt.model_dump(mode="json"),
                 }
-                # Only observational, server-selected wording. COCO bus is the
-                # sole display class; no door/stop/boarding claims are projected.
-                classes = ["bus"] if status == "ok" and any(
-                    d["classId"] == "bus" for d in result["detections"]
-                ) else []
+                # Authenticated producer assertion, NOT model/capture attestation.
+                # Door display is restricted to the independently checked artifact profile.
+                model = result.get("modelInfo", {})
+                door_profile = (model.get("provider") == "tflite"
+                    and model.get("name") == "yolo11n_bus_door_v1_float32"
+                    and model.get("version") == "0d2b911"
+                    and model.get("identifier") == "sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85")
+                allowed = ("bus", "bus_door") if door_profile else ("bus",)
+                classes = [c for c in allowed if status == "ok" and any(
+                    d["classId"] == c for d in result["detections"])]
+                phrases = {"bus": "버스가 감지되었습니다", "bus_door": "버스 문이 감지되었습니다"}
                 preview = dict(sessionId=binding.session_id, producerId=principal.uid,
                     cameraId=request.cameraId, cameraEpoch=binding.epoch,
                     visionEventId=str(request.visionEventId), frameIndex=request.frameIndex,
                     sourceType=request.sourceType, capturedAt=request.capturedAt.isoformat(),
                     receivedAt=now.isoformat(), captureClock=request.captureClock,
                     observedClasses=classes,
-                    message="버스가 감지되었습니다" if classes else "현재 관찰된 대상 객체가 없습니다",
+                    message=". ".join(phrases[c] for c in classes) if classes else "현재 관찰된 대상 객체가 없습니다",
                     inferenceStatus=status)
                 record = self.ledger.commit(principal.uid, request, candidate, validate_new,
                                             observation=preview)

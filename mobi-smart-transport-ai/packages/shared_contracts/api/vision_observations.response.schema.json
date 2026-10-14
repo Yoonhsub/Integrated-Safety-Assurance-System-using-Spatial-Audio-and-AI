@@ -59,7 +59,7 @@
         },
         "observedClasses": {
           "items": {
-            "const": "bus",
+            "enum": ["bus", "bus_door"],
             "type": "string"
           },
           "title": "Observedclasses",

@@ -147,7 +147,7 @@ class VisionObservationPreview(StrictModel):
     capturedAt: datetime
     receivedAt: datetime
     captureClock: Literal["unknown", "host_read", "sensor"]
-    observedClasses: list[Literal["bus"]]
+    observedClasses: list[Literal["bus", "bus_door"]]
     message: str
     inferenceStatus: Literal["ok", "unavailable", "error"]
     state: Literal["available", "expired", "lost"]
