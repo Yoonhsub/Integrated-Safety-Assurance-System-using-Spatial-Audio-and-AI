@@ -1,9 +1,9 @@
 # Android TFLite model artifacts
 
-Expected first artifact:
+현재 Android 현장 검증에 사용할 기본 산출물:
 
 ```text
-yolo11n_coco_bus_baseline_float32.tflite
+yolo11n_unified_bus_obstacle_v1_float32.tflite
 ```
 
 앱 담당자에게 전달할 정확한 Android 입력·출력 규칙과 검수 기준은
@@ -16,10 +16,12 @@ python -m pip install -r ai_vision/requirements-tflite-export.txt
 python ai_vision/pipelines/export_android_tflite.py
 ```
 
-This first file is a **COCO pretrained baseline**. It is suitable only for
-validating that Android can detect the generic COCO `bus` class. It does not
-detect `bus_door`, `bus_stop`, tactile paving, or project-specific obstacles.
-Those require a separately trained model and a new export.
+이 파일은 `bus`, `bus_door`, `parked_pm`, `pole`, `tree_trunk` 다섯 클래스를
+탐지하는 통합 현장 검증 모델이다. 정확한 사용 규칙과 평가 한계는
+[`../UNIFIED_MODEL_FIELD_TEST_HANDOFF.md`](../UNIFIED_MODEL_FIELD_TEST_HANDOFF.md)를 따른다.
+
+`yolo11n_coco_bus_baseline_float32.tflite`은 Android 연결 자체를 비교 확인하기 위한
+COCO `bus` 단일 클래스 기준선이며, 실제 통합 현장 검증 모델로 사용하지 않는다.
 
 Before an app integrator copies a model into Flutter Android assets, verify:
 
