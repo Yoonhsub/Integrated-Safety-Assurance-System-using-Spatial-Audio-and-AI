@@ -3,7 +3,7 @@
 현재 Android 현장 검증에 사용할 기본 산출물:
 
 ```text
-yolo11n_unified_bus_obstacle_v1_float32.tflite
+yolo11n_unified_bus_obstacle_stop_v1_float32.tflite
 ```
 
 앱 담당자에게 전달할 정확한 Android 입력·출력 규칙과 검수 기준은
@@ -16,7 +16,7 @@ python -m pip install -r ai_vision/requirements-tflite-export.txt
 python ai_vision/pipelines/export_android_tflite.py
 ```
 
-이 파일은 `bus`, `bus_door`, `parked_pm`, `pole`, `tree_trunk` 다섯 클래스를
+이 파일은 `bus`, `bus_door`, `parked_pm`, `pole`, `tree_trunk`, `bus_stop` 여섯 클래스를
 탐지하는 통합 현장 검증 모델이다. 정확한 사용 규칙과 평가 한계는
 [`../UNIFIED_MODEL_FIELD_TEST_HANDOFF.md`](../UNIFIED_MODEL_FIELD_TEST_HANDOFF.md)를 따른다.
 

@@ -24,10 +24,10 @@ def _xml(image_name: str, label: str) -> str:
 
 
 class PrepareAihubSidewalkObstacleDatasetTest(unittest.TestCase):
-    def test_keeps_only_pole_and_tree_trunk_and_splits_by_xml_sequence(self) -> None:
+    def test_keeps_target_classes_and_splits_by_xml_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for number, label in enumerate(("pole", "tree_trunk", "pole"), start=1):
+            for number, label in enumerate(("pole", "tree_trunk", "stop"), start=1):
                 folder = root / f"Bbox_{number:04d}"
                 folder.mkdir()
                 image_name = f"frame_{number}.jpg"
@@ -39,13 +39,15 @@ class PrepareAihubSidewalkObstacleDatasetTest(unittest.TestCase):
             result = prepare_dataset(root, target)
 
             self.assertEqual(len(frames), 3)
-            self.assertEqual(report["pole_boxes"], 2)
+            self.assertEqual(report["pole_boxes"], 1)
             self.assertEqual(report["tree_trunk_boxes"], 1)
+            self.assertEqual(report["stop_boxes"], 1)
             self.assertEqual(result["train_frames"] + result["val_frames"] + result["test_frames"], 3)
             labels = list(target.glob("**/labels/*.txt"))
             self.assertEqual(len(labels), 3)
             self.assertTrue(any(label.read_text(encoding="utf-8").startswith("0 ") for label in labels))
             self.assertTrue(any(label.read_text(encoding="utf-8").startswith("1 ") for label in labels))
+            self.assertTrue(any(label.read_text(encoding="utf-8").startswith("2 ") for label in labels))
 
 
 if __name__ == "__main__":

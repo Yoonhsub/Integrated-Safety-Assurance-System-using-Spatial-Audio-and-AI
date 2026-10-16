@@ -1,8 +1,8 @@
-"""기존 버스·문·킥보드·기둥·나무 데이터를 하나의 YOLO 데이터셋으로 만든다.
+"""기존 버스·문·킥보드·기둥·나무·정류장 데이터를 하나의 YOLO 데이터셋으로 만든다.
 
-통합 모델은 다음 다섯 클래스만 사용한다.
+통합 모델은 다음 여섯 클래스만 사용한다.
 
-``bus``, ``bus_door``, ``parked_pm``, ``pole``, ``tree_trunk``
+``bus``, ``bus_door``, ``parked_pm``, ``pole``, ``tree_trunk``, ``bus_stop``
 
 각 원본 데이터셋이 이미 학습·검증·테스트로 나뉘어 있으므로, 이 도구는 같은 split끼리만
 합친다. 특히 AI Hub 보행 데이터는 촬영 시퀀스 단위로 미리 분할된 결과를 사용한다.
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-CLASS_NAMES = ("bus", "bus_door", "parked_pm", "pole", "tree_trunk")
+CLASS_NAMES = ("bus", "bus_door", "parked_pm", "pole", "tree_trunk", "bus_stop")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -46,10 +46,10 @@ def _sources(root: Path) -> tuple[Source, ...]:
             class_map={0: 2},
         ),
         Source(
-            name="sidewalk_pole_tree",
-            root=temporary / "aihub_sidewalk_pole_tree_v1",
+            name="sidewalk_pole_tree_stop",
+            root=temporary / "aihub_sidewalk_pole_tree_stop_v1",
             split_names={"train": "train", "val": "val", "test": "test"},
-            class_map={0: 3, 1: 4},
+            class_map={0: 3, 1: 4, 2: 5},
         ),
     )
 
@@ -143,7 +143,7 @@ def prepare_dataset(project_root: Path, output: Path) -> dict[str, dict[str, int
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare the five-class unified field-test YOLO dataset.")
+    parser = argparse.ArgumentParser(description="Prepare the six-class unified field-test YOLO dataset.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     project_root = Path(__file__).resolve().parents[2]

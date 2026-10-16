@@ -1,4 +1,4 @@
-"""AI Hub 인도보행 XML을 ``pole``·``tree_trunk`` YOLO 데이터셋으로 변환한다.
+"""AI Hub 인도보행 XML을 보도·정류장 YOLO 데이터셋으로 변환한다.
 
 원본 사진과 XML은 변경하지 않는다. XML 한 파일은 같은 보행 촬영 시퀀스의 연속
 프레임 묶음이므로, train/val/test는 **XML 파일 단위**로 나눈다. 이 규칙은 거의 같은
@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-CLASS_IDS = {"pole": 0, "tree_trunk": 1}
+# AI Hub의 ``stop``은 벤치 또는 쉘터가 있는 버스/택시 정류장이다. 표지판만 있는
+# 정류장은 원천 라벨 정의에서 제외되므로, 앱에서는 "정류장 후보"로만 사용한다.
+CLASS_IDS = {"pole": 0, "tree_trunk": 1, "stop": 2}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
@@ -118,7 +120,7 @@ def _label_lines(frame: Frame) -> str:
 
 
 def prepare_dataset(source_root: Path, target_root: Path) -> dict[str, int]:
-    """AI Hub 보행 프레임을 두 클래스 YOLO 데이터셋으로 복사·변환한다."""
+    """AI Hub 보행 프레임을 기둥·나무·정류장 YOLO 데이터셋으로 복사·변환한다."""
     if target_root.exists():
         raise FileExistsError(f"target directory already exists: {target_root}")
     frames, report = collect_frames(source_root)
@@ -140,14 +142,14 @@ def prepare_dataset(source_root: Path, target_root: Path) -> dict[str, int]:
             report[f"{split}_frames"] += 1
             report[f"{split}_boxes"] += len(frame.boxes)
     (target_root / "data.yaml").write_text(
-        "train: train/images\nval: val/images\ntest: test/images\nnames:\n  0: pole\n  1: tree_trunk\n",
+        "train: train/images\nval: val/images\ntest: test/images\nnames:\n  0: pole\n  1: tree_trunk\n  2: bus_stop\n",
         encoding="utf-8",
     )
     return dict(report)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert AI Hub pedestrian XML to a pole/tree_trunk YOLO dataset.")
+    parser = argparse.ArgumentParser(description="Convert AI Hub pedestrian XML to a pole/tree_trunk/bus_stop YOLO dataset.")
     parser.add_argument("--source", type=Path, required=True, help="directory containing Bbox_* folders")
     parser.add_argument("--target", type=Path, required=True, help="new YOLO dataset directory")
     args = parser.parse_args()
