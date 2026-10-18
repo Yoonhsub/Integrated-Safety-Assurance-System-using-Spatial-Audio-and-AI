@@ -163,3 +163,6 @@ grounding, 음성 응답은 `Sulafat` voice를 우선 사용한다.
 ## Android 휴대폰 로컬 카메라 시험
 
 카메라/TFLite 추론은 로컬 상태에만 표시합니다. 실행과 모델 준비, 권한/플랫폼 제한은 [ANDROID_LOCAL_VISION.md](../../docs/rw/ANDROID_LOCAL_VISION.md)를 참조하세요. 별도 `lib/local_vision_main.dart` 진입점은 Firebase 및 보호 API가 없는 명시적 오프라인 시험용입니다. 실제 휴대폰 성능과 발열 검증은 별도로 필요합니다.
+
+## AI Vision 관찰 한국어 음성
+서버 관찰의 선택적 한국어 TTS와 우선순위·중복·만료 정책은 [VISION_OBSERVATION_TTS.md](../../docs/rw/VISION_OBSERVATION_TTS.md)를 참조하세요. 2026-10-19 PC Chrome에서 한국어 청취, 위험 안내 선점, 관찰 만료 후 TTS ON 상태의 자동 발화 복구를 확인했습니다. 실제 로드 JS와 제공 빌드의 SHA256도 일치했습니다. Android 실기기와 실제 도로 안전성은 미검증이며, 과거 Uncaught Error의 근본 원인은 미확정입니다. Vision 단독 승차 허용은 불가하고 Live Hold를 유지합니다.

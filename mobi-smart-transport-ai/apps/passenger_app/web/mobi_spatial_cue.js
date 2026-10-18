@@ -277,7 +277,8 @@
       resolve(false);
     }
     if (voiceSource) {
-      try { voiceSource.onended = null; voiceSource.stop(); } catch (e) {}
+      voiceSource.onended = null;
+      voiceSource.stop(); // Propagate unconfirmed output to the shutdown guard.
       voiceSource = null;
     }
   }
@@ -297,6 +298,7 @@
       }
       applyVoiceSpatial({ pan: pan, gain: gain });
       function startBuffer(buf) {
+        if (voiceResolve !== resolve) return; // Retired fetch/decode cannot play.
         if (!buf) { finish(false); return; }
         try {
           var src = c.createBufferSource();

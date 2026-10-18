@@ -3,6 +3,11 @@
   let nextStartTime = 0;
   let sampleRate = 24000;
   const activeSources = new Set();
+  const drainWaiters = new Set();
+  function resolveDrain(natural) {
+    for (const resolve of drainWaiters) resolve(natural);
+    drainWaiters.clear();
+  }
   let analyser = null;
   let analyserBuffer = null;
 
@@ -32,15 +37,19 @@
   }
 
   function stop() {
+    let failure = null;
     for (const source of activeSources) {
       try {
         source.stop();
-      } catch (_) {
-        // The source may already have completed naturally.
+        activeSources.delete(source);
+      } catch (error) {
+        // Keep unconfirmed sources tracked; another source must still stop.
+        failure = error;
       }
     }
-    activeSources.clear();
+    resolveDrain(false);
     nextStartTime = 0;
+    if (failure) throw failure;
   }
 
   function start(rate) {
@@ -74,7 +83,10 @@
     source.buffer = buffer;
     // 재생 경로에 analyser를 끼워 출력 진폭(주황 오로라)을 측정한다.
     source.connect(node);
-    source.addEventListener("ended", () => activeSources.delete(source));
+    source.addEventListener("ended", () => {
+      activeSources.delete(source);
+      if (!activeSources.size) resolveDrain(true);
+    });
     activeSources.add(source);
 
     const startAt = Math.max(nextStartTime, context.currentTime + 0.02);
@@ -107,7 +119,10 @@
     prepare: ensureContext,
     start,
     feedPcmBase64,
-    finish() {},
+    finish() {
+      if (!activeSources.size) return Promise.resolve(true);
+      return new Promise((resolve) => drainWaiters.add(resolve));
+    },
     stop,
     getOutputLevel,
   };

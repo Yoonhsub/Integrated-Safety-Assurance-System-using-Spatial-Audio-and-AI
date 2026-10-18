@@ -18,6 +18,8 @@ import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
 import '../services/mock_script_audio_service.dart';
 import '../services/spatial_cue_service.dart';
+import '../services/speech_request_scope.dart';
+import '../services/audio_shutdown.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
@@ -60,6 +62,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   static final String _apiBaseUrl = resolveApiBaseUrl();
 
   String _sessionId = '';
+  int _visionSpeechGeneration = 0;
+  final _speechScope = SpeechRequestScope();
+  final _routeRequestScope = SpeechRequestScope();
+  StreamSubscription<dynamic>? _speechAuthSubscription;
+  bool _speechAuthValid = true;
+  SpeechRequest _speechRequest() {
+    final uid = FirebaseAuthSession.instance.currentAccount?.uid;
+    final session = _sessionId;
+    return _speechScope.capture(() =>
+        mounted &&
+        _speechAuthValid &&
+        _sessionId == session &&
+        FirebaseAuthSession.instance.currentAccount?.uid == uid);
+  }
 
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
@@ -135,7 +151,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   void initState() {
     super.initState();
     _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
-    _cueService = AudioHapticCueService();
+    _cueService = AudioHapticCueService(onAudioError: (message) {
+      if (mounted) setState(() => _errorMessage = message);
+    });
     _spatialCueService = SpatialCueService();
     _mockScriptAudioService = MockScriptAudioService(
       webClipPlayer: (assetPath, pan, gain) => _spatialCueService.playClip(
@@ -145,6 +163,17 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       ),
       webClipStop: _spatialCueService.stopClip,
     );
+    final ownerUid = FirebaseAuthSession.instance.currentAccount?.uid;
+    _speechAuthSubscription =
+        FirebaseAuthSession.instance.authStateChanges.listen((account) {
+      if (account?.uid != ownerUid) {
+        _speechAuthValid = false;
+        unawaited(_stopAllCueAudio().catchError((Object _) {}));
+      }
+    }, onError: (Object _) {
+      _speechAuthValid = false;
+      unawaited(_stopAllCueAudio().catchError((Object _) {}));
+    });
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
@@ -166,15 +195,19 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   @override
   void dispose() {
+    _speechScope.dispose();
+    _routeRequestScope.dispose();
+    _speechAuthSubscription?.cancel();
     _liveRouteTimer?.cancel();
     _betterRouteTimer?.cancel();
     _voiceGuideService.cancelListening();
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _mockScenarioController.dispose();
-    _cueService.dispose();
-    _spatialCueService.dispose();
-    _mockScriptAudioService.dispose();
+    unawaited(_cueService.dispose().catchError((Object _) {}));
+    unawaited(observeAudioCleanup(_spatialCueService.dispose,
+        channel: 'Clip', report: debugPrint));
+    unawaited(_mockScriptAudioService.dispose().catchError((Object _) {}));
     super.dispose();
   }
 
@@ -779,65 +812,63 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
   Future<void> _speakLiveOnly(String message, {VoidCallback? onStart}) async {
     if (message.trim().isEmpty) return;
+    final request = _speechRequest();
     final scriptLineId = _nextLiveScriptLineId;
     _nextLiveScriptLineId = null;
-    if (scriptLineId != null) {
-      onStart?.call();
-      await _mockScriptAudioService.playScript(
-        scriptLineId,
-        fallbackText: message,
-      );
-      return;
-    }
-    try {
+    await request.run(() async {
+      if (scriptLineId != null) {
+        request.check();
+        onStart?.call();
+        await _mockScriptAudioService.playScript(scriptLineId,
+            fallbackText: message);
+        return;
+      }
       await _cueService.playLiveGeneratedSpeech(
-        baseUrl: _apiBaseUrl,
-        text: message,
-        onFirstAudio: onStart,
-      );
-    } catch (_) {
-      onStart?.call();
-      await _mockScriptAudioService.speakText(message);
-    }
-  }
-
-  Future<void> _speakAgentMessage(
-    String message, {
-    bool forceLocal = false,
-  }) async {
-    if (_isLiveMode) {
-      try {
-        await _cueService.playLiveGeneratedSpeech(
           baseUrl: _apiBaseUrl,
           text: message,
-        );
+          onFirstAudio: () {
+            if (request.valid) onStart?.call();
+          });
+    }, fallback: () async {
+      request.check();
+      onStart?.call();
+      await _mockScriptAudioService.speakText(message);
+    });
+  }
+
+  Future<void> _speakAgentMessage(String message,
+      {bool forceLocal = false, SpeechRequest? originatingRequest}) async {
+    final request = originatingRequest ?? _speechRequest();
+    Future<void> fallback() async {
+      request.check();
+      if (forceLocal) {
+        await _cueService.speakLocal(message);
         return;
-      } catch (_) {
-        // Fall back to the existing WAV endpoint if streaming is unavailable.
+      }
+      try {
+        final voiceProvider = _voiceChoice == 'gemini' ? 'gemini' : 'openai';
+        final voiceModel = switch (_voiceChoice) {
+          'realtime' => 'gpt-realtime-2',
+          'mini' => 'gpt-4o-mini-tts',
+          _ => null,
+        };
+        final audioBytes = await _client.synthesizeSpeech(
+            text: message, provider: voiceProvider, model: voiceModel);
+        request.check();
+        await _cueService.playGeneratedSpeech(audioBytes);
+      } on V3ApiException {
+        request.check();
+        await _cueService.playDing();
       }
     }
 
-    if (forceLocal) {
-      await _cueService.speakLocal(message);
-      return;
-    }
-
-    try {
-      final voiceProvider = _voiceChoice == 'gemini' ? 'gemini' : 'openai';
-      final voiceModel = switch (_voiceChoice) {
-        'realtime' => 'gpt-realtime-2',
-        'mini' => 'gpt-4o-mini-tts',
-        _ => null,
-      };
-      final audioBytes = await _client.synthesizeSpeech(
-        text: message,
-        provider: voiceProvider,
-        model: voiceModel,
-      );
-      await _cueService.playGeneratedSpeech(audioBytes);
-      return;
-    } on V3ApiException {
-      await _cueService.playDing();
+    if (_isLiveMode) {
+      await request.run(
+          () => _cueService.playLiveGeneratedSpeech(
+              baseUrl: _apiBaseUrl, text: message),
+          fallback: fallback);
+    } else {
+      await request.run(fallback);
     }
   }
 
@@ -959,6 +990,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<_RoutePlanningPreparation> _beginRoutePlanning() async {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     setState(() {
@@ -1002,6 +1034,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     V3RoutePlanResponse routePlan,
     Position? position,
   ) async {
+    _routeRequestScope.invalidate();
     final plan = routePlan.recommendedPlan;
     if (plan == null || plan.segments.isEmpty) {
       _stopLiveRoutePolling(clearStatus: true);
@@ -1063,32 +1096,44 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         current?.destination?.topCandidate?.name ?? curPlan.destinationName;
     if (destination.trim().isEmpty) return;
     final pos = _cachedPosition ?? _lastRoutePosition;
+    // Capture UID/session/speech cancellation before issuing HTTP. Never wrap
+    // a retired response in a fresh speech request after it arrives.
+    final speechRequest = _speechRequest();
+    final request = _routeRequestScope.captureLatest(() =>
+        speechRequest.valid &&
+        !_navStopped &&
+        _liveRoutePanelVisible &&
+        identical(_lastRoutePlan, current));
     try {
-      final fresh = await _client.routePlan(
-        q: destination,
-        originLat: pos?.latitude,
-        originLng: pos?.longitude,
-        mode: widget.dataMode,
+      await request.receive(
+        () => _client.routePlan(
+          q: destination,
+          originLat: pos?.latitude,
+          originLng: pos?.longitude,
+          mode: widget.dataMode,
+        ),
+        (fresh) async {
+          final cand = fresh.recommendedPlan;
+          if (cand == null || cand.segments.isEmpty) return;
+          final candKey = _segmentKey(cand.segments.first);
+          final curKey = _segmentKey(curPlan.segments.first);
+          if (candKey == curKey || candKey == _declinedRouteKey) return;
+          final candEta = _planEtaMinutes(fresh);
+          final curEta = _planEtaMinutes(current);
+          if (candEta == null || curEta == null) return;
+          if (candEta <= curEta - 3) {
+            request.check();
+            setState(() => _betterRoutePlan = fresh);
+            request.check();
+            await _speakAgentMessage(
+              '더 빠른 ${cand.segments.first.routeNo}번 경로를 찾았어. 약 $candEta분이야. 바꿀까?',
+              originatingRequest: request,
+            );
+          }
+        },
       );
-      final cand = fresh.recommendedPlan;
-      if (cand == null || cand.segments.isEmpty) return;
-      final candKey = _segmentKey(cand.segments.first);
-      final curKey = _segmentKey(curPlan.segments.first);
-      if (candKey == curKey || candKey == _declinedRouteKey) return;
-      final candEta = _planEtaMinutes(fresh);
-      final curEta = _planEtaMinutes(current);
-      if (candEta == null || curEta == null) return;
-      // 최소 3분 이상 빨라질 때만 권유(잦은 제안 방지).
-      if (candEta <= curEta - 3 && mounted) {
-        setState(() => _betterRoutePlan = fresh);
-        unawaited(
-          _speakAgentMessage(
-            '더 빠른 ${cand.segments.first.routeNo}번 경로를 찾았어. 약 $candEta분이야. 바꿀까?',
-          ),
-        );
-      }
     } catch (_) {
-      // 실패는 조용히 무시하고 다음 주기에 다시 시도한다.
+      // A current transport/audio error does not mutate route or safety state.
     }
   }
 
@@ -1177,6 +1222,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// '길찾기 중지': 지도/실시간 패널을 끄고 30초 폴링을 멈춘다.
   /// 새 목적지를 말하면 _activateLiveRoutePanel에서 다시 시작된다.
   void _stopNavigation() {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     _betterRouteTimer?.cancel();
@@ -1193,10 +1239,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _lastRoutePlan = null;
       _lastArrivals = null;
     });
-    unawaited(_cueService.stopCue());
+    unawaited(observeAudioCleanup(_cueService.stopCue,
+        channel: '길찾기 음성', report: debugPrint));
   }
 
   void _stopLiveRoutePolling({bool clearStatus = false}) {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     _betterRouteTimer?.cancel();
@@ -1365,9 +1413,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _stopAllCueAudio() async {
-    await _cueService.stopCue();
-    await _spatialCueService.stopCue();
-    await _mockScriptAudioService.stop();
+    _speechScope.invalidate();
+    _routeRequestScope.invalidate();
+    // Cleanup of one output must not prevent cancellation of the others.
+    await Future.wait([
+      _cueService.stopCue(),
+      _spatialCueService.stopCue(),
+      _mockScriptAudioService.stop(),
+    ]);
   }
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
@@ -1731,6 +1784,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _resetSession() async {
+    setState(() => _visionSpeechGeneration++);
     await _runGuarded(() async {
       await _stopAllCueAudio();
       final state = await _client.resetSession(sessionId: _sessionId);
@@ -1796,7 +1850,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           ),
           IconButton(
             tooltip: '로그아웃',
-            onPressed: FirebaseAuthSession.instance.signOut,
+            onPressed: () async {
+              _speechAuthValid = false;
+              try {
+                await _stopAllCueAudio();
+              } catch (_) {
+                // Logout still invalidates all pending voice requests.
+              } finally {
+                await FirebaseAuthSession.instance.signOut();
+              }
+            },
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -1820,14 +1883,19 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (_sessionId.isNotEmpty)
-                    VisionObservationPanel(
-                        sessionId: _sessionId,
-                        ownerUid:
-                            FirebaseAuthSession.instance.currentAccount?.uid,
-                        authChanges: FirebaseAuthSession
-                            .instance.authStateChanges
-                            .map((account) => account?.uid),
-                        fetch: _client.fetchVisionObservations),
+                    ScenarioObservationBuilder(
+                      controller: _mockScenarioController,
+                      builder: (context, isPlaying) => VisionObservationPanel(
+                          sessionId: _sessionId,
+                          scopeVersion: _visionSpeechGeneration,
+                          priorityBlocked: isPlaying,
+                          ownerUid:
+                              FirebaseAuthSession.instance.currentAccount?.uid,
+                          authChanges: FirebaseAuthSession
+                              .instance.authStateChanges
+                              .map((account) => account?.uid),
+                          fetch: _client.fetchVisionObservations),
+                    ),
                   _HeroStatusCard(
                     isBusy: _isBusy,
                     stateLabel: state?.state ?? 'LOADING',
@@ -2241,6 +2309,24 @@ class _HeroStatusCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The same controller drives the scenario card and Observation's own lease.
+/// Audio shutdown leases remain independently owned by their services.
+class ScenarioObservationBuilder extends StatelessWidget {
+  const ScenarioObservationBuilder({
+    super.key,
+    required this.controller,
+    required this.builder,
+  });
+  final MockScenarioController controller;
+  final Widget Function(BuildContext context, bool isPlaying) builder;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => builder(context, controller.state.isPlaying),
+      );
 }
 
 class _MockScenarioSimulationCard extends StatelessWidget {
