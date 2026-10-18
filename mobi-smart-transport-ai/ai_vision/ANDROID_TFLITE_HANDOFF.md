@@ -8,7 +8,7 @@
 
 | 항목 | 위치 | 용도 |
 | --- | --- | --- |
-| **통합 현장 검증 TFLite 모델** | `ai_vision/models/yolo11n_unified_bus_obstacle_stop_v1_float32.tflite` | 버스·버스 문·방치 전동 킥보드·기둥·나무 줄기·버스 정류장을 한 번에 탐지하는 현재 Android 검증 모델 |
+| **통합 현장 검증 TFLite 모델** | `ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite` | 버스·버스 문·방치 전동 킥보드·기둥·나무 줄기·버스 정류장을 한 번에 탐지하는 현재 Android 검증 모델 |
 | 버스 문 TFLite 모델 | `ai_vision/models/yolo11n_bus_door_v1_float32.tflite` | 휴대폰 내 버스·버스 문 탐지 |
 | 일반 버스 기준선 | `ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite` | 버스 단일 클래스 비교용 |
 | 전동 킥보드 현장 검증 모델 | `ai_vision/models/yolo11n_parked_pm_pilot_v1_float32.tflite` | `parked_pm` 탐지 현장 검증 |

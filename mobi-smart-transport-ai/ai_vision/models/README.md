@@ -3,7 +3,7 @@
 현재 Android 현장 검증에 사용할 기본 산출물:
 
 ```text
-yolo11n_unified_bus_obstacle_stop_v1_float32.tflite
+yolo11n_unified_bus_obstacle_stop_v2_float32.tflite
 ```
 
 앱 담당자에게 전달할 정확한 Android 입력·출력 규칙과 검수 기준은
