@@ -6,17 +6,20 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "mobi-smart-transport"
+sys.path.insert(0, str(ROOT / "backend/api"))
+from app.cloud_test import validate_web_app
 DEFINE_KEYS = {
     "MOBI_FIREBASE_API_KEY", "MOBI_FIREBASE_APP_ID", "MOBI_FIREBASE_MESSAGING_SENDER_ID",
     "MOBI_FIREBASE_PROJECT_ID", "MOBI_FIREBASE_AUTH_DOMAIN",
 }
 
 
-def load_defines(path: Path) -> dict[str, str]:
+def load_defines(path: Path, app_name: str | None = None) -> dict[str, str]:
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or set(data) != DEFINE_KEYS:
         raise ValueError("Defines must contain only the five public Firebase web configuration keys")
@@ -24,6 +27,8 @@ def load_defines(path: Path) -> dict[str, str]:
         raise ValueError("Replace all web configuration placeholders")
     if data["MOBI_FIREBASE_PROJECT_ID"] != PROJECT:
         raise ValueError("Firebase project differs from the approved migration target")
+    if app_name is not None:
+        validate_web_app(data, app_name, PROJECT)
     return data
 
 
@@ -64,7 +69,7 @@ def prepare_web(output: Path, passenger: Path, driver: Path, api_url: str, flutt
     if (parsed.scheme != "https" or not parsed.hostname or parsed.hostname in {"localhost", "127.0.0.1"}
             or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}):
         raise ValueError("Supply the deployed API's HTTPS origin")
-    configs = {"passenger": load_defines(passenger), "driver": load_defines(driver)}
+    configs = {"passenger": load_defines(passenger, "passenger"), "driver": load_defines(driver, "driver")}
     if configs["passenger"]["MOBI_FIREBASE_APP_ID"] == configs["driver"]["MOBI_FIREBASE_APP_ID"]:
         raise ValueError("Passenger and Driver must use their respective registered web app IDs")
     reserve_output(output)

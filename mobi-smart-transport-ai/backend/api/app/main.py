@@ -152,7 +152,7 @@ app.include_router(v3_navigation.router, prefix="/navigation", tags=["v3-navigat
 @app.get("/health")
 def health() -> dict[str, object]:
     firebase = get_firebase_client()
-    return {
+    result = {
         "status": "ok",
         "service": "mobi-backend-api",
         "environment": APP_ENV,
@@ -162,6 +162,12 @@ def health() -> dict[str, object]:
         "firebaseLastError": None,  # Detailed diagnostics require /firebase/status authentication.
         "dataMode": "mock" if os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("true", "1", "yes") else "live",
     }
+
+    from app.cloud_test import requested, validate
+    if requested():
+        scope = validate()
+        result.update(cloudTestProjectId=scope.project_id, cloudTestRunId=scope.run_id)
+    return result
 
 
 @app.get("/", include_in_schema=False)

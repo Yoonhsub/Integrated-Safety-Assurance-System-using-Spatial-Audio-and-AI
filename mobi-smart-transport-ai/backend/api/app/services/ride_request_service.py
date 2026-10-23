@@ -43,6 +43,11 @@ class RideRequestService:
 
     def create(self, payload: RideRequestCreate, idempotency_key: str | None = None) -> RideRequestRecord:
         principal = require_role("passenger")
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            if payload.userId not in {scope.uid('passenger-a'), scope.uid('passenger-b')}:
+                raise auth_error(403, "Passenger is outside the cloud-test run")
         if principal.role != "admin" and payload.userId != principal.uid:
             raise auth_error(403, "Cannot create a request for another user")
         if idempotency_key is not None:
@@ -70,6 +75,27 @@ class RideRequestService:
         return self.get(request_id)
 
     def _resolve_assignment(self, payload: RideRequestCreate, principal: Principal) -> RideRequestCreate:
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            if not valid_key(payload.routeId):
+                raise auth_error(403, "Invalid cloud-test route")
+            run = self.firebase.get(scope.path)
+            assignment = run.get('assignments', {}).get(payload.routeId) if isinstance(run, dict) else None
+            if (not isinstance(run, dict) or run.get('projectId') != scope.project_id
+                    or run.get('runId') != scope.run_id or run.get('state') != 'ready'):
+                raise auth_error(503, "Cloud-test dispatch is not ready")
+            if (not isinstance(assignment, dict) or assignment.get('simulation') is not True
+                    or assignment.get('busNo') != payload.busNo
+                    or assignment.get('driverId') not in {scope.uid('driver-502'), scope.uid('driver-105')}
+                    or payload.targetDriverId not in (None, assignment.get('driverId'))):
+                raise auth_error(403, "Cloud-test route assignment denied")
+            profile = self.firebase.get('/drivers/' + assignment['driverId'])
+            if (not isinstance(profile, dict) or profile.get('cloudTestRun') != scope.run_id
+                    or profile.get('simulation') is not True or profile.get('routeId') != payload.routeId
+                    or profile.get('busNo') != payload.busNo):
+                raise auth_error(403, "Cloud-test driver profile denied")
+            payload = payload.model_copy(update={'targetDriverId': assignment['driverId']})
         # Explicit synthetic dispatch only. Never infer a real vehicle assignment.
         from app.local_emulator import emulator_requested, validate_local_emulators
         if emulator_requested() and not payload.targetDriverId:
@@ -204,6 +230,12 @@ class RideRequestService:
         if not isinstance(raw, dict):
             raise HTTPException(status_code=404, detail=f"Ride request not found: {request_id}")
         record = self._record_from_raw(request_id, raw)
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            if (record.userId not in {scope.uid('passenger-a'), scope.uid('passenger-b')}
+                    or record.targetDriverId not in {scope.uid('driver-502'), scope.uid('driver-105')}):
+                raise auth_error(403, "Request is outside the cloud-test run")
         if principal.role == "passenger" and record.userId != principal.uid:
             raise auth_error(403, "Request access denied")
         if principal.role == "driver" and record.targetDriverId != principal.driver_id:
@@ -252,6 +284,10 @@ class RideRequestService:
         principal = require_role("driver")
         if principal.role != "admin" and driver_id != principal.driver_id:
             raise auth_error(403, "Driver access denied")
+        from app.cloud_test import requested, validate
+        scope = validate() if requested() else None
+        if scope and driver_id not in {scope.uid('driver-502'), scope.uid('driver-105')}:
+            raise auth_error(403, "Driver is outside the cloud-test run")
         raw_requests = self.firebase.get(self.ROOT_PATH)
         if not isinstance(raw_requests, dict):
             return DriverRideRequestsResponse(driverId=driver_id, requests=[])
@@ -259,6 +295,8 @@ class RideRequestService:
         records: list[RideRequestRecord] = []
         for request_id, value in raw_requests.items():
             if not isinstance(value, dict):
+                continue
+            if scope and value.get('userId') not in {scope.uid('passenger-a'), scope.uid('passenger-b')}:
                 continue
             if value.get("targetDriverId") != driver_id:
                 continue

@@ -142,3 +142,44 @@ def test_incorrect_web_base_path_blocks_packaging(tmp_path):
     with pytest.raises(ValueError, match="base href"):
         bundle.finalize_web(tmp_path, "https://example.run.app")
     assert not (tmp_path / "firebase.json").exists()
+
+
+
+@pytest.mark.parametrize('name',['passenger','driver'])
+def test_build_uses_app_specific_define_file_and_keeps_single_site_paths(tmp_path,monkeypatch,name):
+    from app.cloud_test import MAIN_WEB_APP_IDS
+    configs={}
+    for app_name in ('passenger','driver'):
+        p=tmp_path/f'{app_name}-public.json'
+        p.write_text(json.dumps({'MOBI_FIREBASE_API_KEY':'public-test-key',
+            'MOBI_FIREBASE_APP_ID':MAIN_WEB_APP_IDS[app_name],
+            'MOBI_FIREBASE_MESSAGING_SENDER_ID':'882602390759',
+            'MOBI_FIREBASE_PROJECT_ID':bundle.PROJECT,
+            'MOBI_FIREBASE_AUTH_DOMAIN':bundle.PROJECT+'.firebaseapp.com'}))
+        configs[app_name]=p
+    commands=[];output=tmp_path/'prepared-web'
+    def run(args,cwd,**kwargs):
+        commands.append((args,Path(cwd)))
+        if args[1:3]==['build','web']:
+            app_name=Path(cwd).name.replace('_app','')
+            target=Path(cwd)/'build/web/index.html';target.parent.mkdir(parents=True)
+            target.write_text(f'<base href="/{app_name}/">')
+    monkeypatch.setattr(bundle.subprocess,'run',run)
+    bundle.prepare_web(output,configs['passenger'],configs['driver'],'https://example.invalid','flutter-fixture')
+    args,cwd=next((a,c) for a,c in commands if a[1:3]==['build','web'] and c.name==name+'_app')
+    assert f'--base-href=/{name}/' in args
+    assert f'--dart-define-from-file={output / (name+"-defines.json")}' in args
+    data=json.loads((output/f'{name}-defines.json').read_text())
+    assert data['MOBI_FIREBASE_APP_ID']==MAIN_WEB_APP_IDS[name]
+    assert data['MOBI_API_BASE_URL']=='https://example.invalid'
+    hosting=json.loads((output/'firebase.compile-check.json').read_text())
+    assert hosting['hosting']['site']=='mobi-smart-transport'
+
+
+def test_deployment_prepare_rejects_swapped_id_before_build(tmp_path,monkeypatch):
+    from app.cloud_test import MAIN_WEB_APP_IDS
+    data={'MOBI_FIREBASE_API_KEY':'public-test-key','MOBI_FIREBASE_APP_ID':MAIN_WEB_APP_IDS['driver'],
+          'MOBI_FIREBASE_MESSAGING_SENDER_ID':'882602390759','MOBI_FIREBASE_PROJECT_ID':bundle.PROJECT,
+          'MOBI_FIREBASE_AUTH_DOMAIN':bundle.PROJECT+'.firebaseapp.com'}
+    path=tmp_path/'passenger.json';path.write_text(json.dumps(data))
+    with pytest.raises(ValueError,match='mapping'):bundle.load_defines(path,'passenger')

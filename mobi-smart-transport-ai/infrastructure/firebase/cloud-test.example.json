@@ -1,0 +1,23 @@
+{
+  "projectId": "<console-confirmed-test-project-id>",
+  "databaseUrl": "<console-confirmed-default-rtdb-https-url>",
+  "runId": "<new-approved-run-id>",
+  "backendPort": 8011,
+  "passengerPort": 5183,
+  "driverPort": 5184,
+  "passenger": {
+    "MOBI_FIREBASE_API_KEY": "<console-confirmed-passenger-public-api-key>",
+    "MOBI_FIREBASE_APP_ID": "<console-confirmed-passenger-web-app-id>",
+    "MOBI_FIREBASE_MESSAGING_SENDER_ID": "<console-confirmed-project-number>",
+    "MOBI_FIREBASE_PROJECT_ID": "<console-confirmed-test-project-id>",
+    "MOBI_FIREBASE_AUTH_DOMAIN": "<console-confirmed-test-project-id>.firebaseapp.com"
+  },
+  "driver": {
+    "MOBI_FIREBASE_API_KEY": "<console-confirmed-driver-public-api-key>",
+    "MOBI_FIREBASE_APP_ID": "<console-confirmed-driver-web-app-id>",
+    "MOBI_FIREBASE_MESSAGING_SENDER_ID": "<console-confirmed-project-number>",
+    "MOBI_FIREBASE_PROJECT_ID": "<console-confirmed-test-project-id>",
+    "MOBI_FIREBASE_AUTH_DOMAIN": "<console-confirmed-test-project-id>.firebaseapp.com"
+  },
+  "mainProjectTest": false
+}

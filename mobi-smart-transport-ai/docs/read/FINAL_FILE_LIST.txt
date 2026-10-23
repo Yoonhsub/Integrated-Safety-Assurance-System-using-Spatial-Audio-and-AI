@@ -586,3 +586,11 @@ apps/passenger_app/test/web_clip_lifecycle_test.cjs
 apps/passenger_app/test/route_audio_lifecycle_test.dart
 
 apps/passenger_app/test/mock_scenario_audio_cancellation_test.dart
+backend/api/app/cloud_test.py
+scripts/cloud_test.py
+backend/api/tests/test_cloud_test.py
+infrastructure/firebase/cloud-test.example.json
+docs/rw/FIREBASE_CLOUD_TEST.md
+scripts/cloud_test_lifecycle.py
+backend/api/tests/test_cloud_test_lifecycle.py
+backend/api/tests/test_cloud_test_lifecycle_emulator.py

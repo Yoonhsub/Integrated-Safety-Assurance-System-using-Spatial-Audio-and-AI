@@ -68,6 +68,9 @@ class FirebaseSettings:
 
 def load_firebase_settings() -> FirebaseSettings:
     _load_env()
+    from app.cloud_test import requested, validate
+    if requested():
+        validate()
     from app.local_emulator import emulator_requested, validate_local_emulators
     local_demo = emulator_requested()
     if local_demo:
@@ -232,7 +235,11 @@ class FirebaseClient:
             from firebase_admin import credentials, db
 
             try:
-                firebase_admin.get_app()
+                existing_app = firebase_admin.get_app()
+                from app.cloud_test import requested
+                if requested() and (existing_app.project_id != self.settings.project_id
+                        or existing_app.options.get('databaseURL') != self.settings.database_url):
+                    raise RuntimeError('Firebase app target differs from cloud-test configuration')
             except ValueError:
                 from app.local_emulator import EmulatorCredential
                 cred = EmulatorCredential() if self.settings.use_emulator else (
@@ -302,8 +309,11 @@ class FirebaseClient:
 
         For real Firebase this performs a set/get/delete round-trip against a
         dedicated probe node. For mock mode it round-trips through the in-memory
-        store. Never raises; failures are reported in the returned dict.
+        store. Cloud-test blocks write probes; other probe failures are reported.
         """
+        from app.cloud_test import requested
+        if requested():
+            raise HTTPException(403, "Write probes are disabled in cloud-test")
         from datetime import datetime, timezone
 
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -355,6 +365,13 @@ class FirebaseClient:
     def _real_reference(self, path: str):
         if not self.initialize():
             raise RuntimeError("Firebase Admin SDK is not configured for real RTDB access.")
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            if (self.settings.project_id != scope.project_id
+                    or self.settings.database_url != scope.database_url):
+                raise RuntimeError('Cloud-test storage target changed')
+            path = scope.storage_path(path)
         return self._db_module.reference(path)
 
     def _use_memory(self) -> bool:
@@ -363,22 +380,45 @@ class FirebaseClient:
             raise HTTPException(status_code=503, detail="Firebase storage unavailable")
         return use_memory
 
+    def _real_operation(self, path: str, operation):
+        from app.cloud_test import requested, validate
+        try:
+            if requested():
+                scope = validate()
+                if (self.settings.project_id != scope.project_id
+                        or self.settings.database_url != scope.database_url):
+                    raise RuntimeError('Cloud-test storage target changed')
+            return operation(self._real_reference(path))
+        except HTTPException:
+            raise
+        except Exception:
+            if requested():
+                raise HTTPException(503, 'Firebase storage unavailable') from None
+            raise
+
     def get(self, path: str) -> Any:
         if self._use_memory():
             return self._memory_db.get(path)
-        return self._real_reference(path).get()
+        return self._real_operation(path, lambda ref: ref.get())
 
     def set(self, path: str, value: Any) -> None:
         if self._use_memory():
             self._memory_db.set(path, value)
             return
-        self._real_reference(path).set(value)
+        self._real_operation(path, lambda ref: ref.set(value))
 
     def update(self, path: str, value: dict[str, Any]) -> None:
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            for key in value:
+                if not isinstance(key, str) or key.startswith('/'):
+                    raise HTTPException(503, 'Invalid cloud-test update path')
+                scope.storage_path('/update/' + key)
         if self._use_memory():
             self._memory_db.update(path, value)
             return
-        self._real_reference(path).update(value)
+        self._real_operation(path, lambda ref: ref.update(value))
 
     def transaction(self, path: str, transform: Callable[[Any], Any]) -> Any:
         """Commit against the latest record; callbacks must be side-effect free.
@@ -395,18 +435,25 @@ class FirebaseClient:
             raise HTTPException(409, "Concurrent update conflict; reload the request") from exc
         except exceptions.FirebaseError as exc:
             raise HTTPException(503, "Firebase transaction unavailable") from exc
+        except HTTPException:
+            raise
+        except Exception:
+            from app.cloud_test import requested
+            if requested():
+                raise HTTPException(503, "Firebase transaction unavailable") from None
+            raise
 
     def push(self, path: str, value: Any) -> str:
         if self._use_memory():
             return self._memory_db.push(path, value)
-        ref = self._real_reference(path).push(value)
+        ref = self._real_operation(path, lambda ref: ref.push(value))
         return str(ref.key)
 
     def delete(self, path: str) -> None:
         if self._use_memory():
             self._memory_db.delete(path)
             return
-        self._real_reference(path).delete()
+        self._real_operation(path, lambda ref: ref.delete())
 
     def clear_mock_store(self) -> None:
         self._memory_db.clear()

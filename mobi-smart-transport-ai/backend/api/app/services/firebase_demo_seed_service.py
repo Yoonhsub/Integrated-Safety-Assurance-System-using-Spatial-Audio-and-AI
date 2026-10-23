@@ -159,6 +159,12 @@ class FirebaseDemoSeedService:
         Never raises: on any failure it records the error and reports it so the
         API layer can respond without a 500.
         """
+        # Never use this legacy demo writer against cloud staging/production.
+        import os
+        from fastapi import HTTPException
+        from app.cloud_test import requested
+        if requested() or os.getenv('APP_ENV', 'development').lower() in {'staging', 'production'}:
+            raise HTTPException(403, 'Legacy demo seeding is disabled in cloud environments')
         # Ensure initialization is attempted with current settings.
         self._firebase.initialize(force=True)
 

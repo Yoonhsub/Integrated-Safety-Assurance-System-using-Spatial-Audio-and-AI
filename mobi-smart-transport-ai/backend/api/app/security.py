@@ -98,6 +98,12 @@ def firebase_auth_app():
     # A named app avoids trusting the storage client's mock/fallback state.
     # Unsigned emulator tokens are accepted only in the isolated local demo.
     from app.local_emulator import emulator_requested, validate_local_emulators, EmulatorCredential
+    from app.cloud_test import requested, validate
+    if requested():
+        try:
+            validate()
+        except ValueError:
+            raise auth_error(503, "Cloud-test authentication configuration is invalid") from None
     local_demo = emulator_requested()
     if local_demo:
         try:
@@ -156,6 +162,14 @@ def verify_user(token: str) -> Principal:
         # Includes certificate fetch, IAM, account lookup/network and service errors.
         raise auth_error(503, "Authentication service unavailable") from None
     role_claims = user.custom_claims or {}
+    from app.cloud_test import requested, validate, account_allowed
+    if requested():
+        try:
+            scope = validate()
+        except ValueError:
+            raise auth_error(503, "Cloud-test authentication configuration is invalid") from None
+        if not account_allowed(uid, role_claims, scope):
+            raise auth_error(403, "Account is outside the approved cloud-test run")
     role = role_claims.get("mobi_role")
     driver_id = role_claims.get("mobi_driver_id")
     if not valid_key(uid) or not isinstance(role, str) or role not in {"passenger", "driver", "admin", "vision_producer"}:
@@ -192,6 +206,11 @@ async def authorize_api(connection: HTTPConnection, principal=Depends(get_princi
     if key in PUBLIC:
         yield
         return
+    from app.cloud_test import requested, OPERATIONS
+    if requested() and key not in OPERATIONS:
+        if connection.scope["type"] == "websocket":
+            raise WebSocketException(code=1008, reason="Outside cloud-test scope")
+        raise auth_error(403, "Operation is outside the cloud-test scope")
     allowed = POLICY.get(key, set())
     if principal is None or principal.role not in allowed:
         if connection.scope["type"] == "websocket":
