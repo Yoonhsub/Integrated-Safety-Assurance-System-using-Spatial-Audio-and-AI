@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'wit_sensor_protocol.dart';
 import 'direction_audio_panel.dart';
+import 'direction_pan.dart';
 
 const witSensorMac = 'F1:35:40:62:CD:43';
 
@@ -30,6 +31,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   final _device = BluetoothDevice.fromId(witSensorMac);
   final _decoder = WitSensorDecoder();
   final _age = Stopwatch();
+  final _clock = Stopwatch()..start();
+  final _yawFilter = YawFilter();
+  double? _filteredYaw;
   StreamSubscription<List<int>>? _notifications;
   StreamSubscription<BluetoothConnectionState>? _connection;
   Timer? _ticker;
@@ -67,6 +71,8 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _reference = null;
     _frames = 0;
     _decoder.reset();
+    _yawFilter.reset();
+    _filteredYaw = null;
     _status = '권한 확인 중…';
     _refresh();
     try {
@@ -125,6 +131,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
           if (!_current(generation)) return;
           final readings = _decoder.add(bytes);
           if (readings.isEmpty) return;
+          for (final reading in readings) {
+            _filteredYaw = _yawFilter.add(reading.z, _clock.elapsed);
+          }
           _latest = readings.last;
           _frames += readings.length;
           _age
@@ -165,6 +174,8 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _latest = null;
     _reference = null;
     _decoder.reset();
+    _yawFilter.reset();
+    _filteredYaw = null;
     _age.stop();
     _status = message;
     _refresh();
@@ -210,6 +221,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             if (reading != null) ...[
               Text('AngleX: ${reading.x.toStringAsFixed(2)}°'),
               Text('AngleY: ${reading.y.toStringAsFixed(2)}°'),
+              Text('필터 Yaw: ${_filteredYaw?.toStringAsFixed(2)}°'),
               Text(
                 'AngleZ: ${reading.z.toStringAsFixed(2)}°',
                 style: Theme.of(context).textTheme.headlineSmall,
@@ -220,7 +232,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
               ),
               if (_reference != null && _fresh)
                 Text(
-                  '기준 대비 Z: ${relativeAngle(reading.z, _reference!).toStringAsFixed(2)}°',
+                  '기준 대비 Z: ${relativeAngle(_filteredYaw!, _reference!).toStringAsFixed(2)}°',
                 ),
             ] else
               const Text('아직 각도를 수신하지 않았습니다.'),
@@ -243,7 +255,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                 ),
                 OutlinedButton(
                   onPressed: _fresh
-                      ? () => setState(() => _reference = _latest!.z)
+                      ? () => setState(() => _reference = _filteredYaw!)
                       : null,
                   child: const Text('현재 Z를 기준각으로'),
                 ),
@@ -254,7 +266,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             ),
             DirectionAudioPanel(
               key: const ValueKey('direction-audio'),
-              z: _latest?.z,
+              z: _filteredYaw,
               reference: _reference,
               fresh: _fresh,
               sensorAgeMs: _age.elapsedMilliseconds,

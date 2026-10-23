@@ -90,4 +90,16 @@ void main() {
     );
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  testWidgets(
+    'rear target stops native output instead of playing a front cue',
+    (tester) async {
+      await tester.pumpWidget(panel());
+      await start(tester);
+      await tester.pumpWidget(panel(z: 180));
+      await tester.pump();
+      expect(calls.last.method, 'stop');
+      expect(find.text('후방 목표 · 재생 중지'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

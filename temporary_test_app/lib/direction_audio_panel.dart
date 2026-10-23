@@ -31,6 +31,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   bool _playing = false, _starting = false, _syncing = false;
   bool _reverse = false, _disposed = false;
   bool _proximity = true;
+  double _objectAngle = 0;
   int _generation = 0;
   String _message = '정면을 보고 위의 기준각 버튼을 누른 뒤 시작하세요.';
   String _route = '';
@@ -47,12 +48,20 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       widget.sensorAgeMs < 1000 &&
       widget.z != null &&
       widget.reference != null;
-  bool get _ready => _sensorReady && (!_proximity || _beaconFresh);
+  bool get _ready =>
+      _sensorReady &&
+      (!_proximity || _beaconFresh) &&
+      (_pan?.supported ?? false);
   int get _interval => _proximity && _beaconFresh
       ? beaconToneIntervalMs(widget.beaconRssi!)
       : 1000;
-  DirectionPan? get _pan => _ready
-      ? DirectionPan.fromZ(widget.z!, widget.reference!, reverse: _reverse)
+  DirectionPan? get _pan => _sensorReady
+      ? DirectionPan.fromZ(
+          widget.z!,
+          widget.reference!,
+          reverse: _reverse,
+          objectAngle: _objectAngle,
+        )
       : null;
   void _refresh() {
     if (mounted && !_disposed) setState(() {});
@@ -109,7 +118,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   Future<void> _sync() async {
     if (!_playing || _syncing || _disposed) return;
     if (!_ready) {
-      await _stop('센서 또는 기준 비콘 수신이 지연되어 테스트음을 중지했습니다.');
+      await _stop('수신 상태 또는 목표각을 확인해주세요. 후방 목표는 5방향 출력 범위 밖입니다.');
       return;
     }
     if (_duration.elapsed >= const Duration(seconds: 30)) {
@@ -178,7 +187,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       children: [
         const Divider(height: 28),
         Text(
-          '가상 정면 목표 · 방향 테스트음',
+          '5방향 목표 · 방향 테스트음',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const Text(
@@ -200,6 +209,26 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
                     : '기준 비콘 수신 대기 · 60초 스캔을 시작해주세요')
               : '간격 조절 꺼짐 · 고정 간격 1초',
         ),
+        DropdownButton<double>(
+          value: _objectAngle,
+          isExpanded: true,
+          items: FiveWayCue.values
+              .map(
+                (cue) => DropdownMenuItem(
+                  value: cue.angle,
+                  child: Text('수동 목표: ${cue.label} (${cue.angle.round()}°)'),
+                ),
+              )
+              .toList(),
+          onChanged: _playing || _starting
+              ? null
+              : (value) {
+                  if (value != null) setState(() => _objectAngle = value);
+                },
+        ),
+        const Text('목표각은 기준 방향에 대한 수동 입력입니다. Vision/Context 연결은 아직 없습니다.'),
+        if (pan != null)
+          Text(pan.supported ? '출력 Cue: ${pan.cue.code}' : '후방 목표 · 재생 중지'),
         if (pan != null)
           Text(
             '목표 상대각: ${pan.targetAngle.toStringAsFixed(1)}° · 왼쪽 ${(pan.left * 100).round()}% / 오른쪽 ${(pan.right * 100).round()}%',
