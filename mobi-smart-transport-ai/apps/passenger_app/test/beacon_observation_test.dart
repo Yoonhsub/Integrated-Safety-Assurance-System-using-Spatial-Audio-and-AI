@@ -16,15 +16,22 @@ Map<String, dynamic> snapshot(String sessionId, {double ttl = 5}) => {
           'validForSeconds': ttl,
           'guidanceEligible': false,
           'vehicleIdentityVerified': false,
-        }
+        },
       ],
     };
 
 void main() {
-  testWidgets('shows a test measurement without offering an audio action', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: BeaconObservationPanel(
-      sessionId: 's', fetch: (sid) async => snapshot(sid),
-    )));
+  testWidgets('shows a test measurement without offering an audio action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BeaconObservationPanel(
+          sessionId: 's',
+          fetch: (sid) async => snapshot(sid),
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.textContaining('test-beacon'), findsOneWidget);
     expect(find.textContaining('테스트 입력'), findsOneWidget);
@@ -33,50 +40,84 @@ void main() {
   });
 
   testWidgets('rejects data from a different session', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: BeaconObservationPanel(
-      sessionId: 's', fetch: (_) async => snapshot('other'),
-    )));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BeaconObservationPanel(
+          sessionId: 's',
+          fetch: (_) async => snapshot('other'),
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.textContaining('test-beacon'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('hides expired measurements and ignores a response after disposal', (tester) async {
-    var requests = 0;
-    final pending = Completer<Map<String, dynamic>>();
-    await tester.pumpWidget(MaterialApp(home: BeaconObservationPanel(
-      sessionId: 's', fetch: (sid) => ++requests == 1
-          ? Future.value(snapshot(sid, ttl: 0)) : pending.future,
-    )));
-    await tester.pump();
-    expect(find.textContaining('test-beacon'), findsNothing);
-    await tester.pump(const Duration(seconds: 2));
-    expect(find.textContaining('test-beacon'), findsNothing);
-    await tester.pumpWidget(const SizedBox());
-    pending.complete(snapshot('s'));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'hides expired measurements and ignores a response after disposal',
+    (tester) async {
+      var requests = 0;
+      final pending = Completer<Map<String, dynamic>>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BeaconObservationPanel(
+            sessionId: 's',
+            fetch: (sid) => ++requests == 1
+                ? Future.value(snapshot(sid, ttl: 0))
+                : pending.future,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('test-beacon'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.textContaining('test-beacon'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      pending.complete(snapshot('s'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('auth change clears current content and discards late requests', (tester) async {
+  testWidgets('auth change clears current content and discards late requests', (
+    tester,
+  ) async {
     final auth = StreamController<String?>();
-    await tester.pumpWidget(MaterialApp(home: BeaconObservationPanel(
-      sessionId: 's', ownerUid: 'alice', authChanges: auth.stream,
-      fetch: (sid) async => snapshot(sid),
-    )));
+    final pending = Completer<Map<String, dynamic>>();
+    var requests = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BeaconObservationPanel(
+          sessionId: 's',
+          ownerUid: 'alice',
+          authChanges: auth.stream,
+          fetch: (sid) =>
+              ++requests == 1 ? Future.value(snapshot(sid)) : pending.future,
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.textContaining('test-beacon'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
     auth.add('bob');
-    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('test-beacon'), findsNothing);
+    pending.complete(snapshot('s'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('test-beacon'), findsNothing);
     await tester.pumpWidget(const SizedBox());
-    await auth.close();
+    await tester.runAsync(() => auth.close());
   });
 
   testWidgets('rejects unexpected guidance activation flags', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: BeaconObservationPanel(
-      sessionId: 's', fetch: (sid) async => snapshot(sid)..['shouldSpeak'] = true,
-    )));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BeaconObservationPanel(
+          sessionId: 's',
+          fetch: (sid) async => snapshot(sid)..['shouldSpeak'] = true,
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.textContaining('test-beacon'), findsNothing);
     await tester.pumpWidget(const SizedBox());

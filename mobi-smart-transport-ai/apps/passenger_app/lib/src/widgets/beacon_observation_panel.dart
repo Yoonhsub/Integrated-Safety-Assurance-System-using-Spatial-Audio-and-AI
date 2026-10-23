@@ -34,12 +34,15 @@ class _BeaconObservationPanelState extends State<BeaconObservationPanel> {
   void _subscribeAuth() {
     _subscription?.cancel();
     final generation = ++_authGeneration;
-    _subscription = widget.authChanges?.listen((uid) {
-      if (!mounted || generation != _authGeneration) return;
-      if (uid != widget.ownerUid) _invalidateAuth();
-    }, onError: (Object _) {
-      if (mounted && generation == _authGeneration) _invalidateAuth();
-    });
+    _subscription = widget.authChanges?.listen(
+      (uid) {
+        if (!mounted || generation != _authGeneration) return;
+        if (uid != widget.ownerUid) _invalidateAuth();
+      },
+      onError: (Object _) {
+        if (mounted && generation == _authGeneration) _invalidateAuth();
+      },
+    );
   }
 
   void _invalidateAuth() {
@@ -104,7 +107,9 @@ class _BeaconObservationPanelState extends State<BeaconObservationPanel> {
         if (item['vehicleIdentityVerified'] != false ||
             item['guidanceEligible'] != false ||
             item['beaconId'] is! String ||
-            ttl is! num || !ttl.isFinite || ttl < 0) {
+            ttl is! num ||
+            !ttl.isFinite ||
+            ttl < 0) {
           throw const FormatException('Invalid beacon observation');
         }
       }
@@ -133,22 +138,27 @@ class _BeaconObservationPanelState extends State<BeaconObservationPanel> {
   @override
   Widget build(BuildContext context) {
     final elapsed = _requestSeconds + _age.elapsedMicroseconds / 1000000;
-    final current = _items.where((item) =>
-        (item['validForSeconds'] as num).toDouble() > elapsed).toList();
+    final current = _items
+        .where((item) => (item['validForSeconds'] as num).toDouble() > elapsed)
+        .toList();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('BLE 수신 관찰',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'BLE 수신 관찰',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const Text('차량 확인이나 승차 허용을 의미하지 않습니다.'),
             if (current.isEmpty) const Text('현재 비콘 수신 정보가 없습니다'),
             for (final item in current)
-              Text('${item['beaconId']} · ${item['rssi']} dBm'
-                  '${item['source'] == 'REAL_BLE' ? ' · BLE 입력' : ' · 테스트 입력'}'
-                  '${item['mappingRegistered'] == true ? ' · 등록된 비콘' : ''}'),
+              Text(
+                '${item['beaconId']} · ${item['rssi']} dBm'
+                '${item['source'] == 'REAL_BLE' ? ' · BLE 입력' : ' · 테스트 입력'}'
+                '${item['mappingRegistered'] == true ? ' · 등록된 비콘' : ''}',
+              ),
           ],
         ),
       ),
