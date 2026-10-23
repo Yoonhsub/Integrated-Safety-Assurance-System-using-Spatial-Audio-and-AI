@@ -1010,3 +1010,21 @@ real BLE device test               : NOT_RUN, device environment unavailable
 ```txt
 docs/rw/안준환_최종 개발 보고서.md
 ```
+
+## BLE ingest timestamp 전송 보완 (2026-10-23)
+
+BeaconIngestPayload.toJson()은 측정 시각을 UTC ISO-8601(`Z`)로 전송합니다.
+스마트폰의 로컬 DateTime도 같은 순간을 유지하며 변환하므로 서버의 시간대 검증에
+맞출 수 있습니다. 내부 timestamp 및 다른 payload 필드는 변경하지 않습니다.
+센서 패키지 전체 테스트 33개 및 flutter analyze가 통과했습니다.
+실제 비콘·골전도 이어폰은 사용자가 보유하고 있으며, 실제 BLE/오디오 테스트는 아직 실행하지 않았습니다.
+
+## 2026-10-23 하드웨어 확인 결과 보충
+
+- 기록자: 안준환의 에이전트 / ajh_2semester.
+- 저장소 밖 MOBI_BLE_TEMP v1.2.0에서 비콘 A/B 연속·개별 수신/RSSI 변화, WT901BLE68 각도 및 동시 수신, 연결 유지, 골전도 소리 테스트를 사용자가 확인했다. 추가 하드웨어 테스트는 사용자의 요청에 따라 마무리했다.
+- 임시 앱은 analyze/테스트 13개/debug APK 빌드·설치 PASS. 프로젝트 센서 33개/backend 관련 28개 테스트는 이전 실행 결과다.
+- 연속 스캔/WT901/방향음/RSSI 간격/Android 실행 코드는 임시 앱에만 존재한다. 본 프로젝트에 통합되었거나 실제 서버 E2E가 검증되었다고 표시하지 않는다.
+- 이번 브랜치 최신화는 기존 센서 bridge UTC 수정·회귀 테스트·보고서 기록에 한정한다. 임시 앱 소스 및 빌드물은 제외한다.
+- 상세 장비/검증/미반영 범위: docs/developer_a/MAIN_BASE_INTEGRATION.md의 '2026-10-23 하드웨어 확인 결과 및 브랜치 최신화 범위'.
+- CONFLICT-20261023-안준환-002의 계약/소유권/캐시/LAN 관찰 이슈는 미해결. 실제 HRTF/차량 판별/모든 끊김 실측 완료로 확대하지 않는다.
