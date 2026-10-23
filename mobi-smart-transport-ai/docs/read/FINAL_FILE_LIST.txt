@@ -182,14 +182,12 @@ apps/passenger_app/lib/src/services/web_coords.dart
 apps/passenger_app/lib/src/services/web_geolocation.dart
 apps/passenger_app/lib/src/services/web_geolocation_stub.dart
 apps/passenger_app/lib/src/services/web_geolocation_web.dart
-apps/passenger_app/lib/src/widgets/beacon_observation_panel.dart
 apps/passenger_app/lib/src/widgets/chat_overlay.dart
 apps/passenger_app/lib/src/widgets/debug_panel.dart
 apps/passenger_app/lib/src/widgets/mock_control_panel.dart
 apps/passenger_app/lib/src/widgets/quick_action_panel.dart
 apps/passenger_app/pubspec.lock
 apps/passenger_app/pubspec.yaml
-apps/passenger_app/test/beacon_observation_test.dart
 apps/passenger_app/test/widget_test.dart
 apps/passenger_app/web/favicon.png
 apps/passenger_app/web/icons/Icon-192.png
@@ -226,7 +224,6 @@ backend/api/app/api/routes/v3_navigation.py
 backend/api/app/main.py
 backend/api/app/schemas/__init__.py
 backend/api/app/schemas/base.py
-backend/api/app/schemas/beacon_observation.py
 backend/api/app/schemas/bus_info.py
 backend/api/app/schemas/geofence.py
 backend/api/app/schemas/notification.py
@@ -236,9 +233,6 @@ backend/api/app/schemas/safety_event.py
 backend/api/app/schemas/v3.py
 backend/api/app/schemas/v3_map.py
 backend/api/app/services/__init__.py
-backend/api/app/services/beacon_observation_access.py
-backend/api/app/services/beacon_observation_store.py
-backend/api/app/services/beacon_registry.py
 backend/api/app/services/bus_info_gateway_service.py
 backend/api/app/services/cheongju_bus_stops_service.py
 backend/api/app/services/cheongju_route_catalog.py
@@ -274,8 +268,6 @@ backend/api/app/services/walking_route_service.py
 backend/api/requirements.txt
 backend/api/scripts/smoke_test_odsay.py
 backend/api/tests/test_api_contract_validation.py
-backend/api/tests/test_beacon_observations.py
-backend/api/tests/test_beacon_registry.py
 backend/api/tests/test_health.py
 backend/api/tests/test_ride_request_ordering.py
 backend/api/tests/test_v3_agent_tools.py
@@ -294,7 +286,6 @@ backend/api/tests/test_v3_section3_agent_guidance_safety.py
 backend/api/tests/test_v3_section3_gemini_safety.py
 backend/api/tests/test_v3_section3_route_plan_agent.py
 backend/api/tests/test_v3_section4_odsay_orchestrator.py
-config/beacon_registry.example.json
 docs/00_원본_모비_프로젝트_계획서.docx
 docs/01_요구사항명세서.docx
 docs/01_요구사항명세서.md

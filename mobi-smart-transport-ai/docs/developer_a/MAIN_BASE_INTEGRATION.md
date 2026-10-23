@@ -1,4 +1,7 @@
-# 개발자 A: main 기준 로컬 BLE 관찰
+# 이전 A 기준 BLE 관찰 작업 기록 — 현재 역할 C
+
+> **현재 역할 기준 — 2026-10-23:** 안준환은 최신 `개발 일정.pdf`의 **개발자 C(Head Tracking / Spatial Audio / 골전도)**다. 아래 4월·V2·A 기준 기록은 당시 이력이며 현재 역할 지시가 아니다. BLE 패키지와 하드웨어 테스트 앱은 유지한다. 사용자 요청으로 이번 브랜치에서 추가했던 Passenger 관찰 UI·백엔드 관찰 API·설정 예제는 main 기준으로 되돌렸다. 이 정정은 다른 팀원의 소유권을 재배정하지 않는다.
+
 
 ## 기준
 
@@ -196,3 +199,11 @@ Backend compileall 통과, git diff --check 통과. 실제 로컬 uvicorn HTTP�
 비콘 2개/WT901 동시 수신과 골전도 방향음·RSSI 간격 조절의 별도 테스트 앱이다. 기존 바탕화면 개인 앱은 보존한다. Passenger 앱/서버 통합을 의미하지 않는다.
 상대 경로로 기존 mobile_sensors를 참조하며 APK/build/로컬 SDK 경로/키는 제외한다. 커밋·푸시는 변경 설명의 사용자 검수 후 진행한다.
 기존 CONFLICT-20261023-안준환-002는 별도 협업 검토가 필요하며 이 추가로 해결 처리하지 않는다.
+
+## 최신 정리 결과 — 현재 개발 기능이 아닌 과거 기록
+
+이 문서의 경로는 기존 참조 호환을 위해 보존한다. 아래 로컬 관찰 API 실행 명령과 기능 설명은 제거 전 이력이며 현재 브랜치의 사용 안내가 아니다.
+현재 실행 안내는 저장소 루트 temporary_test_app/실행방법.md를 따른다.
+현재 유지: mobile_sensors BLE 수신/RSSI/전송 브리지와 UTC 수정, temporary_test_app의 BLE·WT901·5방향 오디오.
+현재 제거: branch에서 추가한 관찰 UI/API/등록표와 관련 테스트, 기존 파일에 넣은 관찰 캐시 연동 및 앱 lock 변경.
+main 원래의 비콘 ingest/latest/reset, 안내 API 및 Passenger UI는 유지한다.
