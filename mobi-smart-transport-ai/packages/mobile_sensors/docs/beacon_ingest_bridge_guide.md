@@ -1,8 +1,5 @@
 # Beacon Ingest Bridge Guide
 
-> **현재 역할 기준 — 2026-10-23:** 안준환은 최신 `개발 일정.pdf`의 **개발자 C(Head Tracking / Spatial Audio / 골전도)**다. 아래 4월·V2·A 기준 기록은 당시 이력이며 현재 역할 지시가 아니다. BLE 패키지와 하드웨어 테스트 앱은 유지한다. 사용자 요청으로 이번 브랜치에서 추가했던 Passenger 관찰 UI·백엔드 관찰 API·설정 예제는 main 기준으로 되돌렸다. 이 정정은 다른 팀원의 소유권을 재배정하지 않는다.
-
-
 This guide covers the @ajh1206 side of #52/#53: turning BLE scanner output into backend `/api/v3/beacon/ingest` requests.
 
 ## Goal
@@ -91,27 +88,8 @@ The fixture `fixtures/real_beacon_ab_ingest_samples.json` contains target/wrong 
 
 The bridge sends `macAddress` when it can resolve a MAC-like identifier. The backend must accept that field and use it for target/wrong matching. Until the backend MAC mapping patch is applied, strict backend schemas may reject `macAddress`.
 
-## Timestamp compatibility (2026-10-23)
+## 2026-10-23 UTC 전송 및 독립 하드웨어 앱
 
-`BeaconIngestPayload.toJson()` sends `timestamp.toUtc().toIso8601String()`.
-Local scan times are serialized with an explicit `Z` without changing the instant.
-The stored payload timestamp is not mutated. The current backend requires a UTC offset;
-other clients must also include `Z` or an explicit offset.
-
-The bridge still sends to the existing `/ingest` endpoint. The added local observations
-feature is a separate, loopback-only preview: a phone connecting to a LAN server is not
-recorded in that preview. Do not remove this restriction to make a hardware demo work.
-Agree on the device/server collection path before claiming phone-to-preview integration.
-
-The user has physical beacons and bone-conduction earphones. Hardware validation has
-not yet run; phone OS and the actual A/B identifiers must be confirmed first.
-
-## 2026-10-23 하드웨어 확인 결과 보충
-
-- 기록자: 안준환의 에이전트 / ajh_2semester.
-- 저장소 밖 MOBI_BLE_TEMP v1.2.0에서 비콘 A/B 연속·개별 수신/RSSI 변화, WT901BLE68 각도 및 동시 수신, 연결 유지, 골전도 소리 테스트를 사용자가 확인했다. 추가 하드웨어 테스트는 사용자의 요청에 따라 마무리했다.
-- 임시 앱은 analyze/테스트 13개/debug APK 빌드·설치 PASS. 프로젝트 센서 33개/backend 관련 28개 테스트는 이전 실행 결과다.
-- 연속 스캔/WT901/방향음/RSSI 간격/Android 실행 코드는 임시 앱에만 존재한다. 본 프로젝트에 통합되었거나 실제 서버 E2E가 검증되었다고 표시하지 않는다.
-- 이번 브랜치 최신화는 기존 센서 bridge UTC 수정·회귀 테스트·보고서 기록에 한정한다. 임시 앱 소스 및 빌드물은 제외한다.
-- 상세 장비/검증/미반영 범위: docs/developer_a/MAIN_BASE_INTEGRATION.md의 '2026-10-23 하드웨어 확인 결과 및 브랜치 최신화 범위'.
-- CONFLICT-20261023-안준환-002의 계약/소유권/캐시/LAN 관찰 이슈는 미해결. 실제 HRTF/차량 판별/모든 끊김 실측 완료로 확대하지 않는다.
+BeaconIngestPayload는 timestamp.toUtc().toIso8601String()으로 동일 시점의 UTC 값을 전송한다. 로컬 DateTime과 기존 UTC 값에 관한 회귀 테스트를 포함하여 패키지 테스트 33개가 통과했다.
+실제 비콘·WT901·골전도 독립 테스트는 저장소 루트 temporary_test_app에서 수행한다. 앱 기능/실행 안내와 최신 검사 결과는 해당 README.md 및 실행방법.md를 따른다.
+안준환의 현재 담당은 개발자 C(Head Tracking / Spatial Audio / 골전도)이며 기존 패키지는 BLE 공통 입력으로 사용한다.

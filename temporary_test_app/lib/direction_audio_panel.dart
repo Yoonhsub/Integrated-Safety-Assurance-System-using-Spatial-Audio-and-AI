@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'cue_control.dart';
+import 'native_cue_output.dart';
 import 'direction_pan.dart';
 import 'beacon_tone_interval.dart';
 
@@ -27,7 +28,11 @@ class DirectionAudioPanel extends StatefulWidget {
 
 class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     with WidgetsBindingObserver {
-  static const _audio = MethodChannel('mobi.temp/tone');
+  final _controller = CueController();
+  final _clock = Stopwatch()..start();
+  late final NativeCueOutput _output;
+  late final CueOutputDriver _driver;
+  bool _manualWarning = false;
   bool _playing = false, _starting = false, _syncing = false;
   bool _reverse = false, _disposed = false;
   bool _proximity = true;
@@ -46,9 +51,12 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       widget.beaconRssi != null && _beaconAge >= 0 && _beaconAge < 3000;
   bool get _sensorReady =>
       widget.fresh &&
+      widget.sensorAgeMs >= 0 &&
       widget.sensorAgeMs < 1000 &&
       widget.z != null &&
-      widget.reference != null;
+      widget.reference != null &&
+      widget.z!.isFinite &&
+      widget.reference!.isFinite;
   bool get _ready =>
       _sensorReady &&
       (!_proximity || _beaconFresh) &&
@@ -62,7 +70,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
             widget.z!,
             widget.reference!,
             reverse: _reverse,
-            objectAngle: _objectAngle,
+            objectAngle: _manualWarning ? 0 : _objectAngle,
           ),
         )
       : null;
@@ -74,44 +82,72 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _output = NativeCueOutput(
+      () => ToneInput(
+        widget.sensorAgeMs,
+        _proximity ? _beaconAge : -1,
+        _interval,
+      ),
+    );
+    _driver = CueOutputDriver(_output);
     _timer = Timer.periodic(
       const Duration(milliseconds: 150),
       (_) => unawaited(_sync()),
     );
   }
 
-  Map<String, Object> _arguments(DirectionPan pan) => {
-    'left': pan.left,
-    'right': pan.right,
-    'sensorAgeMs': widget.sensorAgeMs,
-    'intervalMs': _interval,
-    'beaconAgeMs': _proximity ? _beaconAge : -1,
-  };
+  CueDecision _decision() {
+    final now = _clock.elapsed;
+    return _controller.tick(
+      now: now,
+      context: CueContext.walking,
+      headYaw: widget.z ?? double.nan,
+      reference: widget.reference ?? double.nan,
+      reverse: _reverse,
+      inputReady: _sensorReady && (!_proximity || _beaconFresh),
+      objects: [
+        CueObject(
+          id: 'manual-target',
+          kind: CueObjectKind.target,
+          distance: CueDistance.near,
+          angleDegrees: _objectAngle,
+          observedAt: now,
+        ),
+        if (_manualWarning)
+          CueObject(
+            id: 'manual-warning',
+            kind: CueObjectKind.obstacle,
+            distance: CueDistance.near,
+            angleDegrees: 0,
+            observedAt: now,
+          ),
+      ],
+    );
+  }
 
   Future<void> _start() async {
     if (!_ready || _playing || _starting) return;
     final generation = ++_generation;
     _starting = true;
+    _controller.reset();
+    _controller.resume();
     _message = '이어폰 출력 준비 중…';
     _refresh();
     try {
-      final result = await _audio.invokeMapMethod<String, dynamic>(
-        'start',
-        _arguments(_pan!),
-      );
+      await _driver.apply(_decision());
       if (_disposed || generation != _generation) return;
-      _playing = result?['running'] == true;
-      _route = result?['route'] as String? ?? '';
-      _message = _playing
-          ? '짧은 삐 소리 재생 중 · 최대 30초'
-          : (result?['reason'] as String? ?? '시작되지 않았습니다.');
+      _playing = _output.running;
+      _route = _output.route;
+      _message = _manualWarning
+          ? '수동 경고음 재생 중 · 실제 장애물 감지 아님'
+          : '목표음 재생 중 · 최대 30초';
       if (_playing) {
         _duration
           ..reset()
           ..start();
       }
     } catch (e) {
-      if (generation == _generation) _message = '재생 시작 실패: $e';
+      if (generation == _generation) await _stop('재생 시작 실패: $e');
     } finally {
       if (generation == _generation) _starting = false;
       _refresh();
@@ -131,17 +167,26 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     _syncing = true;
     final generation = _generation;
     try {
-      final result = await _audio.invokeMapMethod<String, dynamic>(
-        'update',
-        _arguments(_pan!),
+      final decision = _decision();
+      // Refresh native source-age/route watchdog even for an unchanged cue.
+      await _driver.apply(
+        decision.action == CueAction.none && decision.selection != null
+            ? CueDecision(
+                CueAction.update,
+                decision.selection,
+                'source heartbeat',
+              )
+            : decision,
       );
       if (generation != _generation || _disposed) return;
-      if (result?['running'] != true) {
-        _playing = false;
-        _message = result?['reason'] as String? ?? '테스트음이 중지됐습니다.';
-        _duration.stop();
+      if (!_output.running) {
+        await _stop(_output.reason);
+        return;
       }
-      _route = result?['route'] as String? ?? '';
+      _route = _output.route;
+      _message = _manualWarning
+          ? '수동 경고음 재생 중 · 실제 장애물 감지 아님'
+          : '목표음 재생 중 · 최대 30초';
     } catch (e) {
       if (generation == _generation) await _stop('출력 상태 확인 실패: $e');
     } finally {
@@ -154,13 +199,18 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     ++_generation;
     _playing = false;
     _starting = false;
+    _manualWarning = false;
+    _controller.cancel();
     _duration.stop();
     _message = message;
     _refresh();
     try {
-      await _audio.invokeMethod<void>('stop');
+      // Force a stop even if a start is still in flight or policy was inactive.
+      await _driver.apply(
+        const CueDecision(CueAction.stop, null, 'explicit stop'),
+      );
     } catch (_) {
-      // The native watchdog also stops playback if updates stop arriving.
+      // Native watchdog also stops if heartbeat stops arriving.
     }
   }
 
@@ -187,7 +237,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   @override
   Widget build(BuildContext context) {
-    final pan = _pan;
+    final pan = _playing ? _controller.active?.direction ?? _pan : _pan;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -255,6 +305,21 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
                   _directionTracker.reset();
                   _reverse = v;
                 }),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('수동 경고 테스트'),
+          subtitle: const Text('정면 경고 입력 · 높은 두 번 소리 · 해제하면 목표음 복귀'),
+          value: _manualWarning,
+          onChanged: !_playing || _starting
+              ? null
+              : (value) {
+                  setState(() => _manualWarning = value);
+                  unawaited(_sync());
+                },
+        ),
+        const Text(
+          '경고는 사용자가 직접 켜는 테스트 입력입니다. 비콘 근접이나 실제 장애물 위험을 자동 판정하지 않습니다.',
         ),
         Text(_message),
         if (_route.isNotEmpty) Text('출력: $_route'),

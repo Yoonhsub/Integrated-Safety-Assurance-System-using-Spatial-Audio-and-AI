@@ -33,7 +33,8 @@ class MainActivity : FlutterActivity() {
                         val age = call.argument<Number>("sensorAgeMs")?.toInt() ?: 9999
                         val interval = call.argument<Number>("intervalMs")?.toInt() ?: 1000
                         val beaconAge = call.argument<Number>("beaconAgeMs")?.toInt() ?: -1
-                        result.success(if (call.method == "start") engine.start(left, right, age, interval, beaconAge) else engine.update(left, right, age, interval, beaconAge))
+                        val pattern = call.argument<String>("pattern") ?: "target"
+                        result.success(if (call.method == "start") engine.start(left, right, age, interval, beaconAge, pattern) else engine.update(left, right, age, interval, beaconAge, pattern))
                     }
                     "stop" -> { engine.stop(); result.success(null) }
                     "status" -> result.success(engine.state())

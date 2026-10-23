@@ -22,6 +22,7 @@ class ToneTestEngine(context: Context) {
     private var sensorAt = 0L
     private var beaconAt = 0L
     @Volatile private var intervalMs = 1000
+    @Volatile private var pattern = "target"
     private var left = 0.0f
     private var right = 0.0f
     private var reason = "대기 중"
@@ -48,16 +49,17 @@ class ToneTestEngine(context: Context) {
         AudioDeviceInfo.TYPE_USB_HEADSET
     )
 
-    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int) {
+    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String) {
+        require(patternName == "target" || patternName == "warning") { "잘못된 소리 패턴" }
         require(l.isFinite() && r.isFinite() && l in 0.0..1.0 && r in 0.0..1.0)
         require(age in 0..999) { "새 센서 각도를 수신한 뒤 시작해주세요." }
         require(interval in 220..1400) { "잘못된 테스트음 간격" }
         require(beaconAge == -1 || beaconAge in 0..2999) { "기준 비콘을 다시 스캔해주세요." }
     }
 
-    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int): Map<String, Any> {
+    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String): Map<String, Any> {
         stop("새 테스트 준비")
-        validate(l, r, age, interval, beaconAge)
+        validate(l, r, age, interval, beaconAge, patternName)
         val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { isHeadphone(it) }
         val output = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
             ?: outputs.firstOrNull()
@@ -87,6 +89,7 @@ class ToneTestEngine(context: Context) {
             left = l.toFloat()
             right = r.toFloat()
             intervalMs = interval
+            pattern = patternName
             startedAt = SystemClock.elapsedRealtime()
             updatedAt = startedAt
             sensorAt = startedAt - age
@@ -109,7 +112,9 @@ class ToneTestEngine(context: Context) {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
             val chunkFrames = 480
             val pcm = ShortArray(chunkFrames * 2)
-            val pulseFrames = (rate * 0.12).toInt()
+            val targetPulseFrames = (rate * 0.12).toInt()
+            val warningPulseFrames = (rate * 0.08).toInt()
+            val warningSecondStart = (rate * 0.16).toInt()
             var frame = 0L
             var pulseStart = 0L
             try {
@@ -117,9 +122,13 @@ class ToneTestEngine(context: Context) {
                     for (i in 0 until chunkFrames) {
                         if (frame - pulseStart >= intervalMs.toLong() * rate / 1000) pulseStart = frame
                         val phase = (frame - pulseStart).toInt()
-                        val sample = if (phase < pulseFrames) {
-                            val envelope = minOf(1.0, phase / 480.0, (pulseFrames - 1 - phase) / 480.0)
-                            (sin(2 * PI * 700 * phase / rate) * envelope * 0.12 * Short.MAX_VALUE).toInt().toShort()
+                        val warning = pattern == "warning"
+                        val pulseFrames = if (warning) warningPulseFrames else targetPulseFrames
+                        val localPhase = if (warning && phase >= warningSecondStart) phase - warningSecondStart else phase
+                        val sample = if (localPhase in 0 until pulseFrames) {
+                            val envelope = minOf(1.0, localPhase / 480.0, (pulseFrames - 1 - localPhase) / 480.0)
+                            val frequency = if (warning) 1100 else 700
+                            (sin(2 * PI * frequency * localPhase / rate) * envelope * 0.12 * Short.MAX_VALUE).toInt().toShort()
                         } else 0.toShort()
                         pcm[i * 2] = sample
                         pcm[i * 2 + 1] = sample
@@ -138,13 +147,14 @@ class ToneTestEngine(context: Context) {
         }, "MobiDiagnosticTone").apply { isDaemon = true; start() }
     }
 
-    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int): Map<String, Any> {
+    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String): Map<String, Any> {
         if (track == null) return state()
         try {
-            validate(l, r, age, interval, beaconAge)
+            validate(l, r, age, interval, beaconAge, patternName)
             left = l.toFloat()
             right = r.toFloat()
             intervalMs = interval
+            pattern = patternName
             updatedAt = SystemClock.elapsedRealtime()
             sensorAt = updatedAt - age
             beaconAt = if (beaconAge < 0) 0L else updatedAt - beaconAge
@@ -169,7 +179,7 @@ class ToneTestEngine(context: Context) {
     }
 
     fun state(): Map<String, Any> = mapOf(
-        "running" to (track != null), "reason" to reason,
+        "running" to (track != null), "reason" to reason, "pattern" to pattern,
         "route" to (track?.routedDevice?.productName?.toString() ?: "이어폰 확인 중")
     )
 

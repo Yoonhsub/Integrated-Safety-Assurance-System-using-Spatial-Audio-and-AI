@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -124,4 +125,113 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets(
+    'manual warning replaces native target and release resumes target',
+    (tester) async {
+      await tester.pumpWidget(panel());
+      await start(tester);
+      expect(
+        (calls.lastWhere((c) => c.method == 'start').arguments
+            as Map)['pattern'],
+        'target',
+      );
+      await tester.ensureVisible(find.text('수동 경고 테스트'));
+      await tester.tap(find.text('수동 경고 테스트'));
+      await tester.pump();
+      final warning =
+          calls.lastWhere((c) => c.method == 'start').arguments as Map;
+      expect(warning['pattern'], 'warning');
+      expect(warning['intervalMs'], 500);
+      expect(calls.where((c) => c.method == 'start'), hasLength(2));
+      await tester.tap(find.text('수동 경고 테스트'));
+      await tester.pump();
+      expect(
+        (calls.lastWhere((c) => c.method == 'start').arguments
+            as Map)['pattern'],
+        'target',
+      );
+      expect(calls.map((c) => c.method).toList(), [
+        'stop',
+        'start',
+        'stop',
+        'start',
+        'stop',
+        'start',
+      ]);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'unchanged target refreshes watchdog without restarting native playback',
+    (tester) async {
+      await tester.pumpWidget(panel());
+      await start(tester);
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(calls.where((c) => c.method == 'start'), hasLength(1));
+      expect(
+        calls.where((c) => c.method == 'update').length,
+        greaterThanOrEqualTo(2),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'native route loss stops policy and does not automatically restart',
+    (tester) async {
+      await tester.pumpWidget(panel());
+      await start(tester);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            if (call.method == 'stop') return null;
+            return {'running': false, 'reason': '이어폰 연결 해제'};
+          });
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(calls.last.method, 'stop');
+      expect(calls.where((c) => c.method == 'start'), hasLength(1));
+      expect(find.textContaining('이어폰 연결 해제'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('background stops output and foreground requires manual start', (
+    tester,
+  ) async {
+    await tester.pumpWidget(panel());
+    await start(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(calls.last.method, 'stop');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('stop while native start is pending drains start then stops it', (
+    tester,
+  ) async {
+    final pending = Completer<Map<String, Object>>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (call.method == 'start') return pending.future;
+          return null;
+        });
+    await tester.pumpWidget(panel());
+    await start(tester);
+    await tester.ensureVisible(find.text('소리 중지'));
+    await tester.tap(find.text('소리 중지'));
+    await tester.pump();
+    pending.complete({'running': true, 'route': 'Test headset'});
+    await tester.pump();
+    await tester.pump();
+    expect(calls.last.method, 'stop');
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
