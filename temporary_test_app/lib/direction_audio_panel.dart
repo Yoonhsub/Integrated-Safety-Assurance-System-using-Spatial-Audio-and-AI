@@ -32,6 +32,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   bool _reverse = false, _disposed = false;
   bool _proximity = true;
   double _objectAngle = 0;
+  final _directionTracker = DirectionCueTracker();
   int _generation = 0;
   String _message = '정면을 보고 위의 기준각 버튼을 누른 뒤 시작하세요.';
   String _route = '';
@@ -56,11 +57,13 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       ? beaconToneIntervalMs(widget.beaconRssi!)
       : 1000;
   DirectionPan? get _pan => _sensorReady
-      ? DirectionPan.fromZ(
-          widget.z!,
-          widget.reference!,
-          reverse: _reverse,
-          objectAngle: _objectAngle,
+      ? _directionTracker.track(
+          DirectionPan.fromZ(
+            widget.z!,
+            widget.reference!,
+            reverse: _reverse,
+            objectAngle: _objectAngle,
+          ),
         )
       : null;
   void _refresh() {
@@ -164,6 +167,9 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   @override
   void didUpdateWidget(covariant DirectionAudioPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.reference != widget.reference || !widget.fresh) {
+      _directionTracker.reset();
+    }
     if ((_playing || _starting) &&
         (!_ready ||
             oldWidget.reference != widget.reference ||
@@ -223,7 +229,12 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           onChanged: _playing || _starting
               ? null
               : (value) {
-                  if (value != null) setState(() => _objectAngle = value);
+                  if (value != null) {
+                    setState(() {
+                      _directionTracker.reset();
+                      _objectAngle = value;
+                    });
+                  }
                 },
         ),
         const Text('목표각은 기준 방향에 대한 수동 입력입니다. Vision/Context 연결은 아직 없습니다.'),
@@ -240,7 +251,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           value: _reverse,
           onChanged: _playing || _starting
               ? null
-              : (v) => setState(() => _reverse = v),
+              : (v) => setState(() {
+                  _directionTracker.reset();
+                  _reverse = v;
+                }),
         ),
         Text(_message),
         if (_route.isNotEmpty) Text('출력: $_route'),

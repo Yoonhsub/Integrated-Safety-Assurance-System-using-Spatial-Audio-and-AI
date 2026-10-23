@@ -102,4 +102,26 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets(
+    'live tone holds front near boundary and changes after deadband',
+    (tester) async {
+      await tester.pumpWidget(panel());
+      await start(tester);
+      await tester.pumpWidget(panel(z: -24));
+      await tester.pump(const Duration(milliseconds: 200));
+      final held =
+          calls.lastWhere((c) => c.method == 'update').arguments as Map;
+      expect(held['left'], closeTo(held['right'], 1e-9));
+      await tester.pumpWidget(panel(z: -26));
+      await tester.pump(const Duration(milliseconds: 200));
+      final changed =
+          calls.lastWhere((c) => c.method == 'update').arguments as Map;
+      expect(
+        changed['right'] as double,
+        greaterThan(changed['left'] as double),
+      );
+      expect(calls.where((c) => c.method == 'start'), hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

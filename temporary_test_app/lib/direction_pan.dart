@@ -94,3 +94,44 @@ class DirectionPan {
     );
   }
 }
+
+/// Stateful five-way deadband. Reset when target or calibration changes.
+class DirectionCueTracker {
+  DirectionCueTracker({this.hysteresisDegrees = 3}) {
+    if (!hysteresisDegrees.isFinite ||
+        hysteresisDegrees < 0 ||
+        hysteresisDegrees >= 22.5) {
+      throw ArgumentError('Hysteresis must be between 0 and 22.5 degrees');
+    }
+  }
+  final double hysteresisDegrees;
+  FiveWayCue? _previous;
+  void reset() => _previous = null;
+
+  DirectionPan track(DirectionPan raw) {
+    if (!raw.supported) {
+      reset();
+      return raw;
+    }
+    var cue = raw.cue;
+    final previous = _previous;
+    if (previous != null) {
+      final lower = previous == FiveWayCue.left ? -95.0 : previous.angle - 22.5;
+      final upper = previous == FiveWayCue.right ? 95.0 : previous.angle + 22.5;
+      if (raw.targetAngle >= lower - hysteresisDegrees &&
+          raw.targetAngle <= upper + hysteresisDegrees) {
+        cue = previous;
+      }
+    }
+    _previous = cue;
+    final pan = cue.angle / 90;
+    final theta = (pan + 1) * math.pi / 4;
+    return DirectionPan(
+      raw.targetAngle,
+      pan,
+      math.cos(theta),
+      math.sin(theta),
+      cue: cue,
+    );
+  }
+}
