@@ -550,12 +550,19 @@ class BeaconIngestRequest(StrictApiModel):
     sessionId: str = Field(default="demo-session", min_length=1, pattern=NON_BLANK_PATTERN)
     deviceId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
     beaconId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    macAddress: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
     busId: str | None = None
     routeNo: str | None = None
     rssi: int = Field(ge=-120, le=0)
     distanceMeters: float | None = Field(default=None, ge=0)
     source: BeaconSource
     timestamp: datetime
+
+    @model_validator(mode="after")
+    def require_timestamp_timezone(self) -> "BeaconIngestRequest":
+        if self.timestamp.utcoffset() is None:
+            raise ValueError("timestamp must include a UTC offset")
+        return self
 
 
 class BeaconIngestResponse(StrictApiModel):

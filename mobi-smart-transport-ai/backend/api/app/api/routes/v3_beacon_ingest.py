@@ -17,16 +17,20 @@ Issue #35 — Backend Beacon Ingest + VM 배포 문서
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from app.schemas.v3 import BeaconIngestRequest, BeaconIngestResponse
 from app.services import v3_beacon_service
+from app.schemas.beacon_observation import BeaconSessionObservations
+from app.services.beacon_observation_access import local_observations_allowed, require_local_observations
+from app.services.beacon_observation_store import beacon_observation_store
+from app.services.v3_guidance_store import v3_guidance_store
 
 router = APIRouter()
 
 
 @router.post("/ingest", response_model=BeaconIngestResponse)
-def ingest_beacon(payload: BeaconIngestRequest) -> BeaconIngestResponse:
+def ingest_beacon(payload: BeaconIngestRequest, request: Request) -> BeaconIngestResponse:
     """비컨 RSSI 이벤트 수신 + 판정 반환.
     
     Android BLE bridge, 수동 curl, 실제 BLE scanner가 호출한다.
@@ -38,7 +42,24 @@ def ingest_beacon(payload: BeaconIngestRequest) -> BeaconIngestResponse:
     - BEACON_RSSI_MID (default -75)
     - BEACON_UNSTABLE_DELTA (default 20)
     """
-    return v3_beacon_service.evaluate_beacon(payload)
+    with v3_guidance_store.beacon_collection_scope(payload.sessionId) as session:
+        result = v3_beacon_service.evaluate_beacon(payload)
+        if session is not None and local_observations_allowed(request):
+            beacon_observation_store.record(
+                payload, ttl=v3_beacon_service.LOST_TIMEOUT_SEC,
+                unstable_delta=v3_beacon_service.UNSTABLE_DELTA)
+        return result
+
+
+@router.get("/observations", response_model=BeaconSessionObservations)
+def get_beacon_observations(request: Request, response: Response,
+                            sessionId: str = Query(min_length=1)):
+    response.headers["Cache-Control"] = "no-store"
+    require_local_observations(request)
+    with v3_guidance_store.local_beacon_observation_scope(sessionId):
+        return beacon_observation_store.preview(
+            sessionId, ttl=v3_beacon_service.LOST_TIMEOUT_SEC,
+            near=v3_beacon_service.RSSI_NEAR_THRESHOLD, mid=v3_beacon_service.RSSI_MID_THRESHOLD)
 
 
 @router.get("/latest", response_model=BeaconIngestResponse)
@@ -74,7 +95,9 @@ def reset_beacon_session(
     _latest_state[sessionId]와 _rssi_history[sessionId]를 모두 제거한다.
     데모 시작 전 깨끗한 상태로 시작하고 싶을 때 호출.
     """
-    v3_beacon_service.reset_session(sessionId)
+    with v3_guidance_store.beacon_collection_scope(sessionId):
+        v3_beacon_service.reset_session(sessionId)
+        beacon_observation_store.clear(sessionId)
     return {
         "sessionId": sessionId,
         "status": "reset",

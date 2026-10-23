@@ -364,14 +364,19 @@ class V3AgentApiClient {
     return V3BeaconDecisionResponse.fromJson(json);
   }
 
+  Future<Map<String, dynamic>> fetchBeaconObservations(String sessionId) =>
+      _getJson('/api/v3/beacon/observations', {'sessionId': sessionId},
+          customTimeout: const Duration(seconds: 2));
+
   Future<Map<String, dynamic>> _getJson(
     String path,
-    Map<String, String> queryParameters,
-  ) async {
+    Map<String, String> queryParameters, {
+    Duration? customTimeout,
+  }) async {
     try {
       final response = await _client
           .get(_buildUri(path, queryParameters: queryParameters))
-          .timeout(timeout);
+          .timeout(customTimeout ?? timeout);
       return _decodeResponse(response);
     } on TimeoutException {
       throw const V3ApiException('API 연결 시간이 초과됐습니다.');

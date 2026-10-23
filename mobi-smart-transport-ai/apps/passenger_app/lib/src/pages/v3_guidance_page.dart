@@ -22,6 +22,7 @@ import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
+import '../widgets/beacon_observation_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
 import '../mock_scenario/mock_scenario_control_panel.dart';
@@ -29,6 +30,9 @@ import '../mock_scenario/mock_scenario_controller.dart';
 import '../mock_scenario/mock_scenario_metrics_panel.dart';
 import '../mock_scenario/mock_scenario_stage.dart';
 import '../mock_scenario/mock_scenario_state.dart';
+
+const _beaconObservationsEnabled =
+    bool.fromEnvironment('MOBI_BEACON_OBSERVATIONS_ENABLED');
 
 class V3GuidancePage extends StatefulWidget {
   const V3GuidancePage({
@@ -1822,6 +1826,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_beaconObservationsEnabled && _isLiveMode &&
+                      _sessionId.isNotEmpty && state?.state != 'BOARDED')
+                    BeaconObservationPanel(
+                      sessionId: _sessionId,
+                      scopeVersion: state?.updatedAt,
+                      fetch: _client.fetchBeaconObservations,
+                    ),
                   _HeroStatusCard(
                     isBusy: _isBusy,
                     stateLabel: state?.state ?? 'LOADING',

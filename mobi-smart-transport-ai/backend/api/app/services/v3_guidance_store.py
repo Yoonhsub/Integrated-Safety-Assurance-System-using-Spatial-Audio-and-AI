@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from datetime import datetime
+from threading import RLock
 from typing import Callable, Any
+from fastapi import HTTPException
 
 from app.schemas.v3 import BeaconDecision, GuidanceSessionState, GuidanceState, new_session_id, utc_now
+
+
+def _clear_beacon_caches(session_id: str) -> None:
+    from app.services.v3_beacon_service import reset_session
+    from app.services.beacon_observation_store import beacon_observation_store
+
+    reset_session(session_id)
+    beacon_observation_store.clear(session_id)
 
 
 @dataclass
@@ -45,8 +56,15 @@ class V3SessionRecord:
     on_touch: Callable[["V3SessionRecord"], None] | None = field(
         default=None, repr=False, compare=False
     )
+    _beacon_context: tuple | None = field(default=None, repr=False, compare=False)
 
     def touch(self) -> None:
+        context = (self.target_bus_id, self.selected_route_no, self.selected_route_id,
+                   self.selected_stop_id, self.current_leg_index,
+                   self.state == GuidanceState.BOARDED)
+        if self._beacon_context is not None and self._beacon_context != context:
+            _clear_beacon_caches(self.session_id)
+        self._beacon_context = context
         self.updated_at = utc_now()
         if self.on_touch is not None:
             try:
@@ -98,6 +116,7 @@ class V3GuidanceStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, V3SessionRecord] = {}
+        self._lock = RLock()
 
     def _persist(self, record: V3SessionRecord) -> None:
         # Imported lazily to avoid any import-time Firebase side effects.
@@ -108,21 +127,47 @@ class V3GuidanceStore:
         client.set(f"v3GuidanceSessions/{record.session_id}", snapshot)
 
     def create(self, *, session_id: str | None = None, wake_word: str = "자비스") -> V3SessionRecord:
-        sid = session_id or new_session_id()
-        record = V3SessionRecord(session_id=sid, wake_word=wake_word, on_touch=self._persist)
-        record.touch()
-        self._sessions[sid] = record
-        return record
+        with self._lock:
+            sid = session_id or new_session_id()
+            _clear_beacon_caches(sid)
+            record = V3SessionRecord(session_id=sid, wake_word=wake_word, on_touch=self._persist)
+            record.touch()
+            self._sessions[sid] = record
+            return record
 
     def get(self, session_id: str = "demo-session", *, wake_word: str = "자비스") -> V3SessionRecord:
-        return self._sessions.get(session_id) or self.create(session_id=session_id, wake_word=wake_word)
+        with self._lock:
+            return self._sessions.get(session_id) or self.create(session_id=session_id, wake_word=wake_word)
 
     def reset(self, session_id: str = "demo-session") -> V3SessionRecord:
-        wake_word = self._sessions.get(session_id).wake_word if session_id in self._sessions else "자비스"
-        return self.create(session_id=session_id, wake_word=wake_word)
+        with self._lock:
+            wake_word = self._sessions.get(session_id).wake_word if session_id in self._sessions else "자비스"
+            return self.create(session_id=session_id, wake_word=wake_word)
+
+    @contextmanager
+    def beacon_collection_scope(self, session_id: str):
+        """Existing main sessions only; no account-auth dependency or auto-create."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is not None and record.state == GuidanceState.BOARDED:
+                record = None
+            yield record
+
+    @contextmanager
+    def local_beacon_observation_scope(self, session_id: str):
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is None:
+                raise HTTPException(404, "Create a guidance session first")
+            if record.state == GuidanceState.BOARDED:
+                raise HTTPException(409, "Boarding session has ended")
+            yield record
 
     def clear(self) -> None:
-        self._sessions.clear()
+        with self._lock:
+            for session_id in self._sessions:
+                _clear_beacon_caches(session_id)
+            self._sessions.clear()
 
 
 v3_guidance_store = V3GuidanceStore()
