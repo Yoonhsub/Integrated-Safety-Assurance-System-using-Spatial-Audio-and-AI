@@ -17,6 +17,7 @@ from app.schemas.ride_request import RideRequestCreate, RideRequestStatus
 from scripts import cloud_test as cli
 
 pytestmark=pytest.mark.auth_boundary
+_CONSOLE_REGISTRATIONS=cloud_test.CONFIRMED_TEST_PROJECTS
 
 
 def config():
@@ -704,3 +705,99 @@ def test_medium_dedicated_runs_and_manifest_are_disjoint(environment):
     plan=cli.execution_plan(environment,'path-plan-test')
     assert plan['databaseRoot']==a.path
     assert all(p.startswith(a.path+'/') for p in plan['bootstrapDatabasePaths']+plan['smokeDatabasePaths'])
+
+
+@pytest.fixture
+def registered_test_config(environment,monkeypatch):
+    from copy import deepcopy
+    monkeypatch.setattr(cloud_test,'CONFIRMED_TEST_PROJECTS',_CONSOLE_REGISTRATIONS)
+    c=deepcopy(_CONSOLE_REGISTRATIONS['mobi-auth-cloud-test'])
+    c.update(runId='offline-20261023-a',mainProjectTest=False,
+             backendPort=8011,passengerPort=5183,driverPort=5184)
+    for key,value in cli.environment_for(c).items():monkeypatch.setenv(key,value)
+    return c
+
+
+def test_console_supplied_registration_exact_roles(registered_test_config,tmp_path):
+    c=registered_test_config
+    assert c['passenger']['MOBI_FIREBASE_APP_ID']=='1:189730626159:web:407d25db8c026703170b9a'
+    assert c['driver']['MOBI_FIREBASE_APP_ID']=='1:189730626159:web:b486ec4c18abf663170b9a'
+    for name in ('passenger','driver'):
+        assert c[name]['MOBI_FIREBASE_MESSAGING_SENDER_ID']=='189730626159'
+        assert c[name]['MOBI_FIREBASE_PROJECT_ID']=='mobi-auth-cloud-test'
+        cloud_test.validate_web_app(c[name],name,c['projectId'])
+    import hashlib
+    assert hashlib.sha256(c['passenger']['MOBI_FIREBASE_API_KEY'].encode()).hexdigest()=='468d2330321093a099e56f2c7b7f50618e14ce4d463d36a59499eb74826e2888'
+    assert c['passenger']['MOBI_FIREBASE_API_KEY']==c['driver']['MOBI_FIREBASE_API_KEY']
+    path=tmp_path/'public.json';path.write_text(json.dumps(c))
+    assert cli.load_config(path)==c
+    assert cloud_test.validate().database_url==c['databaseUrl']
+
+
+@pytest.mark.parametrize('kind',['main-passenger','main-driver','main-sender','swap','truncated-driver',
+                                'sender-mismatch','api-key','project','database','unregistered'])
+def test_console_registration_mixing_denied(registered_test_config,tmp_path,kind):
+    from copy import deepcopy
+    c=deepcopy(registered_test_config)
+    if kind in {'main-passenger','main-driver'}:
+        role=kind.split('-')[1]
+        c[role]['MOBI_FIREBASE_APP_ID']=cloud_test.MAIN_WEB_APP_IDS[role]
+        c[role]['MOBI_FIREBASE_MESSAGING_SENDER_ID']=cloud_test.MAIN_SENDER_ID
+    elif kind=='main-sender':c['driver']['MOBI_FIREBASE_MESSAGING_SENDER_ID']=cloud_test.MAIN_SENDER_ID
+    elif kind=='swap':c['passenger'],c['driver']=c['driver'],c['passenger']
+    elif kind=='truncated-driver':c['driver']['MOBI_FIREBASE_APP_ID']='1:189730626159:web'
+    elif kind=='sender-mismatch':c['passenger']['MOBI_FIREBASE_MESSAGING_SENDER_ID']='999'
+    elif kind=='api-key':c['passenger']['MOBI_FIREBASE_API_KEY']='other-project-public-key'
+    elif kind=='project':c['driver']['MOBI_FIREBASE_PROJECT_ID']='mobi-smart-transport'
+    elif kind=='database':c['databaseUrl']=cloud_test.MAIN_DATABASE_URL
+    else:
+        c['projectId']='mobi-unknown-cloud-test'
+        c['databaseUrl']='https://mobi-unknown-cloud-test-default-rtdb.firebaseio.com'
+        for role in ('passenger','driver'):
+            c[role]['MOBI_FIREBASE_PROJECT_ID']=c['projectId']
+            c[role]['MOBI_FIREBASE_AUTH_DOMAIN']=c['projectId']+'.firebaseapp.com'
+    path=tmp_path/'public.json';path.write_text(json.dumps(c))
+    with pytest.raises(ValueError):cli.load_config(path)
+
+
+def test_console_registration_offline_preflight_no_adc_or_network(registered_test_config,tmp_path,monkeypatch,capsys):
+    def forbidden(*args,**kwargs):pytest.fail('Offline preflight attempted credentials/network')
+    import google.auth,httpx,requests
+    monkeypatch.setattr(google.auth,'default',forbidden)
+    monkeypatch.setattr(requests.Session,'request',forbidden)
+    monkeypatch.setattr(httpx.Client,'request',forbidden)
+    monkeypatch.setattr(security,'firebase_auth_app',forbidden)
+    monkeypatch.setattr(cli,'validate_stage_credential',forbidden)
+    c=registered_test_config;path=tmp_path/'public.json';path.write_text(json.dumps(c))
+    assert cli.main(['preflight','--config',str(path),'--case-id','offline-check'])==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['networkPerformed'] is False and result['projectId']=='mobi-auth-cloud-test'
+    assert result['createsGlobalAdmin'] is False and result['authAutomaticDeletion'] is False
+    assert result['databaseRoot']=='/cloudTestRuns/'+c['runId']
+
+
+def test_console_registration_flutter_defines_and_paths(registered_test_config,tmp_path):
+    c=registered_test_config;output=tmp_path/'defines'
+    cli.prepare(c,output)
+    for name in ('passenger','driver'):
+        defines=json.loads((output/(name+'-defines.json')).read_text())
+        assert all(defines[key]==value for key,value in c[name].items())
+        assert defines['MOBI_LOCAL_DEMO']=='false'
+        assert defines['MOBI_API_BASE_URL']=='http://127.0.0.1:8011'
+    scope=cloud_test.validate()
+    for path in ('/drivers/one','/rideRequests/one','/v3GuidanceSessions/one'):
+        assert scope.storage_path(path)==scope.path+'/data'+path
+
+
+def test_console_registration_apply_without_adc_is_denied(registered_test_config,tmp_path,monkeypatch,capsys):
+    c=registered_test_config;path=tmp_path/'public.json';path.write_text(json.dumps(c))
+    monkeypatch.delenv('GOOGLE_APPLICATION_CREDENTIALS',raising=False)
+    monkeypatch.delenv('FIREBASE_SERVICE_ACCOUNT_PATH',raising=False)
+    monkeypatch.setattr(security,'firebase_auth_app',lambda:pytest.fail('Unexpected SDK init'))
+    case='offline-deny';plan=cli.execution_plan(c,case)
+    args=['preflight','--config',str(path),'--case-id',case,'--journal',str(tmp_path/'execution.json'),
+          '--apply','--approved-project-id',c['projectId'],'--approved-run-id',c['runId'],
+          '--approved-stage','preflight','--approved-plan-sha256',plan['planSha256']]
+    assert cli.main(args)==1
+    assert 'explicit keyless' in capsys.readouterr().err
+    assert not (tmp_path/'execution.json').exists()

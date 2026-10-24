@@ -14,11 +14,30 @@ MAIN_WEB_APP_IDS = {
     'driver': '1:882602390759:web:d1c4863d29510afc1e1e42',
 }
 
-# No test-project registrations have been independently confirmed yet.
-# Add only Console-exported public values after project-specific human review.
+# Firebase Console configs supplied by the user on 2026-10-23 and reviewed
+# offline. No Firebase metadata, Auth, RTDB or ADC calls were made to attest them.
+# Only public Web identifiers are stored here, never Admin/ADC credentials.
 # The run config, journal, CLI flags and environment cannot populate this map.
-# Unit/Emulator fixtures replace it with synthetic, non-cloud registrations.
-CONFIRMED_TEST_PROJECTS = MappingProxyType({})
+CONFIRMED_TEST_PROJECTS = MappingProxyType({
+    'mobi-auth-cloud-test': {
+        'projectId': 'mobi-auth-cloud-test',
+        'databaseUrl': 'https://mobi-auth-cloud-test-default-rtdb.asia-southeast1.firebasedatabase.app',
+        'passenger': {
+            'MOBI_FIREBASE_API_KEY': 'AIzaSyAfKjXX3LtVE9iaVmcSjXKxl0VIu1x6hAU',
+            'MOBI_FIREBASE_APP_ID': '1:189730626159:web:407d25db8c026703170b9a',
+            'MOBI_FIREBASE_MESSAGING_SENDER_ID': '189730626159',
+            'MOBI_FIREBASE_PROJECT_ID': 'mobi-auth-cloud-test',
+            'MOBI_FIREBASE_AUTH_DOMAIN': 'mobi-auth-cloud-test.firebaseapp.com',
+        },
+        'driver': {
+            'MOBI_FIREBASE_API_KEY': 'AIzaSyAfKjXX3LtVE9iaVmcSjXKxl0VIu1x6hAU',
+            'MOBI_FIREBASE_APP_ID': '1:189730626159:web:b486ec4c18abf663170b9a',
+            'MOBI_FIREBASE_MESSAGING_SENDER_ID': '189730626159',
+            'MOBI_FIREBASE_PROJECT_ID': 'mobi-auth-cloud-test',
+            'MOBI_FIREBASE_AUTH_DOMAIN': 'mobi-auth-cloud-test.firebaseapp.com',
+        },
+    },
+})
 MAIN_SENDER_ID = '882602390759'
 WEB_CONFIG_KEYS = {'MOBI_FIREBASE_API_KEY', 'MOBI_FIREBASE_APP_ID',
                    'MOBI_FIREBASE_MESSAGING_SENDER_ID', 'MOBI_FIREBASE_PROJECT_ID',
