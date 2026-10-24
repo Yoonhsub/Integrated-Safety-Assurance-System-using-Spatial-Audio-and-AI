@@ -4,6 +4,7 @@ import 'src/app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final configured = await FirebaseAuthSession.initializeWebApp();
+  final configured =
+      await FirebaseAuthSession.initializeWebApp(requiredRole: 'passenger');
   runApp(MobiApp(firebaseConfigured: configured));
 }

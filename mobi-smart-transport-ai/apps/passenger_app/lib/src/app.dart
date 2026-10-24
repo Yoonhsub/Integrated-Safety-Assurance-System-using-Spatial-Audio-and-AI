@@ -8,9 +8,15 @@ import 'services/agent_name_store.dart';
 import 'local_vision/local_vision_page.dart';
 
 class MobiApp extends StatefulWidget {
-  const MobiApp({super.key, this.firebaseConfigured = false});
+  const MobiApp(
+      {super.key,
+      this.firebaseConfigured = false,
+      this.authSession,
+      this.authOnly = const AuthOnlyConfiguration.fromEnvironment()});
 
   final bool firebaseConfigured;
+  final AuthSession? authSession;
+  final AuthOnlyConfiguration authOnly;
 
   @override
   State<MobiApp> createState() => _MobiAppState();
@@ -25,7 +31,11 @@ class _MobiAppState extends State<MobiApp> {
   @override
   void initState() {
     super.initState();
-    _loadAgentName();
+    if (widget.authOnly.enabled) {
+      _isLoadingAgentName = false;
+    } else {
+      _loadAgentName();
+    }
   }
 
   Future<void> _loadAgentName() async {
@@ -67,6 +77,14 @@ class _MobiAppState extends State<MobiApp> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.authOnly.enabled) {
+      return AuthOnlyApp(
+          configurationReady: widget.firebaseConfigured,
+          configuration: widget.authOnly,
+          requiredRole: 'passenger',
+          appLabel: 'MOBI 승객 앱',
+          session: widget.authSession);
+    }
     final agentName = _agentName;
     final dataMode = _selectedDataMode;
 
@@ -97,17 +115,23 @@ class _MobiAppState extends State<MobiApp> {
       theme: ThemeData(useMaterial3: true),
       home: AuthGate(
         configurationReady: widget.firebaseConfigured,
+        requiredRole: 'passenger',
+        session: widget.authSession,
         appLabel: 'MOBI 승객 앱',
         builder: (context, account) => home,
       ),
       routes: <String, WidgetBuilder>{
         '/local-vision': (_) => AuthGate(
               configurationReady: widget.firebaseConfigured,
+              requiredRole: 'passenger',
+              session: widget.authSession,
               appLabel: 'MOBI 승객 앱',
               builder: (context, account) => const LocalVisionPage(),
             ),
         '/v3-guidance': (_) => AuthGate(
               configurationReady: widget.firebaseConfigured,
+              requiredRole: 'passenger',
+              session: widget.authSession,
               appLabel: 'MOBI 승객 앱',
               builder: (context, account) => V3GuidancePage(
                 agentName: agentName ?? '모비',

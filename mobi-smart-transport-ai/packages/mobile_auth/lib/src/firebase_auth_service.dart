@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 
 import 'firebase_configuration.dart';
+import 'auth_only_configuration.dart';
 
 class AuthAccount {
   const AuthAccount({required this.uid, this.email});
@@ -23,26 +24,33 @@ abstract interface class AuthSession {
 class FirebaseAuthSession implements AuthSession {
   static const localDemo = bool.fromEnvironment('MOBI_LOCAL_DEMO');
   FirebaseAuthSession({FirebaseAuth? auth})
-    : _auth = auth ?? FirebaseAuth.instance;
+      : _auth = auth ?? FirebaseAuth.instance;
 
   static final FirebaseAuthSession instance = FirebaseAuthSession();
   final FirebaseAuth _auth;
 
   static Future<bool> initializeWebApp({
     FirebaseWebConfiguration? configuration,
+    String? requiredRole,
   }) async {
     final config = configuration ?? FirebaseWebConfiguration.fromEnvironment();
     if (!config.isComplete) return false;
+    const authOnly = AuthOnlyConfiguration.fromEnvironment();
+    if (authOnly.enabled &&
+        !authOnly.matchesWebConfiguration(config, requiredRole: requiredRole))
+      return false;
     if (localDemo &&
         (!kIsWeb ||
             config.projectId != 'demo-mobi-local' ||
-            !{'localhost', '127.0.0.1'}.contains(Uri.base.host)))
-      return false;
+            !{'localhost', '127.0.0.1'}.contains(Uri.base.host))) return false;
     if (!localDemo && config.projectId.startsWith('demo-')) return false;
     try {
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp(options: config.toFirebaseOptions());
       }
+      final initialized = Firebase.app().options;
+      if (initialized.projectId != config.projectId ||
+          initialized.appId != config.appId) return false;
       if (localDemo) {
         await FirebaseAuth.instance.useAuthEmulator('127.0.0.1', 9099);
       }

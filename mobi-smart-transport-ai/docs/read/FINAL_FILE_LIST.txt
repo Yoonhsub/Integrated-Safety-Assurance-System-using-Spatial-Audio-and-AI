@@ -594,3 +594,8 @@ docs/rw/FIREBASE_CLOUD_TEST.md
 scripts/cloud_test_lifecycle.py
 backend/api/tests/test_cloud_test_lifecycle.py
 backend/api/tests/test_cloud_test_lifecycle_emulator.py
+packages/mobile_auth/lib/src/auth_only_configuration.dart
+packages/mobile_auth/lib/src/auth_only_app.dart
+packages/mobile_auth/test/auth_only_gate_test.dart
+apps/passenger_app/test/auth_only_app_test.dart
+apps/driver_app/test/auth_only_app_test.dart
