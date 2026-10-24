@@ -545,3 +545,155 @@ TTS, Vision, Live Hold와 안전 플래그를 변경하지 않았다.
 현재 infrastructure/firebase/cloud-test.example.json은 main이 아닌 신규 테스트 프로젝트의
 Console 확인값을 채우는 placeholder 예제로 변경했다. 그대로는 실행되지 않으며, 값을 채워도
 코드 리뷰된 등록 목록이 없으면 거부된다. 기존 main 설정을 기본값으로 재사용하지 않는다.
+
+
+## 2026-10-23 신규 테스트 프로젝트 Console 등록값 반영
+
+이 절은 앞 절의 CONFIRMED_TEST_PROJECTS가 비어 있다는 현재 상태 설명을 갱신한다.
+사용자가 제공한 두 firebaseConfig 원본을 기준으로 mobi-auth-cloud-test 한 항목을
+오프라인 검토해 등록했다. Firebase Console/API에 접속해 메타데이터 소속을 다시 조회한
+결과는 아니며, 프로젝트 리소스나 Auth 설정의 실제 상태를 검증했다고 주장하지 않는다.
+
+| 항목 | 사용자 제공값 |
+|---|---|
+| Project ID | mobi-auth-cloud-test |
+| Sender ID | 189730626159 |
+| Passenger App ID | 1:189730626159:web:407d25db8c026703170b9a |
+| Driver App ID | 1:189730626159:web:b486ec4c18abf663170b9a |
+| Auth Domain | mobi-auth-cloud-test.firebaseapp.com |
+| RTDB | https://mobi-auth-cloud-test-default-rtdb.asia-southeast1.firebasedatabase.app |
+
+두 앱의 Firebase 웹 API key는 제공된 원본의 동일한 공개값을 정확히 사용한다.
+이는 Admin/ADC 비밀키가 아니다. 서비스 계정·토큰·비밀번호는 추가하지 않았다.
+제공된 storageBucket 및 measurementId는 현재 Auth/RTDB 실행 계약에 필요하지 않으므로
+등록/Flutter defines에 추가하지 않았고 Storage·Analytics를 활성화하지 않았다.
+메인 프로젝트 등록과 보호 정책, 앱별 ID 혼입 차단, Auth 자동 삭제 금지와 경로 격리는 유지한다.
+
+### ADC 없이 수행하는 오프라인 점검
+
+```powershell
+python scripts/cloud_test.py preflight --config <외부-public-config.json> --case-id offline-registration
+python scripts/cloud_test.py prepare --config <외부-public-config.json> --output <새-외부-defines-폴더>
+```
+
+위 명령은 --apply를 지정하지 않는다. preflight 출력은 검토용 실행 계획이며
+networkPerformed=false다. 실제 UID/이메일 충돌 조회, IAM 상태, Auth 제공업체,
+로그인 또는 RTDB 연결을 검증하는 원격 preflight가 아니다.
+--apply는 별도 승인과 단계별 ADC가 있어야 하며, ADC가 없으면 SDK 접근 전에 거부된다.
+
+생성한 passenger-defines.json/driver-defines.json을 각 앱 디렉터리에서
+flutter build web --dart-define-from-file=<해당-앱-defines.json>으로 전달할 수 있다.
+MOBI_LOCAL_DEMO=false와 별도 로컬 Backend 주소가 들어간다. 이번 작업에서 Flutter
+빌드/서버 시작/실행 중 앱 교체는 수행하지 않았다. main 전용 Hosting 준비 도구는 사용하지 않는다.
+
+신규 원본값의 역할별 ID, API key 해시, main 프로젝트 혼입·교차·변조·미등록 거부,
+ADC/HTTP 호출을 금지한 오프라인 preflight, 앱별 defines와 동일한 run 경로를 회귀 테스트한다.
+기존 합성 테스트 등록값과 사용자 제공 등록값을 구분하며 실제 Firebase 통합 결과로 혼동하지 않는다.
+
+실제 Auth 통합 전에는 Email/Password 제공업체·기본 차단 Rules 확인, 테스트 프로젝트 전용
+Runtime/Bootstrap/(향후 Cleanup) 신원·IAM·가장 ADC, 정확한 계정/Claims/run/물리 경로와
+변경 건수 승인 및 별도 수동 정리 계획이 필요하다. 이번에는 IAM/ADC에 접근하지 않았다.
+Bootstrap에 Auth 삭제 권한을 추가하지 않으며, Claims TOCTOU 잔여 위험도 유지한다.
+
+
+## 인증 UI 전용 실행 경계 추가 (2026-10-23)
+
+실제 Flutter 로그인 UI 검증 전에 발견한 두 경계를 보완했다. 기존 승객 Home/V3 화면은
+초기화 시 안내 세션 생성 요청을 할 수 있으므로 인증만 승인된 실행에서 열지 않는다.
+공유 AuthGate는 Passenger/Driver 앱의 mobi_role 및 기사 ID를 확인한 뒤 업무 화면을 연다.
+이 UI 검사는 Backend의 현재 역할·UID·소유권 검증을 대체하지 않는다.
+
+### 격리된 인증 전용 빌드
+
+scripts/cloud_test.py prepare의 공개 defines를 새 외부 폴더로 복사하고 아래 두 값을 추가한다.
+기존 실행 중인 앱의 설정 및 build/web을 덮어쓰지 않는다.
+
+```json
+{
+  "MOBI_AUTH_ONLY": "true",
+  "MOBI_AUTH_TEST_RUN_ID": "auth-20261023-919e07bd"
+}
+```
+
+각 앱 디렉터리에서 해당 역할의 defines로 빌드한다.
+
+```powershell
+flutter build web --release --no-pub --dart-define-from-file=<외부-auth-only-defines.json> --output=<새-외부-web-폴더>
+```
+
+MOBI_LOCAL_DEMO=false, Project ID=mobi-auth-cloud-test가 필수다. 공유 초기화 코드가
+오프라인 검토된 test 프로젝트의 API key, authDomain, senderId와 역할별 App ID를
+Firebase 초기화 전에 대조한다. 신규 등록을 허용하려면 해당 목록을 별도로 검토해야 한다.
+이는 실시간 클라우드 메타데이터 조회가 아니다. 알려진 메인 프로젝트 및 앱 ID 혼입은 거부한다.
+
+인증 전용 화면은 승인 run의 승객 a/b와 기사 a/b UID 및 Claims만 허용한다. 기사 ID는
+각각 해당 run의 driver-502/driver-105여야 한다. 인증 결과 화면에는 UID·이메일·역할·run·
+기사 ID와 로그아웃만 제공하며 비밀번호나 토큰은 표시하지 않는다. 직접 URL 이동도 같은
+인증 전용 화면으로 제한한다. Home/V3/카메라/오디오/Backend 클라이언트는 생성하지 않는다.
+따라서 RTDB 읽기·쓰기나 Backend IAM/ADC 권한은 이 UI 검증에 필요하지 않다.
+
+로그아웃·계정 전환·화면 해제는 generation을 무효화한다. 오래된 Claims 조회와 로그아웃
+결과가 새 계정 화면을 변경하지 않는다. SDK 로그아웃 성공 후 스트림 이벤트가 없더라도
+현재 계정이 없음을 확인한 경우 로그인 화면으로 돌아간다. 실패하면 접근 차단을 유지한다.
+일반 빌드에서는 인증 전용 플래그를 사용하지 않으며 기존 업무 흐름과 안전 정책을 유지한다.
+
+### 검증 범위와 남은 실제 브라우저 검사
+
+공유 AuthGate와 실제 Passenger/Driver 앱 Widget 트리의 테스트는 통제된 Fake AuthSession을
+사용한다. 역할 불일치, run/UID/기사 ID 혼입, 오래된 비동기 결과, 로그아웃 실패 및 복원,
+직접 경로 이동을 검사한다. 앱 Widget 테스트는 HTTP 요청이나 Backend 토큰 사용을 시도하면
+실패하도록 구성한다. 이는 Firebase 실제 브라우저 로그인 성공을 증명하지 않는다.
+
+실제 UI에서는 각 계정 로그인, UID/Claims, 새로고침 후 복원, 역할 교차 차단, 로그아웃,
+Console 오류와 Network의 업무 API 요청 부재를 별도로 확인해야 한다. 비밀번호는 승인된
+DPAPI 보관본만 사용하고 토큰·ADC 원문은 출력하지 않는다. 브라우저 제어 런타임이
+kernel assets 경로 오류로 초기화되지 않은 항목은 NOT_VERIFIED로 남긴다.
+Firebase 사용자·Claims·RTDB·IAM·ADC와 메인 프로젝트에는 이 수정 단계에서 접근하지 않았다.
+Auth 자동 삭제 금지, Live Hold 및 TTS/Vision 안전 정책은 유지한다.
+
+
+## 2026-10-25 실제 인증 통합 및 AuthGate 수정 빌드 재검증
+
+이 절은 앞 절의 당시 미검증 기록을 보존하면서 후속 검증 결과를 추가한다.
+대상은 별도 프로젝트 `mobi-auth-cloud-test`, 승인 run은 `auth-20261023-919e07bd`다.
+메인 프로젝트를 테스트 대상으로 사용하지 않았다.
+
+### 확인된 결과 (PASS)
+
+- 기존 승객 2명·기사 2명의 실제 Email/Password 로그인, ID Token 발급·갱신과 현재 Claims 확인.
+- 로컬 FastAPI의 실제 HTTP 인증·인가 18건. 401/403 거부를 확인했고,
+  Auth 조회 장애의 503은 실제 클라우드 장애가 아닌 로컬 오류 주입으로 검증했다.
+- Passenger·Driver Chrome 인증 E2E: UID·역할·run·기사 ID, 양방향 역할 교차 차단,
+  새로고침 인증 복원과 로그아웃.
+- AuthGate 로그아웃 경합의 Widget 재현: 수정 전 FAIL, 수정 후 PASS.
+  로그아웃 대상 UID를 Claims 조회 generation과 분리하고, 같은 UID 이벤트가
+  로그아웃 진행·실패 상태를 해제하지 못하도록 했다. 실패 시 재시도 경로를 유지한다.
+  현재 SDK 계정과 다른 오래된 스트림 이벤트와 이전 Claims/로그아웃 결과도 폐기한다.
+- 수정 후 Flutter 자동 회귀: Passenger 128 + Driver 3 + mobile_auth 35 = 166 PASS.
+  신규 경계 테스트 11개를 포함한다. 세 영역 analyze, 두 인증 전용 Web release 빌드,
+  현재 소스 스냅샷 Architecture와 diff 검사도 통과했다.
+- 수정 빌드의 실제 시크릿 Chrome 재검증: 승객 A 로그인·로그아웃·동일 계정 재로그인,
+  A 로그아웃 후 B 로그인, 기사 A 로그인·기사 502 확인·동일 계정 재로그인,
+  새로고침 복원 및 최종 로그아웃 후 로그인 화면 유지를 확인했다.
+  관찰한 로그아웃 이후 이전 계정 화면은 다시 나타나지 않았고 캡처된 Console warn/error는 0개였다.
+
+### 검증 한계 (NOT_VERIFIED 유지)
+
+- 실제 Firebase SDK에서 동일 UID 이벤트와 지연 signOut의 정확한 경합 순서를 강제 재현하지 않았다.
+  통제된 Widget 이벤트 순서의 PASS와 실제 Chrome의 정상 로그아웃·재로그인 PASS는 별개다.
+- 실제 Chrome Network 개별 요청 전체 목록·메서드·상태 코드 검사는 미완료다.
+  RTDB·업무 API 요청 부재에 대한 Network 상세 확인도 NOT_VERIFIED다.
+  인증 전용 UI 문구나 Fake HTTP 차단 테스트를 이 Network 검사의 대체 증거로 사용하지 않는다.
+- 로컬 정적 서버 GET 200/304 및 제공 JS의 빌드 파일 SHA256 일치와 Chrome의 해당 JS URL 로드는
+  확인했다. 브라우저 메모리의 JS 파일을 별도 추출해 바이트 비교한 검사는 아니다.
+- 실제 Flutter E2E는 인증 전용 모드에서만 수행했다. 일반 업무 화면은 기존 경로와 역할 검사를
+  유지하며, `MOBI_AUTH_ONLY` 기본값은 false다. 일반 모드에도 명시적 역할 검사가 적용된다.
+- Web release는 JavaScript 빌드로 통과했다. Passenger의 flutter_tts Wasm dry-run 호환성 및
+  두 앱의 CupertinoIcons font 경고는 남아 있으며 Wasm 동작을 검증했다고 주장하지 않는다.
+
+재검증은 기존 5183/5184 서버를 유지하고 수정 빌드를 임시 5185/5186에서 제공한 뒤
+새 서버만 종료했다. 입력 자동화의 빈 비밀번호 1회 제출은 입력 오류로 구분했고,
+정상 길이 입력 후 재로그인을 확인했다. 비밀번호·ID Token·Refresh Token·ADC 원문과 HAR는
+저장소에 기록하지 않는다. 테스트 계정은 유지하고 브라우저 테스트 세션은 로그아웃했다.
+Auth 자동 삭제 금지와 메인 프로젝트 Auth 보호, Live Hold·TTS·Vision 안전 정책은 유지한다.
+RTDB 업무 통합과 임시 IAM 권한·데이터 생성·정리는 별도의 범위 승인 이후 진행한다.
