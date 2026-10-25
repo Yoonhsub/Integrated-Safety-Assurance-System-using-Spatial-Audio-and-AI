@@ -374,6 +374,15 @@ class FirebaseClient:
             path = scope.storage_path(path)
         return self._db_module.reference(path)
 
+    def _guard_cloud_test_mutation(self, path: str, *, conditional: bool) -> None:
+        from app.cloud_test import requested, validate
+        if requested():
+            scope = validate()
+            if scope.ride_only:
+                scope.storage_path(path)  # Reject before initialization or SDK I/O.
+                if not conditional or path == '/rideRequests':
+                    raise HTTPException(403, 'Ride-only writes require CAS on an approved record')
+
     def _use_memory(self) -> bool:
         use_memory = self._using_mock or not self.initialize()
         if use_memory and self.settings.require_real_storage:
@@ -402,12 +411,14 @@ class FirebaseClient:
         return self._real_operation(path, lambda ref: ref.get())
 
     def set(self, path: str, value: Any) -> None:
+        self._guard_cloud_test_mutation(path, conditional=False)
         if self._use_memory():
             self._memory_db.set(path, value)
             return
         self._real_operation(path, lambda ref: ref.set(value))
 
     def update(self, path: str, value: dict[str, Any]) -> None:
+        self._guard_cloud_test_mutation(path, conditional=False)
         from app.cloud_test import requested, validate
         if requested():
             scope = validate()
@@ -426,6 +437,7 @@ class FirebaseClient:
         Real RTDB uses SDK ETag compare-and-set retries, not a process-local lock.
         Failures never fall back to memory or an unconditional write.
         """
+        self._guard_cloud_test_mutation(path, conditional=True)
         if self._use_memory():
             return self._memory_db.transaction(path, transform)
         from firebase_admin import db, exceptions
@@ -444,12 +456,14 @@ class FirebaseClient:
             raise
 
     def push(self, path: str, value: Any) -> str:
+        self._guard_cloud_test_mutation(path, conditional=False)
         if self._use_memory():
             return self._memory_db.push(path, value)
         ref = self._real_operation(path, lambda ref: ref.push(value))
         return str(ref.key)
 
     def delete(self, path: str) -> None:
+        self._guard_cloud_test_mutation(path, conditional=False)
         if self._use_memory():
             self._memory_db.delete(path)
             return

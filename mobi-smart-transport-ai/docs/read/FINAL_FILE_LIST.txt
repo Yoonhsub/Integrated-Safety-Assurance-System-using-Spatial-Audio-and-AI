@@ -599,3 +599,5 @@ packages/mobile_auth/lib/src/auth_only_app.dart
 packages/mobile_auth/test/auth_only_gate_test.dart
 apps/passenger_app/test/auth_only_app_test.dart
 apps/driver_app/test/auth_only_app_test.dart
+
+backend/api/tests/test_cloud_test_reuse.py

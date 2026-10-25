@@ -18,7 +18,7 @@ from uuid import uuid4
 from app.cloud_test import CloudTestConfigurationError, account_allowed
 
 STAGES = ('preflight', 'auth-bootstrap', 'rtdb-bootstrap', 'backend-smoke',
-          'flutter-smoke', 'cleanup')
+          'flutter-smoke', 'cleanup', 'auth-reuse-check', 'ride-smoke')
 NAMES = ('passenger-a', 'passenger-b', 'driver-a', 'driver-b')
 
 
@@ -54,7 +54,7 @@ def conditional_delete_rest(reference, url, credential, expected):
 
 
 def exact_accounts(config):
-    run = config['runId']
+    run = config.get('authRunId',config['runId'])
     result = []
     for name in NAMES:
         uid = f'ct-{run}-{name}'
@@ -208,7 +208,7 @@ class Lifecycle:
         rid = self.cli.plan(self.config, self.case_id)['requestId']
         if logical == '/rideRequests/' + rid:
             return
-        if re.fullmatch(r'/v3GuidanceSessions/v3-[0-9a-f]{32}', logical or ''):
+        if not self.scope.ride_only and re.fullmatch(r'/v3GuidanceSessions/v3-[0-9a-f]{32}', logical or ''):
             return
         raise CloudTestConfigurationError('Record path is outside this exact execution allowlist')
 
@@ -221,11 +221,28 @@ class Lifecycle:
                 raise CloudTestConfigurationError('Existing RTDB record collision; no write performed')
 
     def preflight(self):
-        self.auth_preflight()
+        if self.scope.ride_only:
+            self.auth_reuse_check()
+        else:
+            self.auth_preflight()
         self.database_preflight()
         return {'status': 'PASS', 'checkedAccounts': 4, 'checkedRecords': 3, 'writes': 0}
 
+    def auth_reuse_check(self):
+        if not self.scope.ride_only:
+            raise CloudTestConfigurationError('Existing Auth check requires reviewed ride-only mode')
+        for account in self.accounts:
+            user = self.lookup('get_user', account['uid'])
+            email_user = self.lookup('get_user_by_email', account['email'])
+            if (user is None or email_user is None or user.uid != account['uid']
+                    or user.email != account['email'] or email_user.uid != user.uid
+                    or user.disabled or canonical(user.custom_claims or {}) != canonical(account['claims'])):
+                raise CloudTestConfigurationError('Existing approved account differs; no mutation allowed')
+        return {'status':'PASS','accountsVerified':4,'authMutations':0}
+
     def auth_bootstrap(self, password):
+        if self.scope.ride_only:
+            raise CloudTestConfigurationError('Auth creation and Claims changes forbidden in reuse mode')
         # Firebase Auth exposes no conditional Claims update tied to creation
         # identity/version. Rechecking cannot close the final TOCTOU interval.
         # Do not expose that write race in the shared main project.
@@ -292,7 +309,9 @@ class Lifecycle:
                 self.journal.data['executionId'], self.scope.storage_path(logical), canonical(expected))
 
     def rtdb_bootstrap(self):
-        if self.journal.data['stages'].get('auth-bootstrap') != 'PASS':
+        if self.scope.ride_only:
+            self.auth_reuse_check()  # Do not trust a journal stage flag as identity evidence.
+        elif self.journal.data['stages'].get('auth-bootstrap') != 'PASS':
             raise CloudTestConfigurationError('Complete auth-bootstrap first')
         self.database_preflight()
         records = self.initial_records()
@@ -434,7 +453,11 @@ class Lifecycle:
                     self.journal.save()
                 if stage == 'auth-bootstrap':
                     result = self.auth_bootstrap(password)
-                elif stage == 'backend-smoke':
+                elif stage in {'backend-smoke','ride-smoke'}:
+                    if (stage == 'ride-smoke') != self.scope.ride_only:
+                        raise CloudTestConfigurationError('Smoke stage differs from the approved execution mode')
+                    if self.scope.ride_only:
+                        self.auth_reuse_check()
                     if self.journal.data['stages'].get('rtdb-bootstrap') != 'PASS':
                         raise CloudTestConfigurationError('Complete rtdb-bootstrap first')
                     if self.journal.data['stages'].get(stage) == 'PASS':

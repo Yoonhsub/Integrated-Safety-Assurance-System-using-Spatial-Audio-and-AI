@@ -50,6 +50,9 @@ class RideRequestService:
                 raise auth_error(403, "Passenger is outside the cloud-test run")
         if principal.role != "admin" and payload.userId != principal.uid:
             raise auth_error(403, "Cannot create a request for another user")
+        if requested() and scope.ride_only and (principal.uid != scope.uid('passenger-a')
+                or idempotency_key != scope.idempotency_key):
+            raise auth_error(403, 'Creation is outside the approved ride-only action')
         if idempotency_key is not None:
             return self._create_idempotent(payload, idempotency_key, principal)
         payload = self._resolve_assignment(payload, principal)
@@ -80,6 +83,9 @@ class RideRequestService:
             scope = validate()
             if not valid_key(payload.routeId):
                 raise auth_error(403, "Invalid cloud-test route")
+            if scope.ride_only and (payload.stopId, payload.routeId, payload.busNo) != (
+                    f'ct-{scope.run_id}-stop-502', 'MOCK-502', '502'):
+                raise auth_error(403, 'Payload differs from the approved ride-only action')
             run = self.firebase.get(scope.path)
             assignment = run.get('assignments', {}).get(payload.routeId) if isinstance(run, dict) else None
             if (not isinstance(run, dict) or run.get('projectId') != scope.project_id
@@ -90,6 +96,8 @@ class RideRequestService:
                     or assignment.get('driverId') not in {scope.uid('driver-502'), scope.uid('driver-105')}
                     or payload.targetDriverId not in (None, assignment.get('driverId'))):
                 raise auth_error(403, "Cloud-test route assignment denied")
+            if scope.ride_only and run.get('authRunId') != scope.identity_run:
+                raise auth_error(503, 'Cloud-test identity binding is not ready')
             profile = self.firebase.get('/drivers/' + assignment['driverId'])
             if (not isinstance(profile, dict) or profile.get('cloudTestRun') != scope.run_id
                     or profile.get('simulation') is not True or profile.get('routeId') != payload.routeId

@@ -207,7 +207,10 @@ async def authorize_api(connection: HTTPConnection, principal=Depends(get_princi
         yield
         return
     from app.cloud_test import requested, OPERATIONS
-    if requested() and key not in OPERATIONS:
+    ride_operations = {op for op in OPERATIONS if op[1].startswith(('/ride-requests', '/drivers/', '/driver/'))}
+    from app.cloud_test import validate
+    permitted = ride_operations if requested() and validate().ride_only else OPERATIONS
+    if requested() and key not in permitted:
         if connection.scope["type"] == "websocket":
             raise WebSocketException(code=1008, reason="Outside cloud-test scope")
         raise auth_error(403, "Operation is outside the cloud-test scope")

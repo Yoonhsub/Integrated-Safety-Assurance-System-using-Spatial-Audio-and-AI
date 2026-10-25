@@ -1,4 +1,6 @@
 """Explicit local-backend / real test-project boundary. No network on import."""
+import hashlib
+import json
 from dataclasses import dataclass
 import os
 import re
@@ -37,6 +39,12 @@ CONFIRMED_TEST_PROJECTS = MappingProxyType({
             'MOBI_FIREBASE_AUTH_DOMAIN': 'mobi-auth-cloud-test.firebaseapp.com',
         },
     },
+})
+# Reviewed existing identities may be reused only with this exact data run/case.
+# CLI config, environment and journals cannot extend this source allowlist.
+REVIEWED_REUSE_RUNS = MappingProxyType({
+    ('mobi-auth-cloud-test', 'rtdb-20261025-6e9a7c42'):
+        ('auth-20261023-919e07bd', 'ride-e2e-01'),
 })
 MAIN_SENDER_ID = '882602390759'
 WEB_CONFIG_KEYS = {'MOBI_FIREBASE_API_KEY', 'MOBI_FIREBASE_APP_ID',
@@ -119,6 +127,8 @@ class CloudTestScope:
     database_url: str
     run_id: str
     main_project_test: bool = False
+    auth_run_id: str | None = None
+    ride_only: bool = False
 
     def storage_path(self, path: str) -> str:
         """Map logical application paths into this run; never touch main data."""
@@ -133,14 +143,36 @@ class CloudTestScope:
                 any(ord(c) < 32 or ord(c) == 127 for c in part) for part in parts)
                 or parts[0] == 'cloudTestRuns'):
             raise CloudTestConfigurationError('Invalid cloud-test logical storage path')
+        if self.ride_only and path not in {
+                '/drivers/' + self.uid('driver-502'), '/drivers/' + self.uid('driver-105'),
+                '/rideRequests', '/rideRequests/' + self.request_id}:
+            raise CloudTestConfigurationError('Path is outside the approved ride-only records')
         return self.path + '/data/' + '/'.join(parts)
 
     @property
     def path(self):
         return f'/cloudTestRuns/{self.run_id}'
 
+    @property
+    def identity_run(self):
+        return self.auth_run_id or self.run_id
+
+    @property
+    def case_id(self):
+        return REVIEWED_REUSE_RUNS[(self.project_id, self.run_id)][1]
+
+    @property
+    def idempotency_key(self):
+        return f'cloud-test:{self.run_id}:{self.case_id}'
+
+    @property
+    def request_id(self):
+        identity = json.dumps([self.uid('passenger-a'), self.idempotency_key],
+                              ensure_ascii=True, separators=(',', ':'))
+        return 'ride-i-' + hashlib.sha256(identity.encode()).hexdigest()
+
     def uid(self, name):
-        return f'ct-{self.run_id}-{name}'
+        return f'ct-{self.identity_run}-{name}'
 
 
 def validate() -> CloudTestScope:
@@ -157,6 +189,15 @@ def validate() -> CloudTestScope:
     run = os.getenv('MOBI_CLOUD_TEST_RUN_ID', '')
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{7,23}', run):
         raise CloudTestConfigurationError('Invalid cloud-test run identifier')
+    auth_run = os.getenv('MOBI_CLOUD_TEST_AUTH_RUN_ID', '')
+    data_run = os.getenv('MOBI_CLOUD_TEST_DATA_RUN_ID', '')
+    mode = os.getenv('MOBI_CLOUD_TEST_MODE', '')
+    ride_only = bool(auth_run or data_run or mode)
+    if not ride_only and (project, run) in REVIEWED_REUSE_RUNS:
+        raise CloudTestConfigurationError('Reviewed data run requires explicit Auth reuse mode')
+    if ride_only and (main_test or mode != 'ride-only' or data_run != run
+            or REVIEWED_REUSE_RUNS.get((project, data_run), (None, None))[0] != auth_run):
+        raise CloudTestConfigurationError('Unreviewed Auth/data run binding')
     expected = {
         'MOBI_CLOUD_TEST': '1', 'APP_ENV': 'staging',
         'FIREBASE_PROJECT_ID': project, 'GOOGLE_CLOUD_PROJECT': project,
@@ -193,7 +234,7 @@ def validate() -> CloudTestScope:
                 or not 1024 <= p.port <= 65535 or p.netloc != f'127.0.0.1:{p.port}'
                 or p.path or p.query or p.fragment or p.port in {5173,5174,8001,9000,9099}):
             raise CloudTestConfigurationError('Cloud-test requires separate explicit loopback Web origins')
-    return CloudTestScope(project, url, run, main_test)
+    return CloudTestScope(project, url, run, main_test, auth_run or None, ride_only)
 
 
 def account_allowed(uid: str, claims: dict, scope: CloudTestScope) -> bool:
@@ -207,7 +248,7 @@ def account_allowed(uid: str, claims: dict, scope: CloudTestScope) -> bool:
     if uid not in expected:
         return False
     role, driver = expected[uid]
-    exact = {'mobi_cloud_test_run': scope.run_id, 'mobi_role': role}
+    exact = {'mobi_cloud_test_run': scope.identity_run, 'mobi_role': role}
     if driver is not None:
         exact['mobi_driver_id'] = driver
     return claims == exact

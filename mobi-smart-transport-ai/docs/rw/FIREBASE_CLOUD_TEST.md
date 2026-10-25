@@ -697,3 +697,106 @@ Auth 자동 삭제 금지, Live Hold 및 TTS/Vision 안전 정책은 유지한�
 저장소에 기록하지 않는다. 테스트 계정은 유지하고 브라우저 테스트 세션은 로그아웃했다.
 Auth 자동 삭제 금지와 메인 프로젝트 Auth 보호, Live Hold·TTS·Vision 안전 정책은 유지한다.
 RTDB 업무 통합과 임시 IAM 권한·데이터 생성·정리는 별도의 범위 승인 이후 진행한다.
+
+
+## 2026-10-25 기존 Auth 계정 재사용형 ride-only RTDB 실행 준비
+
+이 모드는 실제 클라우드 실행 승인이 아니다. 기존 계정을 변경하지 않고 별도 데이터 run을
+검증하기 위한 로컬 구현이다. 아래 정확한 결합만 `REVIEWED_REUSE_RUNS`에 검토해 등록했다.
+
+- Project: `mobi-auth-cloud-test`
+- authRunId: `auth-20261023-919e07bd` (기존 UID·이메일·역할·기사 ID·Claims)
+- dataRunId 및 호환 runId: `rtdb-20261025-6e9a7c42` (RTDB 격리)
+- executionMode: `ride-only`, caseId: `ride-e2e-01`
+
+공개 config에 authRunId/dataRunId/executionMode 세 값을 모두 추가한다. dataRunId는 runId와
+일치해야 한다. 임의 결합·메인 프로젝트·부분 설정은 거부한다. 등록된 data run에서 세 값을
+제거해 구형 Auth 생성 모드로 돌아가는 것도 거부한다. 다른 기존 단일 run 방식은 유지한다.
+새로운 data run은 소스의 검토 목록과 실행 계획을 다시 리뷰해야 하며 CLI나 journal이 목록을
+확장하지 못한다. 기존 네 계정의 `mobi_cloud_test_run`은 authRunId와 정확히 비교하고, 기사 ID는
+`ct-auth-20261023-919e07bd-driver-502` 및 `...-driver-105`를 유지한다.
+
+### 단계와 신원
+
+1. `preflight` (--apply 없음): 검토된 설정·계획 출력만. ADC/SDK/HTTP 접근 없음.
+2. `auth-reuse-check` (별도 클라우드 읽기 승인 후): Runtime으로 정확한 네 UID·이메일을 조회해
+   활성 상태와 Claims 전체 일치를 확인. 사용자 생성·Claims 수정·삭제 없음.
+3. `rtdb-bootstrap` (별도 쓰기 승인 후): Runtime으로 기존 계정을 다시 읽어 확인한 후
+   manifest와 기사 레코드 2개만 absent→created CAS 및 실제 readback으로 확인.
+   journal의 PASS 값만으로 계정 검증을 생략하지 않는다.
+4. `ride-smoke`: Runtime으로 계정 재확인, 실제 Email/Password 로그인·토큰 갱신 및 아래 API 흐름.
+5. `cleanup`: 별도 승인된 Cleanup 신원. 기존 생성 증거·ETag 정책을 유지한다.
+
+이 모드의 preflight/auth-reuse-check/rtdb-bootstrap/ride-smoke/backend는 Runtime 가장 ADC만
+허용한다. Bootstrap이나 Owner ADC로 자동 대체하지 않는다. auth-bootstrap과 Guidance 포함
+backend-smoke는 거부한다. 구형 신규 Auth 생성 시나리오의 검사와 메인 Auth 차단은 유지한다.
+미적용 공개 계획 예:
+
+```powershell
+python scripts/cloud_test.py preflight --config <외부-public-config.json> --case-id ride-e2e-01
+```
+
+실행기 옵션·단계·project/run·계획 해시는 기존과 같이 정확히 승인되어야 한다. 로컬 plan PASS를
+실제 클라우드 계정 상태·IAM 유효성·쓰기 승인으로 간주하지 않는다.
+
+### 정확한 RTDB 범위
+
+기준 경로는 `/cloudTestRuns/rtdb-20261025-6e9a7c42`다.
+
+- `/manifest`: version/projectId/data runId/authRunId/state/가상 기사 배정/실행 표식.
+- `/data/drivers/ct-auth-20261023-919e07bd-driver-502`
+- `/data/drivers/ct-auth-20261023-919e07bd-driver-105`
+- `/data/rideRequests/ride-i-1bb03e14729383c0029c4e799c0bdc2892e56f569ce0480314b4d0b3c09a3b16`
+
+기사 목록을 위해 해당 `/data/rideRequests` collection 조회도 필요하다. 부모 run 삭제와
+collection 전체 쓰기·삭제는 허용하지 않는다. fcmTokens, v3GuidanceSessions, users 등은 허용하지 않는다.
+FCM은 Cloud-test에서 토큰 조회 이전에 명시적으로 비활성 결과를 반환한다. 실패한 토큰 조회를
+숨기는 방식이 아니며 일반 서비스의 FCM 조회·전송은 유지한다. API 허용 목록도 탑승 요청과
+기사 요청 API로 제한하여 Guidance·seed·Vision 호출을 차단한다.
+
+### API 및 실제 저장 검증
+
+기존 passenger-a로 고정 Idempotency-Key `cloud-test:rtdb-20261025-6e9a7c42:ride-e2e-01`을
+사용한다. 최초 생성은 가상 정류장 `ct-rtdb-20261025-6e9a7c42-stop-502`, MOCK-502, bus502만
+허용한다. 서버가 manifest/profile에서 기사를 결정하며 요청 ID도 서버의 고정 계획과 일치해야 한다.
+POST 생성 → driver-a 목록 GET(요청 포함 확인) → ACCEPTED PATCH → passenger-a GET 및 RTDB
+readback → CANCELLED PATCH → GET/readback. 현재 상태 머신에서 ACCEPTED→CANCELLED는 허용된다.
+타인 passenger-b와 미배정 driver-b는403, 무효/누락 토큰401, terminal CANCELLED→ACCEPTED 및
+동일 멱등키의 변경 payload는409를 확인한다. 같은 멱등키 재POST는 CANCELLED 상태를 유지한다.
+HTTP200만으로 저장 성공을 판정하지 않고 각 단계의 실제 저장값을 비교한다.
+
+### 정리와 잔여 제한
+
+생성 직후 같은 프로세스가 보유한 독립 생성 영수증과 예상값, 현재값·ETag가 맞는 개별 항목만
+정리할 수 있다. journal/configHash/manifest 표식은 독립 삭제 권한이 아니다. Backend가 생성한
+ride 요청은 readback만으로 삭제 영수증을 얻지 않으며, 재시작한 cleanup CLI에도 메모리 영수증이
+없다. 이 경우 PARTIAL/MANUAL_REQUIRED가 정상 결과이고 정확한 개별 경로의 수동 정리를 별도
+승인받아야 한다. Auth 네 계정은 정리 대상이 아니며 모든 프로젝트에서 자동 Auth 삭제를 금지한다.
+ETag 충돌은 자동 덮어쓰기·무조건 삭제로 처리하지 않는다. 기존 Backend SDK transaction의
+조건부 재시도는 각 snapshot에서 소유권·상태를 다시 검사한다는 점을 구분한다.
+
+실제 클라우드 실행 전에는 독립 코드 리뷰, Runtime 가장·조회 역할·단시간 RTDB Writer 승인,
+배포 Rules 잠금 재확인, 계정 읽기·정확한 네 레코드 생성/readback 및 개별 정리 승인이 필요하다.
+이번 구현 작업은 실제 Firebase/IAM/ADC에 접근하지 않았고 기존 서버·TTS·Vision·Live Hold를
+변경하지 않았다. Chrome Network 상세 검증 NOT_VERIFIED도 유지한다.
+
+
+### 이번 로컬 검증 결과
+
+- 신규 재사용/ride-only 회귀 45 PASS. 기존 선택 회귀 313개와 합쳐 358 PASS / 9 SKIP.
+- Backend 전체(`backend/api/tests`) 774 PASS / 9 SKIP. 이 수치는 저장소의 다른 Python
+  디렉터리까지 포함한 전체 pytest 실행 결과와 구분한다.
+- SKIP 6개는 Auth/RTDB Emulator opt-in, 3개는 실제 RTDB ETag 충돌 opt-in 미실행이다.
+- 신규 HTTP 검사는 실제 FastAPI 인증·인가·업무 라우트와 StrictStore/MockTransport를 사용했다.
+  실제 Firebase 로그인·저장 성공으로 대체하지 않는다. Guidance 호출은 ride-smoke에 없고,
+  별도의 권한 거부 검사는 로컬 POST /guidance/session 403을 확인했다(세션 생성 0개).
+- 새 모드의 FirebaseClient는 승인된 개별 레코드 transaction만 허용하며,
+  set/update/push/delete 및 rideRequests collection transaction은 SDK I/O 전에 거부한다.
+- 오프라인 CLI preflight는 networkPerformed=false, 새 Auth 계정 0, Guidance 0,
+  FCM token read 0, 변경 대상 4개와 조회 대상 5개를 계획에 포함했다.
+- 소스 스냅샷 Architecture와 git diff --check 통과. 실제 Firebase/Auth/IAM/ADC 접근이나
+  토큰 갱신, Rules 변경, 배포 및 Git commit/push는 수행하지 않았다.
+
+이 결과는 실제 클라우드 실행 준비에 대한 CONDITIONAL이다. 독립 보안 리뷰와 정확한 IAM
+시간대·대상별 읽기/쓰기·개별 수동 정리 승인이 남아 있다. 특히 별도 cleanup 프로세스는 생성
+영수증을 복원하지 않으므로 자동 정리 PASS를 보장하지 않는다.

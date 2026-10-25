@@ -23,11 +23,13 @@ NAMES = ('passenger-a','passenger-b','driver-a','driver-b')
 def load_config(path):
     data=json.loads(Path(path).read_text('utf-8-sig'))
     keys={'projectId','databaseUrl','runId','backendPort','passengerPort','driverPort','passenger','driver'}
-    if (not isinstance(data,dict) or set(data) not in (keys, keys | {'mainProjectTest'})
+    if (not isinstance(data,dict) or set(data) not in (keys, keys | {'mainProjectTest'}, keys | {'authRunId','dataRunId','executionMode'}, keys | {'mainProjectTest','authRunId','dataRunId','executionMode'})
             or type(data.get('mainProjectTest', False)) is not bool):
         raise CloudTestConfigurationError('Cloud-test config must contain only the documented public fields')
     for key in ('projectId','databaseUrl','runId'):
         if not isinstance(data[key],str) or '<' in data[key]:raise CloudTestConfigurationError('Complete public target configuration')
+    if 'authRunId' in data and (any(not isinstance(data[k],str) or not data[k] for k in ('authRunId','dataRunId','executionMode')) or data['runId'] != data['dataRunId'] or data['executionMode'] != 'ride-only'):
+        raise CloudTestConfigurationError('Explicit dataRunId must match runId in ride-only mode')
     ports=[data[k] for k in ('backendPort','passengerPort','driverPort')]
     if (any(type(p) is not int or not 1024<=p<=65535 or p in {5173,5174,8001,9000,9099} for p in ports)
             or len(set(ports))!=3):raise CloudTestConfigurationError('Use three distinct unoccupied non-demo ports')
@@ -56,6 +58,9 @@ def environment_for(config):
     return {'MOBI_CLOUD_TEST':'1',
         'MOBI_CLOUD_TEST_MAIN_PROJECT':config['projectId'] if config.get('mainProjectTest', False) else '',
         'MOBI_CLOUD_TEST_PROJECT_ID':config['projectId'],
+        'MOBI_CLOUD_TEST_AUTH_RUN_ID':config.get('authRunId',''),
+        'MOBI_CLOUD_TEST_DATA_RUN_ID':config.get('dataRunId',''),
+        'MOBI_CLOUD_TEST_MODE':config.get('executionMode',''),
         'MOBI_CLOUD_TEST_DATABASE_URL':config['databaseUrl'],'MOBI_CLOUD_TEST_RUN_ID':config['runId'],
         'APP_ENV':'staging','FIREBASE_PROJECT_ID':config['projectId'],'GOOGLE_CLOUD_PROJECT':config['projectId'],
         'FIREBASE_DATABASE_URL':config['databaseUrl'],'FIREBASE_USE_ADC':'true','FIREBASE_USE_MOCK':'false',
@@ -80,20 +85,22 @@ def configure(config):
 
 
 def fixture(config):
-    run=config['runId'];uid=lambda n:f'ct-{run}-{n}'
+    run=config['runId'];auth_run=config.get('authRunId',run);uid=lambda n:f'ct-{auth_run}-{n}'
     accounts=[];drivers={};assignments={}
     names=NAMES
     for name in names:
         role='passenger' if name.startswith('passenger') else 'driver' if name.startswith('driver') else 'admin'
-        claims={'mobi_role':role,'mobi_cloud_test_run':run}
+        claims={'mobi_role':role,'mobi_cloud_test_run':auth_run}
         if role=='driver':
             bus='502' if name=='driver-a' else '105';driver=uid('driver-'+bus);route='MOCK-'+bus
             claims['mobi_driver_id']=driver
             drivers[driver]={'routeId':route,'busNo':bus,'cloudTestRun':run,'simulation':True}
             assignments[route]={'driverId':driver,'busNo':bus,'simulation':True}
         accounts.append({'uid':uid(name),'email':uid(name)+'@example.test','claims':claims})
-    return accounts,drivers,{'version':1,'projectId':config['projectId'],'runId':run,'state':'ready',
+    manifest={'version':1,'projectId':config['projectId'],'runId':run,'state':'ready',
                             'purpose':'isolated-cloud-test','assignments':assignments}
+    if config.get('executionMode') == 'ride-only':manifest['authRunId']=auth_run
+    return accounts,drivers,manifest
 
 
 def plan(config,case_id):
@@ -102,7 +109,9 @@ def plan(config,case_id):
     identity=json.dumps([accounts[0]['uid'],key],ensure_ascii=True,separators=(',',':'))
     rid='ride-i-'+hashlib.sha256(identity.encode()).hexdigest()
     from app.cloud_test import CloudTestScope
-    scope=CloudTestScope(config['projectId'],config['databaseUrl'],config['runId'],config.get('mainProjectTest',False))
+    scope=CloudTestScope(config['projectId'],config['databaseUrl'],config['runId'],config.get('mainProjectTest',False),config.get('authRunId'),config.get('executionMode')=='ride-only')
+    if scope.ride_only and case_id != scope.case_id:
+        raise CloudTestConfigurationError('Case differs from the reviewed ride-only action')
     return {'projectId':config['projectId'],'databaseUrl':config['databaseUrl'],'runId':config['runId'],
             'mainProjectTest':scope.main_project_test,
             'databaseRoot':scope.path,
@@ -111,7 +120,7 @@ def plan(config,case_id):
             'deferredAdminChecks':['admin-authenticated legacy seed denial','admin-only status'] if scope.main_project_test else [],
             'accountRoles':[{'uid':a['uid'],**a['claims']} for a in accounts],
             'bootstrapDatabasePaths':[scope.storage_path(scope.path),*[scope.storage_path('/drivers/'+d) for d in drivers]],
-            'smokeDatabasePaths':[scope.storage_path('/rideRequests/'+rid),scope.storage_path('/v3GuidanceSessions/<server-generated-id>')],
+            'smokeDatabasePaths':[scope.storage_path('/rideRequests/'+rid)]+([] if scope.ride_only else [scope.storage_path('/v3GuidanceSessions/<server-generated-id>')]),
             'requestId':rid,'idempotencyKey':key,'caseId':case_id,
             'backendOrigin':f'http://127.0.0.1:{config["backendPort"]}',
             'simulation':True,'deletesExistingData':False,'enablesVision':False}
@@ -124,7 +133,11 @@ def execution_plan(config,case_id):
     result['accounts']=exact_accounts(config)
     result['maxAuthAccounts']=4
     result['maxRideRequests']=1
-    result['maxGuidanceSessions']=1
+    result['maxGuidanceSessions']=0 if config.get('executionMode')=='ride-only' else 1
+    if config.get('executionMode')=='ride-only':
+        result.update(authRunId=config['authRunId'],dataRunId=config['dataRunId'],
+            authMode='reuse-existing-read-only',newAuthAccounts=0,bootstrapIdentity='Runtime',
+            stages=['preflight','auth-reuse-check','rtdb-bootstrap','ride-smoke','cleanup'])
     result['webRegistrationSha256']=hashlib.sha256(json.dumps(
         {key:config[key] for key in ('projectId','databaseUrl','passenger','driver')},
         sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -133,7 +146,14 @@ def execution_plan(config,case_id):
     result['cleanupEvidence']='volatile successful creation receipt; journal alone never authorizes deletion'
     result['sessionCleanup']='manual approval; no request-ID recovery API'
 
-    result['directRtdbProbePath']=CloudTestScope(config['projectId'],config['databaseUrl'],config['runId'],config.get('mainProjectTest',False)).storage_path('/rideRequests/'+result['requestId'])
+    result['directRtdbProbePath']=CloudTestScope(config['projectId'],config['databaseUrl'],config['runId'],config.get('mainProjectTest',False),config.get('authRunId'),config.get('executionMode')=='ride-only').storage_path('/rideRequests/'+result['requestId'])
+    if config.get('executionMode')=='ride-only':
+        scope=CloudTestScope(config['projectId'],config['databaseUrl'],config['runId'],False,config['authRunId'],True)
+        result.update(
+            allowedStorageReads=result['bootstrapDatabasePaths']+result['smokeDatabasePaths']+[scope.storage_path('/rideRequests')],
+            allowedStorageMutations=result['bootstrapDatabasePaths']+result['smokeDatabasePaths'],
+            fcmTokenReads=0,
+            rideCreatePayload={'userId':scope.uid('passenger-a'),'stopId':f'ct-{scope.run_id}-stop-502','routeId':'MOCK-502','busNo':'502'})
     result['planSha256']=hashlib.sha256(json.dumps(result,sort_keys=True,separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
     return result
 
@@ -147,7 +167,7 @@ def prepare(config,output):
         public={**config[name],'MOBI_LOCAL_DEMO':'false',
                 'MOBI_API_BASE_URL':f'http://127.0.0.1:{config["backendPort"]}'}
         (output/f'{name}-defines.json').write_text(json.dumps(public,indent=2)+'\n',encoding='utf-8')
-    (output/'cloud-test-plan.json').write_text(json.dumps(plan(config,'prepare-only'),indent=2)+'\n',encoding='utf-8')
+    (output/'cloud-test-plan.json').write_text(json.dumps(plan(config,'ride-e2e-01' if config.get('executionMode')=='ride-only' else 'prepare-only'),indent=2)+'\n',encoding='utf-8')
 
 
 def _create_once(storage,path,value):
@@ -199,23 +219,46 @@ def smoke(config,password,case_id,lifecycle=None):
         check(request('POST','/ride-requests',2,json=payload).status_code==403,'driver create denied')
         headers={'Idempotency-Key':bodyplan['idempotencyKey']}
         lifecycle.backend_intent('/rideRequests/'+bodyplan['requestId'])
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            replies=list(pool.map(lambda _:request('POST','/ride-requests',json=payload,headers=dict(headers)),range(2)))
-        check(all(r.status_code==200 for r in replies),'concurrent POST accepted')
+        if scope.ride_only:
+            replies=[request('POST','/ride-requests',json=payload,headers=dict(headers))]
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                replies=list(pool.map(lambda _:request('POST','/ride-requests',json=payload,headers=dict(headers)),range(2)))
+        check(all(r.status_code==200 for r in replies),'POST accepted' if scope.ride_only else 'concurrent POST accepted')
         records=[r.json() for r in replies];rid=bodyplan['requestId']
-        check(all(r['requestId']==rid and r['targetDriverId']==f'ct-{run}-driver-502' for r in records),'one request and server dispatch')
+        check(all(r['requestId']==rid and r['targetDriverId']==scope.uid('driver-502') for r in records),'one request and server dispatch')
         lifecycle.record_backend_result('/rideRequests/'+rid,records[0])
         path='/ride-requests/'+rid
         check(request('GET',path,1).status_code==403,'foreign passenger denied')
         check(request('PATCH',path+'/status',3,json={'status':'ACCEPTED'}).status_code==403,'wrong driver denied')
-        check(request('GET','/drivers/'+f'ct-{run}-driver-502'+'/ride-requests',2).status_code==200,'assigned driver list')
+        listed=request('GET','/drivers/'+scope.uid('driver-502')+'/ride-requests',2)
+        check(listed.status_code==200,'assigned driver list')
+        if scope.ride_only:
+            check(listed.json()['driverId']==scope.uid('driver-502') and
+                  any(row['requestId']==rid for row in listed.json()['requests']),'assigned list contains request')
+            check(records[0]['status']=='WAITING','disabled FCM leaves request waiting')
         check(request('POST','/ride-requests',json={**payload,'stopId':'changed'},headers=headers).status_code==409,'same key changed payload conflict')
         r=request('PATCH',path+'/status',2,json={'status':'ACCEPTED'});check(r.status_code==200,'assigned driver accepts')
         lifecycle.record_backend_result('/rideRequests/'+rid,r.json())
+        if scope.ride_only:
+            current=request('GET',path)
+            check(current.status_code==200 and current.json()['status']=='ACCEPTED','owner reads accepted state')
+            lifecycle.record_backend_result('/rideRequests/'+rid,current.json())
+            check(request('GET',path,3).status_code==403,'unassigned driver read denied')
         r=request('PATCH',path+'/status',0,json={'status':'CANCELLED'});check(r.status_code==200,'owner cancels')
         lifecycle.record_backend_result('/rideRequests/'+rid,r.json())
         r=request('POST','/ride-requests',json=payload,headers=headers)
         check(r.status_code==200 and r.json()['requestId']==rid and r.json()['status']=='CANCELLED','retry preserves cancellation')
+        if scope.ride_only:
+            current=request('GET',path)
+            check(current.status_code==200 and current.json()['status']=='CANCELLED','owner reads cancelled state')
+            lifecycle.record_backend_result('/rideRequests/'+rid,current.json())
+            check(request('PATCH',path+'/status',2,json={'status':'ACCEPTED'}).status_code==409,'terminal transition denied')
+            final=request('GET',path)
+            check(final.status_code==200 and final.json()['status']=='CANCELLED','409 preserves terminal state')
+            lifecycle.record_backend_result('/rideRequests/'+rid,final.json())
+            return {'checks':checks,'passed':len(checks),'verificationMode':'HTTP and storage readback',
+                    'requestId':rid,'guidanceSessionsCreated':0,'authAccountsCreated':0}
         seed_user=0
         seed_label='legacy seed denied to passenger (admin guard tested offline)' if scope.main_project_test else 'legacy seed denied even to test admin'
         check(request('POST','/firebase/initialize',seed_user,json={'reset':True}).status_code==403,seed_label)
@@ -246,7 +289,7 @@ def validate_stage_credential(stage,config):
         raise CloudTestConfigurationError('An explicit keyless stage-specific ADC file is required')
     info=json.loads(Path(raw).read_text(encoding='utf-8'))
     account=('mobi-ct-cleanup' if stage=='cleanup' else 'mobi-ct-runtime'
-             if stage in {'backend','backend-smoke','flutter-smoke'} else 'mobi-ct-bootstrap')
+             if stage in {'backend','backend-smoke','flutter-smoke','ride-smoke','auth-reuse-check'} or (config.get('executionMode')=='ride-only' and stage in {'preflight','rtdb-bootstrap'}) else 'mobi-ct-bootstrap')
     target=f'{account}@{config["projectId"]}.iam.gserviceaccount.com'
     expected='https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/'+target+':generateAccessToken'
     if info.get('type')!='impersonated_service_account' or info.get('service_account_impersonation_url')!=expected or info.get('delegates'):
@@ -258,13 +301,13 @@ def validate_stage_credential(stage,config):
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action',choices=('plan','prepare','backend','bootstrap','smoke','preflight','auth-bootstrap','rtdb-bootstrap','backend-smoke','flutter-smoke','cleanup'))
+    p.add_argument('action',choices=('plan','prepare','backend','bootstrap','smoke','preflight','auth-bootstrap','rtdb-bootstrap','backend-smoke','flutter-smoke','cleanup','auth-reuse-check','ride-smoke'))
     p.add_argument('--config',type=Path,required=True);p.add_argument('--output',type=Path)
     p.add_argument('--allow-main-project-test',action='store_true',help='Additional consent for the reviewed main-project run')
     p.add_argument('--apply',action='store_true');p.add_argument('--approved-project-id');p.add_argument('--approved-run-id')
     p.add_argument('--case-id',default='preview-only')
     p.add_argument('--journal',type=Path)
-    p.add_argument('--approved-stage',choices=('backend','preflight','auth-bootstrap','rtdb-bootstrap','backend-smoke','flutter-smoke','cleanup'))
+    p.add_argument('--approved-stage',choices=('backend','preflight','auth-bootstrap','rtdb-bootstrap','backend-smoke','flutter-smoke','cleanup','auth-reuse-check','ride-smoke'))
     p.add_argument('--approved-plan-sha256')
     p.add_argument('--confirm-test-clients-stopped',action='store_true')
     args=p.parse_args(argv)
@@ -298,7 +341,7 @@ def main(argv=None):
             from scripts.cloud_test_lifecycle import Lifecycle
             lifecycle=Lifecycle(sys.modules[__name__],config,args.case_id,args.journal)
             password=None
-            if args.action in {'auth-bootstrap','backend-smoke'}:
+            if args.action in {'auth-bootstrap','backend-smoke','ride-smoke'}:
                 password=os.environ.pop('MOBI_CLOUD_TEST_PASSWORD',None) or getpass.getpass('Unique cloud-test password (not logged): ')
             result=lifecycle.run(args.action,password)
             print(json.dumps(result,ensure_ascii=False,indent=2))
