@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'pages/agent_name_setup_page.dart';
+import 'features/hardware_bus/hardware_bus_page.dart';
 import 'pages/data_mode_selection_page.dart';
 import 'pages/home_page.dart';
 import 'pages/v3_guidance_page.dart';
@@ -95,6 +96,7 @@ class _MobiAppState extends State<MobiApp> {
       theme: ThemeData(useMaterial3: true),
       home: home,
       routes: <String, WidgetBuilder>{
+        '/hardware-bus': (_) => const HardwareBusPage(),
         '/v3-guidance': (_) => V3GuidancePage(
               agentName: agentName ?? '모비',
               onReturnToModeSelection: _resetToModeSelection,
