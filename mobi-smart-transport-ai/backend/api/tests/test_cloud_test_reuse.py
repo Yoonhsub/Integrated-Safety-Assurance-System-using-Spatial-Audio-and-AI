@@ -354,3 +354,166 @@ def test_forged_ride_journal_never_grants_cleanup_receipt(setup):
     assert any(x['target']==physical and x['status']=='MANUAL_REQUIRED' for x in result['resources'])
     assert sum(1 for op,p in db.calls if p==physical)==before
     assert db.memory.get(physical)=={'existing':'not-created-by-runner'}
+
+
+@pytest.mark.parametrize('condition',['history-only','removed','changed','no-receipt'])
+def test_medium_history_is_never_current_pass(setup,monkeypatch,condition):
+    r,_,db=setup
+    if condition!='history-only':r.run('rtdb-bootstrap')
+    with r.journal.locked():
+        r.journal.data['stages'].update({'rtdb-bootstrap':'PASS','ride-smoke':'PASS'})
+        r.journal.save()
+    if condition=='removed':db.memory.delete(r.scope.path)
+    if condition=='changed':db.memory.set(r.scope.path+'/manifest',{'changed':True})
+    if condition=='no-receipt':r._record_receipts.clear()
+    before=len(db.calls)
+    monkeypatch.setattr(cli,'smoke',lambda *a,**kw:pytest.fail('History must not replay writes'))
+    result=r.run('ride-smoke','unused')
+    assert result['status']=='HISTORICAL_PASS' and result['currentVerification']=='NOT_VERIFIED'
+    assert len(db.calls)==before
+    assert r.journal.data['stages']['ride-smoke']=='PASS'
+    assert r.journal.data['lastAttempt']['currentVerification']=='NOT_VERIFIED'
+
+
+@pytest.mark.parametrize('which',[0,1,2,3])
+@pytest.mark.parametrize('same_expected',[False,True])
+def test_medium_any_existing_record_aborts_before_first_write(setup,which,same_expected):
+    r,_,db=setup
+    with r.journal.locked():initial=r.initial_records()
+    paths=[*initial,'/rideRequests/'+r.scope.request_id]
+    value=initial.get(paths[which],{'existing':'ride'}) if same_expected else {'foreign':'data'}
+    physical=r.scope.storage_path(paths[which]);db.memory.set(physical,value)
+    with pytest.raises(ValueError,match='collision at') as exc:r.run('preflight')
+    assert physical in str(exc.value) and 'foreign' not in str(exc.value)
+    with pytest.raises(ValueError):r.run('rtdb-bootstrap')
+    assert not any(op!='GET' for op,_ in db.calls)
+    assert db.memory.get(physical)==value
+
+
+def test_medium_all_four_empty_and_duplicate_run_denied(setup):
+    r,_,db=setup
+    assert r.run('preflight')['checkedRecords']==4
+    assert r.run('rtdb-bootstrap')['status']=='PASS'
+    before=len([1 for op,_ in db.calls if op=='CAS'])
+    with pytest.raises(ValueError):r.run('rtdb-bootstrap')
+    assert len([1 for op,_ in db.calls if op=='CAS'])==before==3
+
+
+@pytest.mark.parametrize('identical',[False,True])
+def test_medium_cas_race_records_partial_success_without_overwrite(setup,monkeypatch,identical):
+    r,_,db=setup;original=db.transaction
+    raced='/drivers/'+r.scope.uid('driver-105')
+    def conflict(path,transform):
+        if path==raced:db.memory.set(r.scope.storage_path(path),transform(None) if identical else {'concurrent':'keep'})
+        return original(path,transform)
+    monkeypatch.setattr(db,'transaction',conflict)
+    with pytest.raises(ValueError):r.run('rtdb-bootstrap')
+    if identical:assert db.memory.get(r.scope.storage_path(raced))['routeId']=='MOCK-105'
+    else:assert db.memory.get(r.scope.storage_path(raced))=={'concurrent':'keep'}
+    records=r.journal.data['records']
+    assert records['/drivers/'+r.scope.uid('driver-502')]['state']=='verified'
+    assert records[raced]['state']=='intent'
+    assert r.journal.data['stages']['rtdb-bootstrap']=='FAILED'
+    assert r.scope.path not in records  # Manifest was not published.
+
+
+def test_medium_lost_commit_response_is_manual_cleanup(setup,monkeypatch):
+    r,_,db=setup;original=db.transaction
+    def lost(path,transform):
+        original(path,transform)
+        raise TimeoutError('lost response')
+    monkeypatch.setattr(db,'transaction',lost)
+    with pytest.raises(TimeoutError):r.run('rtdb-bootstrap')
+    assert not r._record_receipts
+    before=len(db.calls)
+    assert r.run('cleanup')['status']=='PARTIAL'
+    assert len(db.calls)==before
+
+
+@pytest.mark.parametrize('change',['normal','replace-default','add-other','delete-original','app-url','settings-url','cached'])
+def test_medium_pinned_app_and_url(setup,monkeypatch,change):
+    import firebase_admin
+    from firebase_admin import db as sdk_db
+    from dataclasses import replace
+    from app.services.firebase_client import FirebaseClient,FirebaseSettings
+    from fastapi import HTTPException
+    r,_,_=setup
+    original=SimpleNamespace(name='[DEFAULT]',project_id=r.scope.project_id,options={'databaseURL':r.scope.database_url})
+    registry={'[DEFAULT]':original}
+    def get_app(name='[DEFAULT]'):
+        if name not in registry:raise ValueError('deleted')
+        return registry[name]
+    monkeypatch.setattr(firebase_admin,'get_app',get_app)
+    references=[]
+    def reference(path,*,app,url):
+        assert app is original and url==r.scope.database_url
+        references.append(path)
+        return SimpleNamespace(get=lambda:None)
+    monkeypatch.setattr(sdk_db,'reference',reference)
+    client=FirebaseClient(FirebaseSettings(r.scope.project_id,r.scope.database_url,None,None,False,True,True))
+    assert client.initialize()
+    other=SimpleNamespace(name='[DEFAULT]',project_id='mobi-smart-transport',options={'databaseURL':'https://unused.invalid'})
+    if change=='replace-default':registry['[DEFAULT]']=other
+    if change=='add-other':registry['other']=other
+    if change=='delete-original':registry.clear()
+    if change=='app-url':original.options['databaseURL']='https://unused.invalid'
+    if change=='settings-url':client.settings=replace(client.settings,database_url='https://unused.invalid')
+    if change in {'replace-default','delete-original','app-url','settings-url'}:
+        with pytest.raises(HTTPException) as exc:client.get(r.scope.path)
+        assert exc.value.status_code==503 and not references
+        assert not client.is_initialized
+    else:
+        assert client.get(r.scope.path) is None
+        assert client.get(r.scope.path) is None
+        assert references==[r.scope.path+'/manifest']*2
+
+
+def test_medium_regular_mode_uses_explicit_app_without_behavior_change(setup,monkeypatch):
+    import firebase_admin
+    from firebase_admin import db as sdk_db
+    from app.services.firebase_client import FirebaseClient,FirebaseSettings
+    for k in list(os.environ):
+        if k.startswith('MOBI_CLOUD_TEST'):monkeypatch.delenv(k)
+    project='offline-ordinary-project';url='https://offline.invalid'
+    app=SimpleNamespace(name='[DEFAULT]',project_id=project,options={'databaseURL':url})
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name='[DEFAULT]':app)
+    calls=[]
+    def ref(path,*,app:object,url):
+        calls.append((path,app,url));return SimpleNamespace(get=lambda:{'ok':True})
+    monkeypatch.setattr(sdk_db,'reference',ref)
+    client=FirebaseClient(FirebaseSettings(project,url,None,None,False,True,True))
+    assert client.get('/drivers/example')=={'ok':True}
+    assert calls==[('/drivers/example',app,url)]
+
+
+def test_medium_auth_calls_bind_named_app_not_default(setup,monkeypatch):
+    import firebase_admin
+    r,auth,_=setup
+    named=SimpleNamespace(name='mobi-auth',project_id=r.scope.project_id)
+    default=SimpleNamespace(name='[DEFAULT]',project_id='mobi-smart-transport')
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name='[DEFAULT]':named if name=='mobi-auth' else default)
+    seen=[]
+    def token(value,*,app,**kwargs):
+        assert app is named;seen.append('token');return {'uid':r.accounts[0]['uid'],'exp':time.time()+3600}
+    def user(uid,*,app):
+        assert app is named;seen.append('user');return auth.get_user(uid)
+    monkeypatch.setattr(security.auth,'verify_id_token',token)
+    monkeypatch.setattr(security.auth,'get_user',user)
+    assert security.verify_user('offline-token').uid==r.accounts[0]['uid']
+    assert seen==['token','user']
+
+
+def test_medium_historical_cli_is_not_success_exit(setup,tmp_path,monkeypatch,capsys):
+    import scripts.cloud_test_lifecycle as life
+    path=tmp_path/'public.json';path.write_text(json.dumps(config()))
+    result={'status':'HISTORICAL_PASS','currentVerification':'NOT_VERIFIED'}
+    monkeypatch.setattr(life,'Lifecycle',lambda *a,**kw:SimpleNamespace(run=lambda *a:result))
+    monkeypatch.setattr(cli,'validate_stage_credential',lambda *a:None)
+    monkeypatch.setattr(cli.getpass,'getpass',lambda *a:'synthetic-offline-password')
+    plan=cli.execution_plan(config(),CASE)
+    args=['ride-smoke','--config',str(path),'--case-id',CASE,'--apply',
+        '--approved-project-id',config()['projectId'],'--approved-run-id',DATA,
+        '--approved-stage','ride-smoke','--approved-plan-sha256',plan['planSha256'],
+        '--journal',str(tmp_path/'fake-journal.json')]
+    assert cli.main(args)==1
+    assert json.loads(capsys.readouterr().out)['status']=='HISTORICAL_PASS'

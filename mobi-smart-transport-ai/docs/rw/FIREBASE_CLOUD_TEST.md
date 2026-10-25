@@ -800,3 +800,64 @@ ETag 충돌은 자동 덮어쓰기·무조건 삭제로 처리하지 않는다. 
 이 결과는 실제 클라우드 실행 준비에 대한 CONDITIONAL이다. 독립 보안 리뷰와 정확한 IAM
 시간대·대상별 읽기/쓰기·개별 수동 정리 승인이 남아 있다. 특히 별도 cleanup 프로세스는 생성
 영수증을 복원하지 않으므로 자동 정리 PASS를 보장하지 않는다.
+
+
+## 2026-10-25 독립 리뷰 MEDIUM 3건 후속 수정
+
+- 과거 ride-smoke/backend-smoke PASS는 재검증 없이 현재 PASS로 반환하지 않는다.
+  `HISTORICAL_PASS`, `currentVerification=NOT_VERIFIED`, CLI 비성공 종료로 구분하고
+  Journal의 과거 stage와 최신 lastAttempt를 별도로 유지한다. 이 경로는 데이터를 재생성하거나
+  정리하지 않는다. 새 현재 PASS는 실제 smoke HTTP·저장 readback 경로를 거친 결과다.
+- ride-only preflight/rtdb-bootstrap은 manifest·기사2개·고정 요청까지 네 경로를 첫 CAS 전에
+  조회한다. 하나라도 기존 값이 있으면 정확한 충돌 경로만 보고하고 쓰기를 시작하지 않는다.
+  같은 run 재bootstrap도 차단한다. 기존 단일 run의 재시도 계약은 유지한다.
+  이후 경쟁은 각 레코드 CAS에서 처리하며, ride-only는 동일 값이더라도 기존 값을 채택하지 않는다.
+  부분 성공은 기존 verified/intent 기록과 메모리 생성 영수증으로 구분한다.
+- FirebaseClient는 검증한 정확한 App 인스턴스·project·URL을 고정한다. reference에 app/url을
+  명시하고 캐시 사용에서도 SDK 등록 객체의 동일성 및 project/URL을 검사한다. 원본 삭제·교체·
+  설정 변경이면 초기화 실패/503이며 다른 App이나 메모리로 자동 대체하지 않는다.
+  정상 일반 Backend의 동일 대상 초기화·조회는 유지한다. 기존 잘못된 default app 혼입은 거부한다.
+- Auth는 기존 named app `mobi-auth`를 사용하며 토큰 검증과 현재 사용자 조회에 app을 명시한다.
+  다른 default app이 있어도 named app으로 검증하는 회귀를 추가했다. 실제 Firebase 인증이나
+  ADC refresh를 실행한 결과는 아니다.
+
+기존 실패 재현 세 경로에서 수정 전3 FAIL/수정 후3 PASS를 확인했다. 추가26개 경계 검사는
+과거 PASS/소실/변조/증거 없음, 네 경로 각각의 충돌, 동일값 CAS 경쟁, 응답 유실, App 교체·
+추가·삭제·URL 변경·캐시 및 정상 운영/Auth 명시 바인딩을 다룬다. 초기화 SDK 대역은 실제처럼
+App을 반환하고 이름으로 등록하도록 갱신했으며 제품 검사를 우회하는 대역은 추가하지 않았다.
+
+실제 RTDB 동시성3개와 Auth/RTDB Emulator6개는 여전히 opt-in 미실행이며 PASS가 아니다.
+Chrome Network 상세 NOT_VERIFIED, Auth 자동 삭제 금지, 독립 생성 증거 없는 정리 금지,
+재시작 후 MANUAL_REQUIRED/PARTIAL 정책도 유지한다. 실제 클라우드 실행에는 독립 재검토와
+별도 IAM·읽기/쓰기·개별 조건부 정리 승인이 필요하다. 이번에는 클라우드 접속·권한 변경·
+토큰 발급·기존 서비스 변경·Git commit/push/merge를 수행하지 않았다.
+
+최종 오프라인 검증: Backend 전체800 PASS /9 SKIP, 재사용 회귀71 PASS(기존45+추가26),
+세 원본 보호 경로3 FAIL→3 PASS. 실제 클라우드/동시성 및 Network 미검증 상태는 유지한다.
+
+
+## 2026-10-25 probe 대상 고정 최종 검증 및 잔여 LOW
+
+일반 Backend probe도 `_real_reference(PROBE_PATH)`를 사용해 검증한 App 객체, Project ID,
+RTDB URL을 명시한다. 기존 SET → GET → DELETE 계약은 유지한다. 메모리 대역 비교에서
+이전 참조는 교체된 대상에 요청하고 성공했으나, 수정 참조는 잘못된 대상 작업 0회로 실패했다.
+Project ID 변경 역시 차단됐다. 실제 Firebase probe 또는 클라우드 데이터 요청 결과는 아니다.
+
+수정 후 독립 재검토: 신규 probe 회귀12 PASS, Firebase/Cloud-test 핵심359 PASS,
+기존 MEDIUM3건 보호 재현3 PASS, Backend 전체812 PASS /9 SKIP, 동일 소스 snapshot
+Architecture 및 diff 검사 PASS. MEDIUM4건 보호, Auth/Data run 분리, FCM 조회·전송0회,
+Guidance0개, 개별 CAS·독립 생성 증거 기반 정리 및 Auth 자동 삭제 금지를 유지한다.
+실제 RTDB 동시성3건, Emulator opt-in6건, Chrome Network 상세는 NOT_VERIFIED다.
+
+잔여 LOW(일반 모드의 기존 정리 한계):
+- SET 성공 후 GET 실패 시 DELETE를 시도하지 않아 점검 레코드가 남을 수 있다.
+- DELETE 실패 시에도 ok=False와 일반 오류는 보고되지만 임시 레코드 잔여 여부를 별도로
+  확정·보고하지 않는다. 정리 성공으로 간주해서는 안 된다.
+- Cloud-test ride-smoke에서는 probe 사용이 차단되므로 이 쓰기 경로는 실행되지 않는다.
+- 향후 실패 단계·정리 시도·잔여 여부 보고를 별도 개선/검증한다. 동시 실행 및 소유권을
+  검토하지 않고 무조건 DELETE를 추가하는 방식은 금지한다.
+
+로컬 커밋 가능, 실제 클라우드 실행은 CONDITIONAL이다. 계정4개는 재사용하며 계정·Claims
+변경/자동 삭제 승인이 아니다. 실제 실행 전 Runtime 신원·가장/데이터 역할·만료 시간,
+승인된4개 개별 레코드 및 collection 읽기, 조건부 생성·상태 변경과 개별 수동 정리 범위를
+별도 승인받아야 한다. 메인 프로젝트, IAM/ADC, 기존 서비스 및 안전 정책은 변경하지 않았다.

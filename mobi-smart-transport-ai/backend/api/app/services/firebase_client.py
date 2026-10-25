@@ -191,6 +191,8 @@ class FirebaseClient:
         self._initialized = False
         self._using_mock = self.settings.runtime_mode == "mock"
         self._db_module: Any | None = None
+        self._app = None
+        self._pinned_target = None
         self._memory_db = InMemoryRealtimeDatabase()
         self.last_error: str | None = None
 
@@ -221,8 +223,17 @@ class FirebaseClient:
             self._using_mock = self.settings.runtime_mode == "mock"
             self.last_error = None
 
-        if self._initialized:
-            return True
+        if self._app is not None or self._initialized:
+            try:
+                self._assert_pinned_app()
+                self._initialized = True
+                self._using_mock = False
+                return True
+            except Exception:
+                self._initialized = False
+                self._using_mock = False
+                self.last_error = 'Pinned Firebase app is unavailable or changed; restart required'
+                return False
         if self._using_mock or not self.settings.credentials_ready:
             self._using_mock = True
             if not self.settings.credentials_ready and not self.settings.use_mock_data:
@@ -237,7 +248,7 @@ class FirebaseClient:
             try:
                 existing_app = firebase_admin.get_app()
                 from app.cloud_test import requested
-                if requested() and (existing_app.project_id != self.settings.project_id
+                if (existing_app.project_id != self.settings.project_id
                         or existing_app.options.get('databaseURL') != self.settings.database_url):
                     raise RuntimeError('Firebase app target differs from cloud-test configuration')
             except ValueError:
@@ -250,7 +261,10 @@ class FirebaseClient:
                 options = {"databaseURL": self.settings.database_url, "projectId": self.settings.project_id}
                 if self.settings.storage_bucket:
                     options["storageBucket"] = self.settings.storage_bucket
-                firebase_admin.initialize_app(cred, options)
+                existing_app = firebase_admin.initialize_app(cred, options)
+            self._app = existing_app
+            self._pinned_target = (self.settings.project_id, self.settings.database_url)
+            self._assert_pinned_app()
             self._db_module = db
             self._initialized = True
             self._using_mock = False
@@ -261,6 +275,15 @@ class FirebaseClient:
             self._using_mock = True
             self._initialized = False
             return False
+
+    def _assert_pinned_app(self) -> None:
+        import firebase_admin
+        app = self._app
+        if (app is None or self._pinned_target != (self.settings.project_id, self.settings.database_url)
+                or firebase_admin.get_app(app.name) is not app
+                or app.project_id != self._pinned_target[0]
+                or app.options.get('databaseURL') != self._pinned_target[1]):
+            raise RuntimeError('Pinned Firebase app target is unavailable or changed')
 
     def _missing_credentials_reason(self) -> str:
         reasons: list[str] = []
@@ -334,7 +357,7 @@ class FirebaseClient:
                 return {"ok": False, "mode": "mock", "message": f"Mock probe 실패: {exc}"}
 
         try:
-            ref = self._db_module.reference(self.PROBE_PATH)
+            ref = self._real_reference(self.PROBE_PATH)
             ref.set(payload)
             read_back = ref.get()
             ref.delete()
@@ -372,7 +395,8 @@ class FirebaseClient:
                     or self.settings.database_url != scope.database_url):
                 raise RuntimeError('Cloud-test storage target changed')
             path = scope.storage_path(path)
-        return self._db_module.reference(path)
+        self._assert_pinned_app()
+        return self._db_module.reference(path, app=self._app, url=self._pinned_target[1])
 
     def _guard_cloud_test_mutation(self, path: str, *, conditional: bool) -> None:
         from app.cloud_test import requested, validate
@@ -384,6 +408,8 @@ class FirebaseClient:
                     raise HTTPException(403, 'Ride-only writes require CAS on an approved record')
 
     def _use_memory(self) -> bool:
+        if self._app is not None and not self.initialize():
+            raise HTTPException(503, 'Pinned Firebase app unavailable')
         use_memory = self._using_mock or not self.initialize()
         if use_memory and self.settings.require_real_storage:
             raise HTTPException(status_code=503, detail="Firebase storage unavailable")

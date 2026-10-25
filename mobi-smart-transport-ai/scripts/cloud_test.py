@@ -345,7 +345,7 @@ def main(argv=None):
                 password=os.environ.pop('MOBI_CLOUD_TEST_PASSWORD',None) or getpass.getpass('Unique cloud-test password (not logged): ')
             result=lifecycle.run(args.action,password)
             print(json.dumps(result,ensure_ascii=False,indent=2))
-            if result.get('status') in {'PARTIAL','FAILED','NOT_VERIFIED'}:
+            if result.get('status') in {'PARTIAL','FAILED','NOT_VERIFIED','HISTORICAL_PASS'}:
                 return 1
         return 0
     except (KeyboardInterrupt,EOFError):

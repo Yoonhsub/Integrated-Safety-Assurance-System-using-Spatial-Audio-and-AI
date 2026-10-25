@@ -424,7 +424,12 @@ def test_all_real_sdk_operations_use_main_run_namespace(main_environment,monkeyp
     scope=cloud_test.validate();seen=[]
     client=FirebaseClient(FirebaseSettings(scope.project_id,scope.database_url,None,None,False,True,True))
     client._initialized=True;client._using_mock=False
-    def reference(path):
+    client._app=SimpleNamespace(name='offline',project_id=client.settings.project_id,options={'databaseURL':client.settings.database_url})
+    client._pinned_target=(client.settings.project_id,client.settings.database_url)
+    import firebase_admin
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name:client._app)
+    def reference(path, **kwargs):
+        assert kwargs["app"] is client._app and kwargs["url"]==scope.database_url
         seen.append(path)
         return SimpleNamespace(get=lambda:None,set=lambda value:None,update=lambda value:None,
             push=lambda value:SimpleNamespace(key='synthetic-key'),delete=lambda:None,
@@ -441,16 +446,24 @@ def test_main_transaction_rechecks_storage_target(main_environment,monkeypatch):
     scope=cloud_test.validate()
     client=FirebaseClient(FirebaseSettings('other-project',scope.database_url,None,None,False,True,True))
     client._initialized=True;client._using_mock=False
+    client._app=SimpleNamespace(name='offline',project_id=client.settings.project_id,options={'databaseURL':client.settings.database_url})
+    client._pinned_target=(client.settings.project_id,client.settings.database_url)
+    import firebase_admin
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name:client._app)
     client._db_module=SimpleNamespace(reference=lambda p:pytest.fail('wrong project contacted'))
     with pytest.raises(HTTPException) as e:client.transaction('/rideRequests/test',lambda raw:raw)
     assert e.value.status_code==503
 
 
 @pytest.mark.parametrize('key',['/drivers/foreign','../foreign','ok/../../foreign','cloudTestRuns/../foreign'])
-def test_main_multi_location_update_cannot_escape(main_environment,key):
+def test_main_multi_location_update_cannot_escape(main_environment,monkeypatch,key):
     scope=cloud_test.validate()
     client=FirebaseClient(FirebaseSettings(scope.project_id,scope.database_url,None,None,False,True,True))
     client._initialized=True;client._using_mock=False
+    client._app=SimpleNamespace(name='offline',project_id=client.settings.project_id,options={'databaseURL':client.settings.database_url})
+    client._pinned_target=(client.settings.project_id,client.settings.database_url)
+    import firebase_admin
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name:client._app)
     client._db_module=SimpleNamespace(reference=lambda p:pytest.fail('invalid update reached SDK'))
     with pytest.raises((ValueError,HTTPException)):client.update('/drivers', {key:'invalid'})
 
@@ -623,11 +636,16 @@ def test_medium_dedicated_path_escape_rejected(environment,logical):
 
 @pytest.mark.parametrize('logical',['/drivers/one','/rideRequests/one','/v3GuidanceSessions/v3-'+'a'*32])
 @pytest.mark.parametrize('operation',['get','set','update','push','delete','transaction'])
-def test_medium_real_sdk_operations_use_dedicated_namespace(environment,logical,operation):
+def test_medium_real_sdk_operations_use_dedicated_namespace(environment,monkeypatch,logical,operation):
     scope=cloud_test.validate();seen=[]
     client=FirebaseClient(FirebaseSettings(scope.project_id,scope.database_url,None,None,False,True,True))
     client._initialized=True;client._using_mock=False
-    def reference(path):
+    client._app=SimpleNamespace(name='offline',project_id=client.settings.project_id,options={'databaseURL':client.settings.database_url})
+    client._pinned_target=(client.settings.project_id,client.settings.database_url)
+    import firebase_admin
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name:client._app)
+    def reference(path, **kwargs):
+        assert kwargs["app"] is client._app and kwargs["url"]==scope.database_url
         seen.append(path)
         return SimpleNamespace(get=lambda:{},set=lambda value:None,update=lambda value:None,
             push=lambda value:SimpleNamespace(key='synthetic-key'),delete=lambda:None,
@@ -640,10 +658,14 @@ def test_medium_real_sdk_operations_use_dedicated_namespace(environment,logical,
 
 
 @pytest.mark.parametrize('key',['/drivers/foreign','../foreign','ok/../../foreign','cloudTestRuns/../foreign'])
-def test_medium_dedicated_multilocation_escape_rejected(environment,key):
+def test_medium_dedicated_multilocation_escape_rejected(environment,monkeypatch,key):
     scope=cloud_test.validate()
     client=FirebaseClient(FirebaseSettings(scope.project_id,scope.database_url,None,None,False,True,True))
     client._initialized=True;client._using_mock=False
+    client._app=SimpleNamespace(name='offline',project_id=client.settings.project_id,options={'databaseURL':client.settings.database_url})
+    client._pinned_target=(client.settings.project_id,client.settings.database_url)
+    import firebase_admin
+    monkeypatch.setattr(firebase_admin,'get_app',lambda name:client._app)
     client._db_module=SimpleNamespace(reference=lambda p:pytest.fail('Invalid key reached SDK'))
     with pytest.raises((ValueError,HTTPException)):client.update('/drivers',{key:'invalid'})
 

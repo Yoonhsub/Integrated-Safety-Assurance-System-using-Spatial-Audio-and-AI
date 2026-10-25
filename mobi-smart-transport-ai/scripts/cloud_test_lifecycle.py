@@ -213,6 +213,12 @@ class Lifecycle:
         raise CloudTestConfigurationError('Record path is outside this exact execution allowlist')
 
     def database_preflight(self):
+        if self.scope.ride_only:
+            paths = [*self.initial_records(), '/rideRequests/' + self.scope.request_id]
+            for logical in paths:
+                if self.storage.get(logical) is not None:
+                    raise CloudTestConfigurationError('Existing RTDB collision at ' + self.scope.storage_path(logical))
+            return
         for logical, value in self.initial_records().items():
             existing = self.storage.get(logical)
             entry = self.journal.data['records'].get(logical)
@@ -226,7 +232,7 @@ class Lifecycle:
         else:
             self.auth_preflight()
         self.database_preflight()
-        return {'status': 'PASS', 'checkedAccounts': 4, 'checkedRecords': 3, 'writes': 0}
+        return {'status': 'PASS', 'checkedAccounts': 4, 'checkedRecords': 4 if self.scope.ride_only else 3, 'writes': 0}
 
     def auth_reuse_check(self):
         if not self.scope.ride_only:
@@ -296,7 +302,7 @@ class Lifecycle:
         def create(raw):
             nonlocal created_absent
             created_absent = raw is None
-            if raw is not None and canonical(raw) != canonical(expected):
+            if raw is not None and (self.scope.ride_only or canonical(raw) != canonical(expected)):
                 raise CloudTestConfigurationError('RTDB create collision; refusing overwrite')
             return expected
         self.storage.transaction(logical, create)
@@ -461,11 +467,15 @@ class Lifecycle:
                     if self.journal.data['stages'].get('rtdb-bootstrap') != 'PASS':
                         raise CloudTestConfigurationError('Complete rtdb-bootstrap first')
                     if self.journal.data['stages'].get(stage) == 'PASS':
-                        return {'status': 'PASS', 'reused': True, 'newRequests': 0}
+                        result = {'status': 'HISTORICAL_PASS', 'currentVerification': 'NOT_VERIFIED', 'reused': True, 'newRequests': 0}
+                        self.journal.data['lastAttempt'] = {'stage': stage, **result}
+                        self.journal.save()
+                        return result
                     result = self.cli.smoke(self.config, password, self.case_id, lifecycle=self)
                     result['status'] = 'PASS'
                 else:
                     result = getattr(self, stage.replace('-', '_'))()
+                self.journal.data['lastAttempt'] = {'stage': stage, 'status': result['status']}
                 self.journal.data['stages'][stage] = result['status']
                 self.journal.save()
                 return result

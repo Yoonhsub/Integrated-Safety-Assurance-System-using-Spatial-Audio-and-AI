@@ -2,6 +2,7 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import firebase_admin
 from firebase_admin import credentials
@@ -21,11 +22,19 @@ def settings(**changes):
 def test_adc_initializes_storage_without_key_file(monkeypatch):
     client = FirebaseClient(settings())
     calls = []
-    def absent_app():
-        raise ValueError("not initialized")
+    registry = {}
+    def absent_app(name='[DEFAULT]'):
+        if name not in registry:
+            raise ValueError("not initialized")
+        return registry[name]
     monkeypatch.setattr(firebase_admin, "get_app", absent_app)
     monkeypatch.setattr(credentials, "ApplicationDefault", lambda: "adc")
-    monkeypatch.setattr(firebase_admin, "initialize_app", lambda cred, options: calls.append((cred, options)))
+    def initialize(cred, options):
+        calls.append((cred, options))
+        app = SimpleNamespace(name='[DEFAULT]', project_id=options['projectId'], options=options)
+        registry[app.name] = app
+        return app
+    monkeypatch.setattr(firebase_admin, "initialize_app", initialize)
     assert client.initialize()
     assert not client.using_mock
     assert calls == [("adc", {"databaseURL": client.settings.database_url, "projectId": "project"})]
@@ -183,3 +192,97 @@ def test_deployment_prepare_rejects_swapped_id_before_build(tmp_path,monkeypatch
           'MOBI_FIREBASE_AUTH_DOMAIN':bundle.PROJECT+'.firebaseapp.com'}
     path=tmp_path/'passenger.json';path.write_text(json.dumps(data))
     with pytest.raises(ValueError,match='mapping'):bundle.load_defines(path,'passenger')
+
+
+@pytest.mark.parametrize("change", [
+    "normal", "cached", "add-other", "replace-before-reference", "delete-before-reference",
+    "app-url", "settings-url", "replace-inside-reference", "delete-inside-reference",
+    "read-error", "delete-error",
+])
+def test_probe_pins_target_across_default_app_changes(monkeypatch, change):
+    """Exercise the product probe, with SDK/database/credentials replaced locally."""
+    from firebase_admin import db
+    import os
+    for key in list(os.environ):
+        if key.startswith('MOBI_CLOUD_TEST'):
+            monkeypatch.delenv(key)
+    client = FirebaseClient(settings())
+    original = SimpleNamespace(name='[DEFAULT]', project_id=client.settings.project_id,
+                               options={'databaseURL': client.settings.database_url})
+    other = SimpleNamespace(name='[DEFAULT]', project_id='offline-other-project',
+                            options={'databaseURL': 'https://offline-other.invalid'})
+    registry = {'[DEFAULT]': original}
+    def get_app(name='[DEFAULT]'):
+        if name not in registry:
+            raise ValueError('App was deleted')
+        return registry[name]
+    monkeypatch.setattr(firebase_admin, 'get_app', get_app)
+    monkeypatch.setattr(credentials, 'ApplicationDefault', lambda: pytest.fail('ADC fallback'))
+    events = []
+    references = []
+    class Reference:
+        def set(self, value):
+            events.append('SET')
+            self.value = value
+        def get(self):
+            events.append('GET')
+            if change == 'read-error':
+                raise RuntimeError('offline read failed')
+            return self.value
+        def delete(self):
+            events.append('DELETE')
+            if change == 'delete-error':
+                raise RuntimeError('offline delete failed')
+    def reference(path, app=None, url=None):
+        if change == 'replace-inside-reference':
+            registry['[DEFAULT]'] = other
+        if change == 'delete-inside-reference':
+            registry.clear()
+        # The old implementation resolves the implicit default here. Record it
+        # before asserting so a wrong-target attempt is observable before fix.
+        selected = app if app is not None else registry.get('[DEFAULT]')
+        references.append((selected, url))
+        assert app is original and url == client.settings.database_url
+        if registry.get(original.name) is not original:
+            raise ValueError('Original SDK App is no longer registered')
+        assert path == client.PROBE_PATH
+        return Reference()
+    monkeypatch.setattr(db, 'reference', reference)
+    assert client.initialize()
+    original_use_memory = client._use_memory
+    def checked_then_changed():
+        result = original_use_memory()
+        if change == 'replace-before-reference':
+            registry['[DEFAULT]'] = other
+        elif change == 'delete-before-reference':
+            registry.clear()
+        elif change == 'app-url':
+            original.options['databaseURL'] = 'https://offline-other.invalid'
+        elif change == 'settings-url':
+            client.settings = replace(client.settings, database_url='https://offline-other.invalid')
+        return result
+    monkeypatch.setattr(client, '_use_memory', checked_then_changed)
+    if change == 'add-other':
+        registry['other'] = other
+    result = client.probe()
+    if change in {'normal', 'cached', 'add-other'}:
+        assert result['ok'] is True
+        assert events == ['SET', 'GET', 'DELETE']
+        if change == 'cached':
+            assert client.test_connection()['ok'] is True
+            assert events == ['SET', 'GET', 'DELETE'] * 2
+    else:
+        assert result['ok'] is False
+        if change not in {'read-error', 'delete-error'}:
+            assert events == []
+    assert all(app is original and url == client._pinned_target[1] for app, url in references)
+    assert not client.using_mock
+
+
+def test_cloud_test_probe_still_denied_before_any_storage(monkeypatch):
+    monkeypatch.setenv('MOBI_CLOUD_TEST', '1')
+    client = FirebaseClient(settings())
+    monkeypatch.setattr(client, '_use_memory', lambda: pytest.fail('Cloud-test probe reached storage'))
+    with pytest.raises(HTTPException) as error:
+        client.probe()
+    assert error.value.status_code == 403

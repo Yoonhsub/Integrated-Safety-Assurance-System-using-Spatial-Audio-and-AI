@@ -221,13 +221,20 @@ def test_named_auth_app_does_not_prevent_storage_initialization(monkeypatch, tmp
     credential.write_text("{}")
     storage = FirebaseClient(FirebaseSettings("project", "https://example.invalid", credential, None, False))
     calls = []
+    from types import SimpleNamespace
+    registry = {}
     def get_app(name="[DEFAULT]"):
-        if name == "[DEFAULT]":
+        if name == "[DEFAULT]" and name not in registry:
             raise ValueError("no default app")
-        return object()
+        return registry.get(name, object())
     monkeypatch.setattr(firebase_admin, "get_app", get_app)
     monkeypatch.setattr(security.credentials, "Certificate", lambda _: object())
-    monkeypatch.setattr(firebase_admin, "initialize_app", lambda *a, **k: calls.append((a,k)))
+    def initialize(*a, **k):
+        calls.append((a,k))
+        app = SimpleNamespace(name='[DEFAULT]', project_id=a[1]['projectId'], options=a[1])
+        registry[app.name] = app
+        return app
+    monkeypatch.setattr(firebase_admin, "initialize_app", initialize)
     assert storage.initialize() is True
     assert len(calls) == 1
 
