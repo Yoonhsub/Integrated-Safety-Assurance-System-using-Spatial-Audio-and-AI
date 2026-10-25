@@ -7,9 +7,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from spatial_guidance import SpatialGuidance, interpret_bus_door_guidance, interpret_bus_guidance
 from vision_result import VisionResult
+
+if TYPE_CHECKING:
+    from guidance_stability import GuidanceStabilizer
 
 
 PROPOSED_SCHEMA_VERSION = "0.1.0-proposed"
@@ -50,6 +54,7 @@ class VisionGuidanceHandoff:
 def build_vision_guidance_handoff(
     current: VisionResult,
     previous: VisionResult | None = None,
+    stabilizer: "GuidanceStabilizer | None" = None,
 ) -> VisionGuidanceHandoff:
     """VisionResult를 Context/음성 소비용 안내 후보 payload로 변환한다.
 
@@ -59,8 +64,11 @@ def build_vision_guidance_handoff(
     """
     bus_guidance = interpret_bus_guidance(current, previous)
     door_guidance = interpret_bus_door_guidance(current, previous)
+    candidates = tuple(candidate for candidate in (bus_guidance, door_guidance) if candidate is not None)
+    if stabilizer is not None:
+        candidates = stabilizer.filter(candidates, captured_at=current.captured_at)
     return VisionGuidanceHandoff(
         frame_id=current.frame_id,
         captured_at=current.captured_at.isoformat(),
-        candidates=tuple(candidate for candidate in (bus_guidance, door_guidance) if candidate is not None),
+        candidates=candidates,
     )

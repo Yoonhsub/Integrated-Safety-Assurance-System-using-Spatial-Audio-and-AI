@@ -57,6 +57,12 @@ def _sources(root: Path) -> tuple[Source, ...]:
             split_names={"train": "train", "val": "val", "test": "test"},
             class_map={0: 3, 1: 4, 2: 5},
         ),
+        Source(
+            name="sidewalk_pole_tree_stop_v3",
+            root=temporary / "aihub_sidewalk_pole_tree_stop_v3",
+            split_names={"train": "train", "val": "val", "test": "test"},
+            class_map={0: 3, 1: 4, 2: 5},
+        ),
     )
 
 

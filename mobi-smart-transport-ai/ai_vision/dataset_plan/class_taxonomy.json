@@ -1,9 +1,10 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "owner": "김도성",
   "scope_phase": "2학기 본구현",
   "april_phase_note": "4월 단계에서는 본 taxonomy를 데이터 수집·라벨링 기준으로만 사용하며, 학습/추론 코드는 작성하지 않는다.",
   "v2_section_note": "V2 단계 (2026-05~) 김도성 V2 섹션 9에서 7 학습 클래스 각각에 default_risk_level / detection_threshold / user_message_templates / related_reasons 4 필드를 추가하고, top-level에 reason_codes 카탈로그를 신설했다. 본 정밀화는 V2 섹션 7 (ai_vision/pipelines/README.md §3.4 Safety Event Schema 후보) + V2 섹션 8 (mock_safety_events.json 4건) 양쪽과 정합한다. 실제 detection_threshold 값은 model_research/model_candidates.csv의 후보 모델 (YOLOv11n / YOLOv8n / MobileNetV2 / EfficientDet-Lite) 학습 결과에 따라 2학기 단계 1·2에서 재조정될 수 있다 — 본 값은 V1 mock-first 단계의 안전한 default 가정 (0.5).",
+  "unified_model_note": "통합 YOLO11n v2는 bus, bus_door, parked_pm, pole, tree_trunk, bus_stop 여섯 클래스를 출력한다. parked_pm, pole, tree_trunk는 현 단계에서 화면 표시·현장 기록용 관측 클래스이며 자동 음성 위험 안내를 확정하지 않는다.",
   "annotation_format": {
     "primary": "bbox",
     "rationale": "교통약자 보행/승차 안전 안내 목적상 객체 위치만 정확하면 충분하고, 모바일 경량 모델(YOLO/EfficientDet-Lite 계열)도 bbox만 학습한다.",
@@ -98,6 +99,51 @@
         "ko": "버스 정류장을 인식했습니다."
       },
       "related_reasons": ["bus_stop_recognized"]
+    },
+    {
+      "id": "parked_pm",
+      "ko": "방치 전동 킥보드",
+      "description": "보도에 세워져 있거나 쓰러져 있는 전동 킥보드 등 개인형 이동장치",
+      "priority": "medium",
+      "label_rule": "정지 상태의 개인형 이동장치 전체를 bbox로 표시하며, 이동 중인 객체는 제외.",
+      "ambiguous_neighbors": ["bicycle", "motorcycle"],
+      "avg_per_image_hint": "0~2",
+      "default_risk_level": "info",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "전방의 이동장치 후보를 인식했습니다."
+      },
+      "related_reasons": []
+    },
+    {
+      "id": "pole",
+      "ko": "보도 기둥",
+      "description": "버스 표지판, 가로등, 신호등 등 보행 공간 주변의 세로 기둥",
+      "priority": "medium",
+      "label_rule": "사람의 보행 높이에서 충돌 가능성이 있는 기둥 전체를 bbox로 표시.",
+      "ambiguous_neighbors": ["tree_trunk", "traffic_sign"],
+      "avg_per_image_hint": "0~4",
+      "default_risk_level": "info",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "보도 기둥 후보를 인식했습니다."
+      },
+      "related_reasons": []
+    },
+    {
+      "id": "tree_trunk",
+      "ko": "나무 줄기",
+      "description": "보도 가까이에서 보행 동선에 영향을 줄 수 있는 나무 줄기",
+      "priority": "medium",
+      "label_rule": "잎과 가지가 아닌 줄기 부분을 bbox로 표시.",
+      "ambiguous_neighbors": ["pole"],
+      "avg_per_image_hint": "0~4",
+      "default_risk_level": "info",
+      "detection_threshold": 0.5,
+      "user_message_templates": {
+        "ko": "나무 줄기 후보를 인식했습니다."
+      },
+      "related_reasons": []
     },
     {
       "id": "roadway",
