@@ -32,10 +32,10 @@ Before an app integrator copies a model into Flutter Android assets, verify:
 ## TFLite output-to-guidance validation
 
 `ai_vision/pipelines/tflite_bus_inference.py` is the reference adapter used
-before the Android camera is connected. It accepts the model output
-`[1, 84, 8400]`, selects COCO class `5` (`bus`), removes overlapping boxes,
-restores the box to the original image size, and creates `VisionResult` plus
-the proposed guidance handoff.
+before the Android camera is connected. For the current unified model it
+accepts `[1, 10, 8400]`, decodes all six classes, applies per-class thresholds
+and same-class NMS, restores boxes to the original image size, then creates a
+`VisionResult`.
 
 Run the end-to-end check in the Docker export image:
 
@@ -44,8 +44,9 @@ docker run --rm --mount type=bind,src=<project-absolute-path>,dst=/workspace `
   -w /workspace --entrypoint python mobi-tflite-export:python312-cpu `
   ai_vision/pipelines/tflite_bus_inference.py `
   --source ai_vision/pipelines/fixtures/external/bus.jpg `
-  --model ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite `
-  --output .tool-tmp/tflite-bus.vision-guidance.json
+  --model-profile unified-v2 `
+  --model ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite `
+  --output .tool-tmp/tflite-unified.vision-guidance.json
 ```
 
 The result JSON is local evidence only. The Android adapter must use the same

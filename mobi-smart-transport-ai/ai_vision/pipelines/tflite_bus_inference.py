@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from guidance_handoff import build_vision_guidance_handoff
 from spatial_guidance import interpret_bus_guidance
@@ -35,8 +35,21 @@ DEFAULT_NMS_IOU_THRESHOLD = 0.45
 DEFAULT_MODEL_NAME = "yolov11n"
 DEFAULT_MODEL_VERSION = "coco-tflite-float32-baseline"
 DEFAULT_MODEL_PATH = Path("ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite")
+DEFAULT_UNIFIED_MODEL_PATH = Path("ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite")
 # 이 SavedModel 기반 export는 box 좌표도 640 pixel 값이 아니라 0~1 비율로 낸다.
 TFLITE_OUTPUT_COORDINATES_NORMALIZED = True
+
+# 통합 v2 모델의 채널 4~9 순서. 버스·문은 승차 안내 후보이고, 나머지는 현장
+# 검증용 관측 클래스다. 정류장·고정 장애물은 현 단계에서 더 보수적인 시작 임계값을 쓴다.
+UNIFIED_CLASS_IDS = ("bus", "bus_door", "parked_pm", "pole", "tree_trunk", "bus_stop")
+DEFAULT_UNIFIED_CONFIDENCE_THRESHOLDS = {
+    "bus": 0.50,
+    "bus_door": 0.55,
+    "parked_pm": 0.55,
+    "pole": 0.55,
+    "tree_trunk": 0.55,
+    "bus_stop": 0.60,
+}
 
 
 @dataclass(frozen=True)
@@ -219,6 +232,71 @@ def decode_bus_door_detections(
     ]
 
 
+def unified_confidence_thresholds(overrides: Mapping[str, float] | None = None) -> dict[str, float]:
+    """통합 모델의 클래스별 시작 임계값을 반환하고 선택적 override를 검증한다."""
+    thresholds = dict(DEFAULT_UNIFIED_CONFIDENCE_THRESHOLDS)
+    if overrides is not None:
+        unknown = set(overrides) - set(UNIFIED_CLASS_IDS)
+        if unknown:
+            raise VisionResultValidationError(f"unknown unified classes: {sorted(unknown)}")
+        thresholds.update({class_id: float(value) for class_id, value in overrides.items()})
+    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in thresholds.values()):
+        raise VisionResultValidationError("unified confidence thresholds must be in [0, 1]")
+    return thresholds
+
+
+def decode_unified_detections(
+    output: Sequence[Sequence[Sequence[float]]],
+    *,
+    transform: LetterboxTransform,
+    confidence_thresholds: Mapping[str, float] | None = None,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> list[RawDetection]:
+    """통합 v2 TFLite ``[1,10,candidate_count]`` 출력을 여섯 클래스로 해석한다.
+
+    채널 0~3은 정규화된 ``cx, cy, w, h``이고, 채널 4~9는 ``UNIFIED_CLASS_IDS``
+    순서의 점수다. NMS는 클래스별로 적용하므로 버스 차체와 문, 또는 서로 다른
+    장애물이 겹쳐도 다른 클래스 후보가 제거되지 않는다.
+    """
+    if len(output) != 1 or len(output[0]) != 4 + len(UNIFIED_CLASS_IDS):
+        raise VisionResultValidationError("expected unified TFLite output shape [1, 10, candidate_count]")
+    channels = output[0]
+    candidate_count = len(channels[0])
+    if candidate_count <= 0 or any(len(channel) != candidate_count for channel in channels):
+        raise VisionResultValidationError("TFLite output channels must have equal non-zero length")
+
+    thresholds = unified_confidence_thresholds(confidence_thresholds)
+    by_class: dict[str, list[RawDetection]] = {class_id: [] for class_id in UNIFIED_CLASS_IDS}
+    for index in range(candidate_count):
+        source_box = _model_box_to_source(
+            center_x=float(channels[0][index]),
+            center_y=float(channels[1][index]),
+            width=float(channels[2][index]),
+            height=float(channels[3][index]),
+            transform=transform,
+        )
+        if source_box is None:
+            continue
+        for class_offset, class_id in enumerate(UNIFIED_CLASS_IDS):
+            score = float(channels[4 + class_offset][index])
+            if math.isfinite(score) and score >= thresholds[class_id]:
+                by_class[class_id].append(
+                    RawDetection(
+                        class_id=class_id,
+                        score=min(score, 1.0),
+                        x1=source_box[0],
+                        y1=source_box[1],
+                        x2=source_box[2],
+                        y2=source_box[3],
+                    )
+                )
+    return [
+        detection
+        for class_id in UNIFIED_CLASS_IDS
+        for detection in non_maximum_suppression(by_class[class_id], iou_threshold=nms_iou_threshold)
+    ]
+
+
 def vision_result_from_tflite_output(
     output: Sequence[Sequence[Sequence[float]]],
     *,
@@ -268,6 +346,34 @@ def vision_result_from_bus_door_tflite_output(
         ),
         model_name="yolo11n-bus-door",
         model_version="public-bus-door-v1-tflite-float32",
+    )
+
+
+def vision_result_from_unified_tflite_output(
+    output: Sequence[Sequence[Sequence[float]]],
+    *,
+    source_size: ImageSize,
+    input_width: int = DEFAULT_INPUT_WIDTH,
+    input_height: int = DEFAULT_INPUT_HEIGHT,
+    confidence_thresholds: Mapping[str, float] | None = None,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> VisionResult:
+    """통합 v2 TFLite 출력 하나를 여섯 클래스 ``VisionResult``로 변환한다."""
+    thresholds = unified_confidence_thresholds(confidence_thresholds)
+    transform = make_letterbox_transform(source_size, input_width=input_width, input_height=input_height)
+    return build_vision_result(
+        frame_id=str(uuid.uuid4()),
+        captured_at=datetime.now(timezone.utc),
+        image_size=source_size,
+        raw_detections=decode_unified_detections(
+            output,
+            transform=transform,
+            confidence_thresholds=thresholds,
+            nms_iou_threshold=nms_iou_threshold,
+        ),
+        model_name="yolo11n-unified-bus-obstacle-stop",
+        model_version="v2-tflite-float32",
+        thresholds=thresholds,
     )
 
 
@@ -358,6 +464,44 @@ def run_tflite_image_inference(
         image_bgr,
         interpreter=_create_tflite_interpreter(model_path),
         confidence_threshold=confidence_threshold,
+        nms_iou_threshold=nms_iou_threshold,
+    )
+
+
+def run_unified_tflite_image_inference(
+    source: Path,
+    *,
+    model_path: Path = DEFAULT_UNIFIED_MODEL_PATH,
+    confidence_thresholds: Mapping[str, float] | None = None,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> VisionResult:
+    """통합 v2 TFLite로 이미지 한 장의 여섯 클래스 결과를 검증한다."""
+    if not source.is_file():
+        raise FileNotFoundError(f"source image not found: {source}")
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("TFLite image preprocessing requires opencv-python") from exc
+
+    image_bgr = cv2.imread(str(source))
+    if image_bgr is None:
+        raise VisionResultValidationError(f"unable to decode source image: {source}")
+    height, width = image_bgr.shape[:2]
+    source_size = ImageSize(width=width, height=height)
+    interpreter = _create_tflite_interpreter(model_path)
+    input_detail = interpreter.get_input_details()[0]
+    input_shape = tuple(int(value) for value in input_detail["shape"])
+    transform = make_letterbox_transform(source_size, input_width=input_shape[2], input_height=input_shape[1])
+    interpreter.set_tensor(input_detail["index"], _preprocess_bgr_image(image_bgr, transform))
+    interpreter.invoke()
+    output_detail = interpreter.get_output_details()[0]
+    output = interpreter.get_tensor(output_detail["index"]).tolist()
+    return vision_result_from_unified_tflite_output(
+        output,
+        source_size=source_size,
+        input_width=input_shape[2],
+        input_height=input_shape[1],
+        confidence_thresholds=confidence_thresholds,
         nms_iou_threshold=nms_iou_threshold,
     )
 
@@ -455,9 +599,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH, help="TFLite model path")
     parser.add_argument(
         "--model-profile",
-        choices=("coco-bus", "bus-door"),
+        choices=("coco-bus", "bus-door", "unified-v2"),
         default="coco-bus",
-        help="coco-bus is the generic bus baseline; bus-door expects [1,6,8400] output",
+        help="coco-bus=[1,84,N], bus-door=[1,6,N], unified-v2=[1,10,N]",
     )
     parser.add_argument("--output", required=True, type=Path, help="JSON result path")
     parser.add_argument("--confidence", type=float, default=DEFAULT_BUS_CONFIDENCE_THRESHOLD)
@@ -469,8 +613,8 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     if args.video:
-        if args.model_profile == "bus-door":
-            raise SystemExit("bus-door video sampling is not implemented; validate an image or use the Android app path")
+        if args.model_profile != "coco-bus":
+            raise SystemExit("video sampling supports only coco-bus; validate unified-v2 with an image or use the Android app path")
         payload = run_tflite_video_inference(
             args.source, model_path=args.model, frame_stride=args.frame_stride, max_samples=args.max_samples,
             confidence_threshold=args.confidence,
@@ -485,6 +629,9 @@ def main() -> None:
         result = run_bus_door_tflite_image_inference(
             args.source, model_path=args.model, confidence_threshold=args.confidence
         )
+    elif args.model_profile == "unified-v2":
+        model_path = DEFAULT_UNIFIED_MODEL_PATH if args.model == DEFAULT_MODEL_PATH else args.model
+        result = run_unified_tflite_image_inference(args.source, model_path=model_path)
     else:
         result = run_tflite_image_inference(args.source, model_path=args.model, confidence_threshold=args.confidence)
     handoff = build_vision_guidance_handoff(result)

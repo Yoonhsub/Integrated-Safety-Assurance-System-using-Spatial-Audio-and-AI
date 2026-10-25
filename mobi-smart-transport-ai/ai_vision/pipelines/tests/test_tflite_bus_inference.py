@@ -15,11 +15,14 @@ from tflite_bus_inference import (  # noqa: E402
     BUS_DOOR_BUS_CLASS_INDEX,
     BUS_DOOR_CLASS_INDEX,
     COCO_BUS_CLASS_INDEX,
+    UNIFIED_CLASS_IDS,
     decode_bus_door_detections,
     decode_bus_detections,
+    decode_unified_detections,
     frame_indices_to_process,
     make_letterbox_transform,
     vision_result_from_tflite_output,
+    vision_result_from_unified_tflite_output,
 )
 from vision_result import ImageSize, VisionResultValidationError  # noqa: E402
 
@@ -46,6 +49,19 @@ def _bus_door_output_with_candidates(
         channels[2][index], channels[3][index] = width, height
         channels[4 + BUS_DOOR_BUS_CLASS_INDEX][index] = bus_score
         channels[4 + BUS_DOOR_CLASS_INDEX][index] = door_score
+    return [channels]
+
+
+def _unified_output_with_candidates(
+    candidates: list[tuple[float, float, float, float, dict[str, float]]]
+) -> list[list[list[float]]]:
+    """통합 v2 ``[1,10,N]`` fixture를 만든다."""
+    channels = [[0.0 for _ in candidates] for _ in range(10)]
+    for index, (cx, cy, width, height, scores) in enumerate(candidates):
+        channels[0][index], channels[1][index] = cx, cy
+        channels[2][index], channels[3][index] = width, height
+        for class_offset, class_id in enumerate(UNIFIED_CLASS_IDS):
+            channels[4 + class_offset][index] = scores.get(class_id, 0.0)
     return [channels]
 
 
@@ -103,9 +119,37 @@ class TfliteBusInferenceTest(unittest.TestCase):
         self.assertAlmostEqual(result.detections[0].bbox.x, 0.25)
         self.assertAlmostEqual(result.detections[0].bbox.w, 0.5)
 
+    def test_decodes_all_unified_classes_with_per_class_nms(self) -> None:
+        output = _unified_output_with_candidates(
+            [
+                (0.5, 0.5, 0.8, 0.8, {"bus": 0.90, "bus_door": 0.80, "bus_stop": 0.61}),
+                (0.51, 0.5, 0.8, 0.8, {"bus": 0.70}),
+                (0.2, 0.5, 0.1, 0.3, {"pole": 0.56, "tree_trunk": 0.57, "parked_pm": 0.56}),
+            ]
+        )
+        detections = decode_unified_detections(
+            output, transform=make_letterbox_transform(ImageSize(width=640, height=640))
+        )
+
+        self.assertEqual(
+            [detection.class_id for detection in detections],
+            ["bus", "bus_door", "parked_pm", "pole", "tree_trunk", "bus_stop"],
+        )
+        self.assertAlmostEqual(detections[0].score, 0.90)
+
+    def test_unified_result_uses_all_six_classes(self) -> None:
+        output = _unified_output_with_candidates(
+            [(0.5, 0.5, 0.5, 0.5, {class_id: 0.90 for class_id in UNIFIED_CLASS_IDS})]
+        )
+        result = vision_result_from_unified_tflite_output(output, source_size=ImageSize(width=640, height=640))
+
+        self.assertEqual([detection.class_id for detection in result.detections], list(UNIFIED_CLASS_IDS))
+
     def test_rejects_unexpected_tensor_layout(self) -> None:
         with self.assertRaises(VisionResultValidationError):
             decode_bus_detections([[[0.0]]], transform=make_letterbox_transform(ImageSize(width=640, height=640)))
+        with self.assertRaises(VisionResultValidationError):
+            decode_unified_detections([[[0.0]]], transform=make_letterbox_transform(ImageSize(width=640, height=640)))
 
     def test_selects_video_frames_at_requested_interval(self) -> None:
         self.assertEqual(frame_indices_to_process(100, frame_stride=15, max_samples=4), [0, 15, 30, 45])
