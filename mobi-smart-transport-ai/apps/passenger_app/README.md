@@ -150,4 +150,10 @@ grounding, 음성 응답은 `Sulafat` voice를 우선 사용한다.
 
 Android 실행 환경을 추가했습니다. 앱 ID com.mobi.passenger, 최소 API 28, SDK 36을 사용합니다.
 Flutter 3.41.6 / Dart 3.11.4, JDK 21 기준으로 flutter pub get 후 flutter run -d DEVICE_ID로 실행합니다.
-실기기 입력·출력 모듈과 화면 연결은 후속 단계입니다. build, local.properties, 키 파일은 커밋하지 않습니다.
+실기기 확인 화면은 후속 단계에서 연결합니다. build, local.properties, 키 파일은 커밋하지 않습니다.
+
+
+## 실기기 입력·출력 모듈
+
+lib/src/features/hardware_bus 아래에 비콘 수신, WT901 해석, Yaw·방향 계산과 Cue/네이티브 출력 모듈을 추가했습니다.
+실제 하드웨어를 소비하는 화면은 다음 단계에서 연결합니다. 검사는 flutter analyze와 flutter test로 수행합니다.
