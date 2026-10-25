@@ -4,7 +4,7 @@ import 'package:mobi_mobile_auth/mobile_auth.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/backend_api_client.dart';
-import '../services/ride_creation_intent.dart';
+import 'ride_request_panel.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/voice_guide_service.dart';
 
@@ -54,12 +54,6 @@ class _HomePageState extends State<HomePage> {
 
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
-
-  RideRequestCreateResult? _rideRequestCreateResult;
-  bool _isCreatingRideRequest = false;
-
-  RideRequestStatusResult? _rideRequestStatusResult;
-  bool _isLoadingRideRequestStatus = false;
 
   @override
   void dispose() {
@@ -124,46 +118,6 @@ class _HomePageState extends State<HomePage> {
       _backendHealthStatus = healthStatus;
       _isLoadingBackendHealth = false;
     });
-  }
-
-  final _rideCreationIntent = RideCreationIntentStore();
-
-  Future<void> _createRideRequest() async {
-    if (_isCreatingRideRequest) return;
-    final draft = _buildRideRequestDraft();
-
-    if (draft == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('탑승 요청에 필요한 노선 또는 버스 선택 정보가 없습니다.')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isCreatingRideRequest = true;
-    });
-
-    try {
-      final key = await _rideCreationIntent.begin(draft);
-      final result = await _backendApiClient.createRideRequest(draft: draft, idempotencyKey: key);
-      if (result.isSuccess && result.requestId != null) {
-        await _rideCreationIntent.complete(draft.userId, key);
-      }
-      if (!mounted) return;
-      setState(() {
-        _rideRequestCreateResult = result;
-        _rideRequestStatusResult = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.description)));
-    } catch (error) {
-      if (!mounted) return;
-      final message = error is StateError
-          ? error.message.toString()
-          : '요청 정보를 확인할 수 없습니다. 같은 요청으로 다시 시도해 주세요.';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-    } finally {
-      if (mounted) setState(() => _isCreatingRideRequest = false);
-    }
   }
 
   RideRequestDraft? _buildRideRequestDraft() {
@@ -331,61 +285,10 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadRideRequestStatus() async {
-    final requestId = _rideRequestCreateResult?.requestId;
-
-    if (requestId == null || requestId.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('조회할 탑승 요청 식별자가 없습니다.')));
-      return;
-    }
-
-    setState(() {
-      _isLoadingRideRequestStatus = true;
-    });
-
-    final result = await _backendApiClient.fetchRideRequestStatus(
-      requestId: requestId,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _rideRequestStatusResult = result;
-      _isLoadingRideRequestStatus = false;
-    });
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(result.description)));
-  }
-
-  Future<void> _cancelRideRequest() async {
-    final id = _rideRequestCreateResult?.requestId;
-    if (id == null) return;
-    setState(() => _isLoadingRideRequestStatus = true);
-    try {
-      final result = await _backendApiClient.cancelRideRequest(id);
-      if (mounted) setState(() => _rideRequestStatusResult = result);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(error is AuthenticatedApiException
-              ? error.userMessage
-              : '취소에 실패했습니다. 상태를 다시 조회해 주세요.'),
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoadingRideRequestStatus = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final voiceButtonLabel = _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
     final safetyStatus = _homeSnapshot?.safetyStatus;
-    final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
       appBar: AppBar(
@@ -576,30 +479,6 @@ class _HomePageState extends State<HomePage> {
                     '버스 도착 정보 API 또는 mock 도착 정보를 불러오는 중입니다.',
               ),
               const SizedBox(height: 16),
-              _StatusCard(
-                title: '탑승 요청 상태',
-                statusLabel: _isCreatingRideRequest
-                    ? '요청 중'
-                    : _isLoadingRideRequestStatus
-                        ? '조회 중'
-                        : _rideRequestStatusResult?.statusLabel ??
-                            _rideRequestCreateResult?.statusLabel ??
-                            rideRequestStatus?.statusLabel ??
-                            '요청 전',
-                description: _isCreatingRideRequest
-                    ? '탑승 요청을 생성하는 중입니다.'
-                    : _isLoadingRideRequestStatus
-                        ? '탑승 요청 상태를 조회하는 중입니다.'
-                        : _rideRequestStatusResult?.description ??
-                            _rideRequestCreateResult?.description ??
-                            rideRequestStatus?.description ??
-                            '탑승 요청 상태를 불러오는 중입니다.',
-                icon: Icons.accessible_forward_outlined,
-                semanticHint: _rideRequestStatusResult?.semanticHint ??
-                    _rideRequestCreateResult?.semanticHint ??
-                    rideRequestStatus?.semanticHint ??
-                    '탑승 요청 생성 전 상태를 표시하는 영역입니다.',
-              ),
               if (_busArrivalSummary?.options.isNotEmpty ?? false)
                 DropdownButtonFormField<String>(
                   initialValue: _selectedRouteId,
@@ -610,79 +489,20 @@ class _HomePageState extends State<HomePage> {
                             child: Text('${option.busNo}번 (${option.routeId})'),
                           ))
                       .toList(),
-                  onChanged: _isCreatingRideRequest
-                      ? null
-                      : (value) {
-                          final option = _busArrivalSummary!.options
-                              .firstWhere((item) => item.routeId == value);
-                          setState(() {
-                            _selectedRouteId = option.routeId;
-                            _selectedBusNo = option.busNo;
-                          });
-                        },
+                  onChanged: (value) {
+                    final option = _busArrivalSummary!.options
+                        .firstWhere((item) => item.routeId == value);
+                    setState(() {
+                      _selectedRouteId = option.routeId;
+                      _selectedBusNo = option.busNo;
+                    });
+                  },
                 ),
               const SizedBox(height: 12),
-              Semantics(
-                button: true,
-                label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
-                hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
-                child: SizedBox(
-                  height: 64,
-                  child: ElevatedButton.icon(
-                    onPressed:
-                        _isCreatingRideRequest ? null : _createRideRequest,
-                    icon: Icon(
-                      _isCreatingRideRequest
-                          ? Icons.hourglass_empty
-                          : Icons.accessible_forward_outlined,
-                    ),
-                    label: Text(
-                      _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Semantics(
-                button: true,
-                label: _isLoadingRideRequestStatus
-                    ? '탑승 요청 상태 조회 중'
-                    : '탑승 요청 상태 조회',
-                hint: '두 번 탭하면 생성된 탑승 요청의 현재 상태를 조회합니다.',
-                child: SizedBox(
-                  height: 56,
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoadingRideRequestStatus
-                        ? null
-                        : _loadRideRequestStatus,
-                    icon: Icon(
-                      _isLoadingRideRequestStatus
-                          ? Icons.hourglass_empty
-                          : Icons.refresh_outlined,
-                    ),
-                    label: Text(
-                      _isLoadingRideRequestStatus ? '상태 조회 중...' : '상태 조회',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              RideRequestPanel(
+                  api: _backendApiClient, draft: _buildRideRequestDraft()),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
-              OutlinedButton(
-                onPressed: _rideRequestCreateResult?.requestId == null ||
-                        _isLoadingRideRequestStatus
-                    ? null
-                    : _cancelRideRequest,
-                child: const Text('내 탑승 요청 취소'),
-              ),
             ],
           ),
         ),

@@ -10,7 +10,9 @@ class BackendApiClient {
     this.useMockData = true,
     this.timeout = const Duration(seconds: 5),
     AuthenticatedApiClient? authClient,
-  }) : _authClient = authClient ??
+    http.Client? publicClient,
+  })  : _publicClient = publicClient ?? http.Client(),
+        _authClient = authClient ??
             AuthenticatedApiClient(
               onUnauthorized: FirebaseAuthSession.instance.signOut,
             );
@@ -19,6 +21,7 @@ class BackendApiClient {
   final bool useMockData;
   final Duration timeout;
   final AuthenticatedApiClient _authClient;
+  final http.Client _publicClient;
 
   // V2 driver app refreshes ride requests through explicit HTTP polling.
   // TODO(윤현섭): FCM 수신 핸들러 연동은 Firebase Messaging setup 확정 후
@@ -35,7 +38,8 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http.get(_buildUri('/health')).timeout(timeout);
+      final response =
+          await _publicClient.get(_buildUri('/health')).timeout(timeout);
       final isAvailable =
           response.statusCode >= 200 && response.statusCode < 300;
 
@@ -81,7 +85,8 @@ class BackendApiClient {
 
     try {
       final response = await _authClient
-          .get(_buildUri('/drivers/$driverId/ride-requests'))
+          .get(_buildUri(
+              '/drivers/${Uri.encodeComponent(driverId)}/ride-requests'))
           .timeout(timeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -168,6 +173,11 @@ class BackendApiClient {
         description: '기사에게 배정된 탑승 요청 ${requestItems.length}건을 표시합니다.',
         requests: requestItems,
       );
+    } on AuthenticatedApiException catch (error) {
+      return DriverRideRequestsResult(
+          statusLabel: '인증 확인 필요',
+          description: error.userMessage,
+          requests: const []);
     } on TimeoutException {
       return const DriverRideRequestsResult(
         statusLabel: '조회 시간 초과',
@@ -201,7 +211,8 @@ class BackendApiClient {
     try {
       final response = await _authClient
           .patch(
-            _buildUri('/ride-requests/$requestId/status'),
+            _buildUri(
+                '/ride-requests/${Uri.encodeComponent(requestId)}/status'),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode(<String, Object?>{'status': status}),
           )
@@ -210,8 +221,11 @@ class BackendApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return RideRequestStatusUpdateResult(
           isSuccess: false,
+          httpStatus: response.statusCode,
           statusLabel: '상태 변경 실패',
-          description: '탑승 요청 상태 변경 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
+          description: response.statusCode == 409
+              ? '요청 상태가 변경되었습니다. 최신 목록을 다시 확인해 주세요.'
+              : '탑승 요청 상태 변경 API가 ${response.statusCode} 상태 코드를 반환했습니다.',
           semanticHint: '탑승 요청 상태 변경 API 응답 실패 상태입니다.',
         );
       }
@@ -239,6 +253,13 @@ class BackendApiClient {
             : '탑승 요청 상태가 $updatedStatus 상태로 변경되었습니다.',
         semanticHint: '탑승 요청 상태 변경 성공 상태입니다.',
       );
+    } on AuthenticatedApiException catch (error) {
+      return RideRequestStatusUpdateResult(
+          isSuccess: false,
+          statusLabel: '인증 확인 필요',
+          description: error.userMessage,
+          semanticHint: error.userMessage,
+          httpStatus: error.statusCode);
     } on TimeoutException {
       return const RideRequestStatusUpdateResult(
         isSuccess: false,
@@ -306,9 +327,11 @@ class RideRequestStatusUpdateResult {
     required this.statusLabel,
     required this.description,
     required this.semanticHint,
+    this.httpStatus,
   });
 
   final bool isSuccess;
+  final int? httpStatus;
   final String statusLabel;
   final String description;
   final String semanticHint;

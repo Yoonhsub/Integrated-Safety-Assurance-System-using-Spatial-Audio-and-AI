@@ -55,3 +55,15 @@ flutter run -d chrome `
 - BLE/RSSI 로직은 `packages/mobile_sensors`에서 구현한다.
 - 사용자 목적지 입력, STT/TTS 기반 사용자 안내, 승객용 지오펜싱 화면은 `apps/passenger_app`에서 다룬다.
 - `driver_app`은 `mobi_mobile_sensors`, `flutter_tts`, `speech_to_text`에 직접 의존하지 않는다.
+
+## 탑승 요청 업무 UI 로컬 검증 (2026-10-26)
+
+기존 기사 HomePage와 `/drivers/{driverId}/ride-requests` GET,
+`/ride-requests/{requestId}/status` PATCH를 재사용한다. 기사 ID는 현재
+인증 계정 Claims에서 조회하며, 인증 오류와 네트워크 오류를 구분해 표시한다.
+중복 수락/동시 새로고침을 차단하고 수락 성공 또는 409 충돌 후 목록을 재조회한다.
+로그아웃/계정 변경 시 기존 요청을 지우고 이전 계정의 지연 응답을 무시한다.
+
+두 앱을 함께 사용하는 Mock HTTP Widget 검증은 승객 앱의
+`test/ride_business_flow_test.dart`에 있다. OFFLINE_UI_E2E이며 실제 Firebase
+또는 Chrome 검증과 구분한다. 기존 인증 전용 모드는 기본 OFF를 유지한다.

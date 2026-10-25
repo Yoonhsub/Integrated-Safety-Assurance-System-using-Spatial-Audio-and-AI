@@ -601,3 +601,5 @@ apps/passenger_app/test/auth_only_app_test.dart
 apps/driver_app/test/auth_only_app_test.dart
 
 backend/api/tests/test_cloud_test_reuse.py
+apps/passenger_app/lib/src/pages/ride_request_panel.dart
+apps/passenger_app/test/ride_business_flow_test.dart

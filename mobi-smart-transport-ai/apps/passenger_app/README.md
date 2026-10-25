@@ -166,3 +166,19 @@ grounding, 음성 응답은 `Sulafat` voice를 우선 사용한다.
 
 ## AI Vision 관찰 한국어 음성
 서버 관찰의 선택적 한국어 TTS와 우선순위·중복·만료 정책은 [VISION_OBSERVATION_TTS.md](../../docs/rw/VISION_OBSERVATION_TTS.md)를 참조하세요. 2026-10-19 PC Chrome에서 한국어 청취, 위험 안내 선점, 관찰 만료 후 TTS ON 상태의 자동 발화 복구를 확인했습니다. 실제 로드 JS와 제공 빌드의 SHA256도 일치했습니다. Android 실기기와 실제 도로 안전성은 미검증이며, 과거 Uncaught Error의 근본 원인은 미확정입니다. Vision 단독 승차 허용은 불가하고 Live Hold를 유지합니다.
+
+## 탑승 요청 업무 UI 로컬 검증 (2026-10-26)
+
+일반 HomePage의 기존 버스 선택과 HTTP API를 재사용한다. RideRequestPanel은
+UID별 마지막 요청 ID만 로컬에 저장하고, 재진입 시 서버 GET으로 현재 상태를
+복구한다. 로그아웃/계정 변경 시 화면을 비우고 이전 비동기 응답을 무시한다.
+취소 PATCH의 409는 최신 상태 GET으로 확인한다. 중복 클릭은 진행 중 차단하며,
+응답 유실 후 생성 재시도에는 기존 Idempotency-Key를 재사용한다.
+상태 업데이트는 '상태 조회' 버튼으로 확인하며 자동 폴링은 추가하지 않았다.
+
+`flutter test test/ride_business_flow_test.dart`는 실제 승객 요청 Widget과
+기사 HomePage/API Client를 Mock HTTP 계약 서버에 연결하는 OFFLINE_UI_E2E다.
+로그인 세션은 Fake이며 실제 Firebase 로그인/RTDB E2E 또는 실제 Chrome
+검증을 의미하지 않는다. 승인되지 않은 API 경로/메서드 호출은 테스트가 거부한다.
+일반 HomePage의 기존 V3 음성 세션 초기화는 그대로이므로 실제 클라우드 UI
+검증에는 별도 승인·격리 환경이 필요하다. 인증 전용 모드는 계속 기본 OFF다.

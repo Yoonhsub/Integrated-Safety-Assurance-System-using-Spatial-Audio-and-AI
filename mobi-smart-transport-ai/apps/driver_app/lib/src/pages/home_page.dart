@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/backend_api_client.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.apiClient, this.session});
+  final BackendApiClient? apiClient;
+  final AuthSession? session;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -16,10 +19,41 @@ class _HomePageState extends State<HomePage> {
     defaultValue: 'http://localhost:8000',
   );
 
-  final BackendApiClient _backendApiClient = BackendApiClient(
-    baseUrl: _apiBaseUrl,
-    useMockData: false,
-  );
+  late final BackendApiClient _backendApiClient;
+  late final AuthSession _auth;
+  StreamSubscription<AuthAccount?>? _subscription;
+  String? _uid;
+  int _epoch = 0;
+
+  bool _current(int epoch, String? uid) =>
+      mounted &&
+      epoch == _epoch &&
+      uid == _uid &&
+      uid == _auth.currentAccount?.uid;
+
+  @override
+  void dispose() {
+    _epoch++;
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _signOut() async {
+    _epoch++;
+    setState(() {
+      _rideRequestsResult = null;
+      _statusUpdateResult = null;
+      _isLoadingRideRequests = true;
+    });
+    try {
+      await _auth.signOut();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('로그아웃하지 못했습니다. 다시 시도해 주세요.')));
+      }
+    }
+  }
 
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
@@ -33,6 +67,23 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _auth = widget.session ?? FirebaseAuthSession.instance;
+    _backendApiClient = widget.apiClient ??
+        BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
+    _uid = _auth.currentAccount?.uid;
+    _subscription = _auth.authStateChanges.listen((account) {
+      if (account?.uid != _auth.currentAccount?.uid) return;
+      if (account?.uid == _uid) return;
+      setState(() {
+        _epoch++;
+        _uid = account?.uid;
+        _rideRequestsResult = null;
+        _statusUpdateResult = null;
+        _isUpdatingRideRequestStatus = false;
+        _isLoadingRideRequests = true;
+      });
+      _loadDriverRideRequests();
+    });
     _loadBackendHealthStatus();
     _loadDriverRideRequests();
   }
@@ -49,13 +100,20 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadDriverRideRequests() async {
+    final epoch = _epoch;
+    final uid = _uid;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoadingRideRequests = false);
+      return;
+    }
     try {
-      final driverId = await FirebaseAuthSession.instance.getCustomClaim(
+      final driverId = await _auth.getCustomClaim(
         'mobi_driver_id',
         forceRefresh: true,
       );
+      if (!_current(epoch, uid)) return;
       if (driverId is! String || driverId.isEmpty) {
-        if (!mounted) return;
+        if (!_current(epoch, uid)) return;
         setState(() {
           _rideRequestsResult = const DriverRideRequestsResult(
             statusLabel: '기사 계정 배정 필요',
@@ -69,13 +127,13 @@ class _HomePageState extends State<HomePage> {
       final result = await _backendApiClient.fetchDriverRideRequests(
         driverId: driverId,
       );
-      if (!mounted) return;
+      if (!_current(epoch, uid)) return;
       setState(() {
         _rideRequestsResult = result;
         _isLoadingRideRequests = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!_current(epoch, uid)) return;
       setState(() {
         _rideRequestsResult = const DriverRideRequestsResult(
           statusLabel: '기사 계정 확인 실패',
@@ -88,6 +146,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshDriverRideRequests() async {
+    if (_isLoadingRideRequests ||
+        _isUpdatingRideRequestStatus ||
+        _uid == null) {
+      return;
+    }
     // HTTP polling path used by the refresh button and future FCM callbacks.
     setState(() {
       _isLoadingRideRequests = true;
@@ -97,6 +160,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _acceptRideRequest(String? requestId) async {
+    if (_isUpdatingRideRequestStatus ||
+        _isLoadingRideRequests ||
+        _uid == null) {
+      return;
+    }
+    final epoch = _epoch;
+    final uid = _uid;
     if (requestId == null || requestId.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -113,7 +183,7 @@ class _HomePageState extends State<HomePage> {
       status: 'ACCEPTED',
     );
 
-    if (!mounted) return;
+    if (!_current(epoch, uid)) return;
 
     setState(() {
       _statusUpdateResult = result;
@@ -124,7 +194,7 @@ class _HomePageState extends State<HomePage> {
       context,
     ).showSnackBar(SnackBar(content: Text(result.description)));
 
-    if (result.isSuccess) {
+    if (result.isSuccess || result.httpStatus == 409) {
       await _refreshDriverRideRequests();
     }
   }
@@ -140,7 +210,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             tooltip: '로그아웃',
-            onPressed: FirebaseAuthSession.instance.signOut,
+            onPressed: _signOut,
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -208,7 +278,9 @@ class _HomePageState extends State<HomePage> {
                 child: SizedBox(
                   height: 56,
                   child: OutlinedButton.icon(
-                    onPressed: _isLoadingRideRequests
+                    onPressed: _isLoadingRideRequests ||
+                            _isUpdatingRideRequestStatus ||
+                            _uid == null
                         ? null
                         : _refreshDriverRideRequests,
                     icon: Icon(

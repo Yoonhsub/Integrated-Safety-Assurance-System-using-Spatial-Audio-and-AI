@@ -31,7 +31,8 @@ class MobiApp extends StatelessWidget {
         requiredRole: 'driver',
         session: authSession,
         appLabel: 'MOBI 기사 앱',
-        builder: (context, account) => const HomePage(),
+        builder: (context, account) =>
+            HomePage(key: ValueKey(account.uid), session: authSession),
       ),
     );
   }
