@@ -144,3 +144,10 @@ grounding, 음성 응답은 `Sulafat` voice를 우선 사용한다.
 경로 계산 중에는 화면에 `생각 중...` 오버레이를 표시한다. 결과 화면은 Google Maps
 위치 증빙, 실제 청주시 공공 API 정류소 증빙, 별도 도착정보 출처 카드를 구분해서
 표시한다. 도착정보가 mock이면 `시연 데이터 · 실제 공공 API 아님`으로 표시한다.
+
+
+## Android 로컬 실행 환경
+
+Android 실행 환경을 추가했습니다. 앱 ID com.mobi.passenger, 최소 API 28, SDK 36을 사용합니다.
+Flutter 3.41.6 / Dart 3.11.4, JDK 21 기준으로 flutter pub get 후 flutter run -d DEVICE_ID로 실행합니다.
+실기기 입력·출력 모듈과 화면 연결은 후속 단계입니다. build, local.properties, 키 파일은 커밋하지 않습니다.
