@@ -203,3 +203,65 @@ Mock 인증 구현은 제품 코드에 추가하지 않았다.
 비활성 버튼·Semantics, 외부 의존성 거부, 재진입과 V3 Client 계약을 검증한다.
 전체 HomePage Chrome localhost Mock 23개 시나리오와 기존 Panel/Driver 22개 회귀를
 별도로 통과했다. 이 결과는 실제 Firebase·V3·Guidance·음성 검증을 의미하지 않는다.
+
+## 실제 Auth + 업무 API 검증 준비 (방식 A)
+
+별도 target `lib/cloud_ride_verification_main.dart`와 Driver의 같은 이름 target은
+실제 FirebaseAuthSession·AuthGate·Bearer 업무 API를 유지한다. 일반 main.dart나
+일반 HomePage 생성자는 이 구성을 읽지 않으며 자동 V3 동작을 유지한다.
+기존 Fake 전용 HomePage.testHarness의 FirebaseAuthSession 거부도 유지한다.
+
+전용 target은 MOBI_CLOUD_RIDE_VERIFICATION=true, Web loopback origin,
+검토된 고정 Data run, 실제 프로젝트별 Web 등록을 모두 요구한다.
+현재 CloudRidePlan의 클라우드 등록 목록은 **비어 있다**. 실행하면 Firebase 초기화
+전에 차단된다. 환경변수만으로 임의 run이나 이전 사용 run을 활성화할 수 없다.
+실제 Data run·요청 ID·경로 등록 및 클라우드 실행은 후속 검토·승인 대상이다.
+
+HomePage.cloudVerification은 V3/STT/오디오를 생성하지 않는다. 업무 호출은
+기존 BackendApiClient(useMockData=false)와 실제 ID Token을 사용한다.
+공개 버스 GET `/bus-info/stops/mock-stop-001/arrivals`만 메모리 Fixture로
+처리하고, 승인된 ct-{dataRun}-stop-502 / MOCK-502 / 502로 매핑한다.
+`/busArrivals/{stopId}`는 HTTP API가 아닌 Backend의 RTDB 캐시 경로이며
+이 구성에서는 버스 GET을 Backend로 보내지 않으므로 캐시 조회도 발생하지 않는다.
+다른 stop·외부 host·query·V3·FCM·Guidance 경로는 전송 전에 거부한다.
+
+보호 API마다 GET /health의 cloudTestProjectId·cloudTestRunId를 검사하고,
+실제 Firebase app 등록·현재 UID·역할·Auth run·기사 ID를 대조한다.
+허용된 요청 키·DTO·단일 요청 ID·상태 변경만 통과한다. Backend의 UID/Claims/
+소유권/CAS 검사는 그대로 유지한다. 클라이언트 가드를 서버 권한의 대체로 보지 않는다.
+CloudRideIntentStore는 Data run별 복구 슬롯과 검토된 고정 요청 키를 사용한다.
+
+오프라인 Fixture `shared/contracts/fixtures/cloud_ride_ui_offline.json`은 실제
+클라우드 등록이 아니다. Dart의 debug 테스트와 Python monkeypatch 안에서만
+동일 계약을 재현하며, cloud Backend의 등록 목록에 추가하지 않았다.
+`flutter test test/cloud_ride_verification_test.dart`는 실제 FirebaseAuthSession의
+플랫폼만 Fake로 대체한다. 이 검증은 실제 Firebase 로그인·JWT 서명 검증이 아니다.
+새 run의 기록·IAM·ADC·Firebase 접근 및 운영 배포는 이 변경으로 승인되지 않는다.
+
+전용 Web 산출물은 반드시 `scripts/build_cloud_ride_web.ps1 -App passenger
+-Output <저장소 밖 경로>`로 만든다(기사는 `-App driver`). 기본 HTML은 사용자 제스처에 반응하는 기존
+음성/위치/Spatial JS helper를 포함하므로, 이 스크립트가 **검증 산출물에서만**
+mobi_*.js 태그를 제거한다. 제품 HTML·Spatial Audio 코드는 수정하지 않는다.
+직접 flutter build target만 지정한 산출물을 검증 서버에 제공하지 않는다.
+
+### 인증 세대와 퇴역 Data run 보호
+
+FirebaseAuthSession은 동일 FirebaseAuth delegate의 로그인 세대를 공유한다.
+로그아웃·로그인 시도 및 SDK 인증 이벤트에서 이전 세대를 무효화하고,
+진행 중인 로그아웃보다 새 로그인이 먼저 완료되지 않도록 인증 변경을 직렬화한다.
+업무 요청은 시작 세대를 고정하고 토큰·Claims·health 대기, 응답 및 refresh 후
+다시 확인한다. 이전 세대의 응답은 새 세션의 refresh·signOut이나 UI 갱신에
+사용하지 않는다. 로컬 취소는 HTTP 401과 구분하며, 이미 전송된 서버 작업을
+취소한다고 보장하지 않는다. 명시적 custom tokenLoader 사용자는 자신의
+세션 수명주기에 맞는 requestGuard를 주입해야 한다.
+
+Backend의 RETIRED_DATA_RUNS는 사용 완료 Data run을 중앙에서 차단한다.
+확인된 rtdb-20261025-6e9a7c42는 일반/ride-only 모두 거부하며,
+긍정 등록 목록에 남아 있거나 재등록돼도 실행할 수 없다. Auth run은 퇴역시키지
+않는다. 신규 일반 run은 REVIEWED_GENERAL_RUNS, 기존 Auth 재사용 run은
+REVIEWED_REUSE_RUNS의 정확한 고정 등록이 필요하다. 현재 활성 클라우드 run은
+등록하지 않았다. 설정 변경, 계획 생성 및 서버 SDK 초기화 전 같은 검사를 한다.
+
+공격 회귀: test/cloud_auth_generation_test.dart 및
+backend/api/tests/test_cloud_run_retirement.py. 플랫폼 Fake와 차단된 네트워크를
+사용한 오프라인 검증이며 실제 Firebase 이벤트 순서 검증을 의미하지 않는다.

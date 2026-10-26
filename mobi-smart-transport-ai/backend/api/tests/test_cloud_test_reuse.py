@@ -22,7 +22,7 @@ from scripts.cloud_test_lifecycle import Lifecycle
 pytestmark = pytest.mark.auth_boundary
 
 AUTH = 'auth-20261023-919e07bd'
-DATA = 'rtdb-20261025-6e9a7c42'
+DATA = 'rtdb-offline-reuse-fixt'
 CASE = 'ride-e2e-01'
 REGISTRATION = deepcopy(cloud_test.CONFIRMED_TEST_PROJECTS['mobi-auth-cloud-test'])
 
@@ -102,6 +102,8 @@ class StrictStore:
 
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS',
+        {('mobi-auth-cloud-test', DATA): (AUTH, CASE)})
     for k in list(os.environ):
         if k.startswith(('MOBI_CLOUD_TEST', 'FIREBASE_', 'GOOGLE_', 'MOBI_LOCAL_DEMO')) or k in {
                 'K_SERVICE', 'GAE_ENV', 'OPENAI_API_KEY', 'GEMINI_API_KEY'}:

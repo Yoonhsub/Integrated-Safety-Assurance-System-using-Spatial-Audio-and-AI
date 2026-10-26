@@ -604,3 +604,14 @@ backend/api/tests/test_cloud_test_reuse.py
 apps/passenger_app/lib/src/pages/ride_request_panel.dart
 apps/passenger_app/test/ride_business_flow_test.dart
 apps/passenger_app/test/home_page_isolation_test.dart
+packages/mobile_auth/lib/src/cloud_ride_verification.dart
+apps/passenger_app/lib/cloud_ride_verification_main.dart
+apps/driver_app/lib/cloud_ride_verification_main.dart
+apps/passenger_app/lib/src/services/cloud_ride_intent.dart
+apps/passenger_app/test/cloud_ride_firebase_fake.dart
+apps/passenger_app/test/cloud_ride_verification_test.dart
+backend/api/tests/test_cloud_ui_contract.py
+shared/contracts/fixtures/cloud_ride_ui_offline.json
+scripts/build_cloud_ride_web.ps1
+apps/passenger_app/test/cloud_auth_generation_test.dart
+backend/api/tests/test_cloud_run_retirement.py

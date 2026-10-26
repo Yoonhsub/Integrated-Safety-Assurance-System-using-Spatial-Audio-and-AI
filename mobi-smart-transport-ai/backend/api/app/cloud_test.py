@@ -46,6 +46,10 @@ REVIEWED_REUSE_RUNS = MappingProxyType({
     ('mobi-auth-cloud-test', 'rtdb-20261025-6e9a7c42'):
         ('auth-20261023-919e07bd', 'ride-e2e-01'),
 })
+# Explicit completed Data runs, never Auth runs. Retirement overrides every
+# registration/mode, including historical entries retained above.
+RETIRED_DATA_RUNS = frozenset({'rtdb-20261025-6e9a7c42'})
+REVIEWED_GENERAL_RUNS = frozenset()  # No new real cloud execution is approved.
 MAIN_SENDER_ID = '882602390759'
 WEB_CONFIG_KEYS = {'MOBI_FIREBASE_API_KEY', 'MOBI_FIREBASE_APP_ID',
                    'MOBI_FIREBASE_MESSAGING_SENDER_ID', 'MOBI_FIREBASE_PROJECT_ID',
@@ -64,6 +68,18 @@ OPERATIONS = {
 
 class CloudTestConfigurationError(ValueError):
     """Only fixed, non-sensitive configuration messages may use this type."""
+
+
+def ensure_execution_run(project, run, auth_run='', data_run='', mode=''):
+    """Pure pre-I/O gate shared by server, CLI planning and execution."""
+    if run in RETIRED_DATA_RUNS or data_run in RETIRED_DATA_RUNS:
+        raise CloudTestConfigurationError('Retired Data run is permanently blocked')
+    if auth_run or data_run or mode:
+        if (mode != 'ride-only' or data_run != run
+                or REVIEWED_REUSE_RUNS.get((project, run), (None, None))[0] != auth_run):
+            raise CloudTestConfigurationError('Unreviewed Auth/data run binding')
+    elif (project, run) not in REVIEWED_GENERAL_RUNS:
+        raise CloudTestConfigurationError('Unregistered Data run is blocked')
 
 
 def confirmed_project(project_id: str) -> dict:
@@ -179,6 +195,10 @@ def validate() -> CloudTestScope:
     # Main-project testing requires a separate exact opt-in, never a suffix bypass.
     # Actual cloud writes still require human approval of the concrete run plan.
     project = os.getenv('MOBI_CLOUD_TEST_PROJECT_ID', '')
+    ensure_execution_run(project, os.getenv('MOBI_CLOUD_TEST_RUN_ID', ''),
+                         os.getenv('MOBI_CLOUD_TEST_AUTH_RUN_ID', ''),
+                         os.getenv('MOBI_CLOUD_TEST_DATA_RUN_ID', ''),
+                         os.getenv('MOBI_CLOUD_TEST_MODE', ''))
     main_flag = os.getenv('MOBI_CLOUD_TEST_MAIN_PROJECT', '')
     main_test = main_flag == 'mobi-smart-transport' and project == main_flag
     if main_flag and not main_test:

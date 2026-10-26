@@ -4,6 +4,13 @@ import 'firebase_auth_service.dart';
 
 typedef IdTokenLoader = Future<String?> Function({bool forceRefresh});
 typedef UnauthorizedHandler = Future<void> Function();
+typedef RequestGuardFactory = bool Function() Function();
+
+class StaleAuthRequestException extends AuthenticatedApiException {
+  const StaleAuthRequestException() : super(499);
+  @override
+  String get userMessage => '인증 상태가 변경되어 이전 요청을 중단했습니다.';
+}
 
 class AuthenticatedApiException implements Exception {
   const AuthenticatedApiException(this.statusCode);
@@ -27,13 +34,19 @@ class AuthenticatedApiClient {
     IdTokenLoader? tokenLoader,
     UnauthorizedHandler? onUnauthorized,
     http.Client? client,
+    RequestGuardFactory? requestGuard,
   })  : _tokenLoader = tokenLoader ?? FirebaseAuthSession.instance.getIdToken,
+        _requestGuard = requestGuard ??
+            (tokenLoader == null
+                ? FirebaseAuthSession.instance.captureRequestGuard
+                : null),
         _onUnauthorized = onUnauthorized,
         _client = client ?? http.Client();
 
   final IdTokenLoader _tokenLoader;
   final UnauthorizedHandler? _onUnauthorized;
   final http.Client _client;
+  final RequestGuardFactory? _requestGuard;
 
   Future<http.Response> get(Uri uri, {Map<String, String>? headers}) =>
       _send('GET', uri, headers: headers);
@@ -58,12 +71,20 @@ class AuthenticatedApiClient {
     Map<String, String>? headers,
     Object? body,
   }) async {
+    final isCurrent = _requestGuard?.call() ?? () => true;
+    void check() {
+      if (!isCurrent()) throw const StaleAuthRequestException();
+    }
+
+    check();
     final token = await _tokenLoader();
+    check();
     if (token == null || token.isEmpty) {
       await _onUnauthorized?.call();
       throw const AuthenticatedApiException(401);
     }
     var response = await _sendOnce(method, uri, token, headers, body);
+    check();
     if (response.statusCode != 401) {
       _throwForAuthStatus(response.statusCode);
       return response;
@@ -71,12 +92,16 @@ class AuthenticatedApiClient {
 
     String? refreshed;
     try {
+      check();
       refreshed = await _tokenLoader(forceRefresh: true);
     } catch (_) {
+      check();
       // Authentication provider details and tokens must not escape to UI/logs.
     }
+    check();
     if (refreshed != null && refreshed.isNotEmpty) {
       response = await _sendOnce(method, uri, refreshed, headers, body);
+      check();
     }
     if (response.statusCode == 401) await _onUnauthorized?.call();
     _throwForAuthStatus(response.statusCode);

@@ -34,11 +34,15 @@ def register_synthetic_project(monkeypatch, c):
     from copy import deepcopy
     record={key:deepcopy(c[key]) for key in ('projectId','databaseUrl','passenger','driver')}
     monkeypatch.setattr(cloud_test,'CONFIRMED_TEST_PROJECTS',{c['projectId']:record})
+    monkeypatch.setattr(cloud_test,'REVIEWED_GENERAL_RUNS',
+                        cloud_test.REVIEWED_GENERAL_RUNS | {(c['projectId'],c['runId'])})
 
 
 @pytest.fixture(autouse=True)
 def synthetic_registration_only(monkeypatch):
     register_synthetic_project(monkeypatch,config())
+    monkeypatch.setattr(cloud_test,'REVIEWED_GENERAL_RUNS',
+                        cloud_test.REVIEWED_GENERAL_RUNS | {('mobi-smart-transport',config()['runId'])})
 
 
 @pytest.fixture
@@ -736,6 +740,8 @@ def registered_test_config(environment,monkeypatch):
     c=deepcopy(_CONSOLE_REGISTRATIONS['mobi-auth-cloud-test'])
     c.update(runId='offline-20261023-a',mainProjectTest=False,
              backendPort=8011,passengerPort=5183,driverPort=5184)
+    monkeypatch.setattr(cloud_test,'REVIEWED_GENERAL_RUNS',
+                        cloud_test.REVIEWED_GENERAL_RUNS | {(c['projectId'],c['runId'])})
     for key,value in cli.environment_for(c).items():monkeypatch.setenv(key,value)
     return c
 

@@ -116,9 +116,11 @@ class _RideRequestPanelState extends State<RideRequestPanel> {
       }
     } catch (error) {
       if (_current(epoch, uid)) {
-        setState(() => _message = error is StateError
-            ? error.message.toString()
-            : '요청에 실패했습니다. 같은 요청으로 다시 시도해 주세요.');
+        setState(() => _message = error is AuthenticatedApiException
+            ? error.userMessage
+            : error is StateError
+                ? error.message.toString()
+                : '요청에 실패했습니다. 같은 요청으로 다시 시도해 주세요.');
       }
     } finally {
       if (_current(epoch, uid)) setState(() => _busy = false);

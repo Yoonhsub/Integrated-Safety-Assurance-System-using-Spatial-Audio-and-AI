@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend/api'))
 sys.path.insert(0, str(ROOT))
-from app.cloud_test import validate, validate_web_app, account_allowed, CloudTestConfigurationError, CloudTestScope
+from app.cloud_test import validate, validate_web_app, account_allowed, CloudTestConfigurationError, CloudTestScope, ensure_execution_run
 
 PUBLIC_KEYS = {'MOBI_FIREBASE_API_KEY','MOBI_FIREBASE_APP_ID','MOBI_FIREBASE_MESSAGING_SENDER_ID',
                'MOBI_FIREBASE_PROJECT_ID','MOBI_FIREBASE_AUTH_DOMAIN'}
@@ -72,6 +72,9 @@ def environment_for(config):
 
 
 def configure(config):
+    ensure_execution_run(config['projectId'], config['runId'],
+                         config.get('authRunId',''), config.get('dataRunId',''),
+                         config.get('executionMode',''))
     # Never turn an existing emulator/cloud process into cloud-test in-place.
     if (any(os.getenv(k) for k in ('FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_DATABASE_EMULATOR_HOST','K_SERVICE','GAE_ENV'))
             or os.getenv('MOBI_LOCAL_DEMO') in {'1','true'}):
@@ -104,6 +107,9 @@ def fixture(config):
 
 
 def plan(config,case_id):
+    ensure_execution_run(config['projectId'], config['runId'],
+                         config.get('authRunId',''), config.get('dataRunId',''),
+                         config.get('executionMode',''))
     accounts,drivers,run=fixture(config)
     key=f'cloud-test:{config["runId"]}:{case_id}'
     identity=json.dumps([accounts[0]['uid'],key],ensure_ascii=True,separators=(',',':'))

@@ -5,6 +5,7 @@ import 'package:mobi_mobile_auth/mobile_auth.dart';
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/backend_api_client.dart';
+import '../services/cloud_ride_intent.dart';
 import 'ride_request_panel.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/voice_guide_service.dart';
@@ -18,7 +19,8 @@ class HomePage extends StatefulWidget {
     required this.dataMode,
   })  : _testHarness = false,
         _testApi = null,
-        _testAuth = null;
+        _testAuth = null,
+        _cloudBinding = null;
 
   /// Only standalone loopback test entrypoints may select this constructor.
   /// Normal app routing always uses HomePage above; no auth bypass is installed.
@@ -33,7 +35,25 @@ class HomePage extends StatefulWidget {
     required AuthSession auth,
   })  : _testHarness = true,
         _testApi = api,
-        _testAuth = auth;
+        _testAuth = auth,
+        _cloudBinding = null;
+
+  /// Separate verification entrypoint: real Firebase Auth and protected API.
+  /// Normal app routes do not use this constructor.
+  const HomePage.cloudVerification({
+    super.key,
+    required this.agentName,
+    required this.onEditAgentName,
+    required this.onReturnToModeSelection,
+    required CloudRideBinding binding,
+  })  : dataMode = 'mock',
+        _testHarness = false,
+        _testApi = null,
+        _testAuth = null,
+        _cloudBinding = binding;
+
+  final CloudRideBinding? _cloudBinding;
+  bool get _isolateV3 => _testHarness || _cloudBinding != null;
 
   final bool _testHarness;
   final BackendApiClient? _testApi;
@@ -98,14 +118,27 @@ class _HomePageState extends State<HomePage> {
             'HomePage test dependencies require an explicit loopback test build');
       }
     }
-    _auth = widget._testAuth ?? FirebaseAuthSession.instance;
-    _backendApiClient = widget._testApi ??
-        BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
+    final binding = widget._cloudBinding;
+    binding?.validate();
+    _auth =
+        binding?.session ?? widget._testAuth ?? FirebaseAuthSession.instance;
+    _backendApiClient = binding != null
+        ? BackendApiClient(
+            baseUrl: binding.plan.backendUrl,
+            useMockData: false,
+            publicClient: binding.publicClient,
+            authClient: binding.authClient)
+        : widget._testApi ??
+            BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
     _v3AgentApiClient =
-        widget._testHarness ? null : V3AgentApiClient(baseUrl: _apiBaseUrl);
-    _voiceGuideService = widget._testHarness ? null : VoiceGuideService();
-    _cueService = widget._testHarness ? null : AudioHapticCueService();
-    if (widget._testHarness) _voiceStatusMessage = '오프라인 업무 검증 · 음성 비활성';
+        widget._isolateV3 ? null : V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _voiceGuideService = widget._isolateV3 ? null : VoiceGuideService();
+    _cueService = widget._isolateV3 ? null : AudioHapticCueService();
+    if (widget._isolateV3) {
+      _voiceStatusMessage = binding == null
+          ? '오프라인 업무 검증 · 음성 비활성'
+          : 'Firebase 업무 검증 · V3/음성 비활성';
+    }
     _loadBackendHealthStatus();
     _loadPassengerHomeSnapshot();
     _loadBusArrivalSummary();
@@ -132,7 +165,10 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       _busArrivalSummary = busArrivalSummary;
-      _selectedStopId = busArrivalSummary.stopId;
+      // The fixed local bus fixture maps the normal startup alias to the
+      // reviewed data-run stop. Normal BackendApiClient semantics are unchanged.
+      _selectedStopId =
+          widget._cloudBinding?.plan.stopId ?? busArrivalSummary.stopId;
       _selectedRouteId = busArrivalSummary.selectedRouteId;
       _selectedBusNo = busArrivalSummary.selectedBusNo;
       _isLoadingBusArrivals = false;
@@ -436,12 +472,12 @@ class _HomePageState extends State<HomePage> {
               Semantics(
                 button: true,
                 label: 'V3 버스 탑승 보조 화면 열기',
-                enabled: !widget._testHarness,
+                enabled: !widget._isolateV3,
                 hint: '두 번 탭하면 V3 음성 기반 버스 탑승 보조 화면으로 이동합니다.',
                 child: SizedBox(
                   height: 64,
                   child: FilledButton.icon(
-                    onPressed: widget._testHarness
+                    onPressed: widget._isolateV3
                         ? null
                         : () => Navigator.of(context).pushNamed('/v3-guidance'),
                     icon: const Icon(Icons.assistant_navigation),
@@ -459,19 +495,19 @@ class _HomePageState extends State<HomePage> {
               _VoiceActionButton(
                 label: voiceButtonLabel,
                 isListening: _isListening,
-                onPressed: widget._testHarness ? null : _toggleVoiceInput,
+                onPressed: widget._isolateV3 ? null : _toggleVoiceInput,
               ),
               const SizedBox(height: 12),
               Semantics(
                 button: true,
                 label: '현재 상태 음성 안내',
-                enabled: !widget._testHarness,
+                enabled: !widget._isolateV3,
                 hint: '두 번 탭하면 백엔드 연결 상태, 버스 도착 정보, 탑승 요청 상태를 음성으로 안내합니다.',
                 child: SizedBox(
                   height: 64,
                   child: OutlinedButton.icon(
                     onPressed:
-                        widget._testHarness ? null : _speakCurrentStatusGuide,
+                        widget._isolateV3 ? null : _speakCurrentStatusGuide,
                     icon: const Icon(Icons.record_voice_over_outlined),
                     label: const Text(
                       '현재 상태 음성 안내',
@@ -547,6 +583,9 @@ class _HomePageState extends State<HomePage> {
               RideRequestPanel(
                   api: _backendApiClient,
                   session: _auth,
+                  store: widget._cloudBinding == null
+                      ? null
+                      : CloudRideIntentStore(widget._cloudBinding!.plan),
                   draft: _buildRideRequestDraft()),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),

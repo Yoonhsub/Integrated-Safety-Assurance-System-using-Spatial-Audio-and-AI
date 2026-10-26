@@ -4,3 +4,4 @@ export 'src/firebase_auth_service.dart';
 export 'src/firebase_configuration.dart';
 export 'src/auth_only_configuration.dart';
 export 'src/auth_only_app.dart';
+export 'src/cloud_ride_verification.dart';
