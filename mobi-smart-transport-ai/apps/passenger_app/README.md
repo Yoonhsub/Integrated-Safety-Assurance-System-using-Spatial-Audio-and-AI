@@ -182,3 +182,24 @@ UID별 마지막 요청 ID만 로컬에 저장하고, 재진입 시 서버 GET�
 검증을 의미하지 않는다. 승인되지 않은 API 경로/메서드 호출은 테스트가 거부한다.
 일반 HomePage의 기존 V3 음성 세션 초기화는 그대로이므로 실제 클라우드 UI
 검증에는 별도 승인·격리 환경이 필요하다. 인증 전용 모드는 계속 기본 OFF다.
+
+## 전체 HomePage 오프라인 격리 (2026-10-26)
+
+일반 `HomePage(...)`는 기존처럼 initState에서 GET /health, 버스 도착 정보 GET,
+POST /guidance/session을 시작한다. `dataMode=mock`는 V3 통신 차단 설정이 아니다.
+일반 생성자와 기존 음성·V3·안전 동작은 유지한다.
+
+저장소 밖 Chrome 테스트 진입점 또는 Widget 테스트만 `HomePage.testHarness(...)`를
+사용한다. 명시적으로 주입한 AuthSession·BackendApiClient로 실제 HomePage를 마운트하며
+V3 Client·STT·오디오 자원을 생성하지 않고 V3/음성 버튼과 접근성 상태를 비활성화한다.
+세션 성공 응답을 위조하거나 예외를 삼켜서 격리하지 않는다.
+
+이 생성자는 loopback HTTP API만 허용하고 실제 FirebaseAuthSession 주입을 거부한다.
+release에서는 추가로 MOBI_HOME_TEST_HARNESS=true와 Web loopback origin을 요구한다.
+일반 앱 라우팅은 이 생성자를 호출하지 않으며 define만으로 테스트 인증이 켜지지 않는다.
+Mock 인증 구현은 제품 코드에 추가하지 않았다.
+
+`flutter test test/home_page_isolation_test.dart`는 초기 GET 허용 목록, 요청 DTO,
+비활성 버튼·Semantics, 외부 의존성 거부, 재진입과 V3 Client 계약을 검증한다.
+전체 HomePage Chrome localhost Mock 23개 시나리오와 기존 Panel/Driver 22개 회귀를
+별도로 통과했다. 이 결과는 실제 Firebase·V3·Guidance·음성 검증을 의미하지 않는다.

@@ -71,7 +71,9 @@ class BackendApiClient {
     this.useMockData = true,
     this.timeout = const Duration(seconds: 5),
     AuthenticatedApiClient? authClient,
-  }) : _authClient = authClient ??
+    http.Client? publicClient,
+  })  : _publicClient = publicClient ?? http.Client(),
+        _authClient = authClient ??
             AuthenticatedApiClient(
               onUnauthorized: FirebaseAuthSession.instance.signOut,
             );
@@ -80,6 +82,7 @@ class BackendApiClient {
   final bool useMockData;
   final Duration timeout;
   final AuthenticatedApiClient _authClient;
+  final http.Client _publicClient;
 
   Future<BackendHealthStatus> fetchHealthStatus() async {
     if (useMockData) {
@@ -92,7 +95,8 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http.get(_buildUri('/health')).timeout(timeout);
+      final response =
+          await _publicClient.get(_buildUri('/health')).timeout(timeout);
       final isAvailable =
           response.statusCode >= 200 && response.statusCode < 300;
 
@@ -150,7 +154,7 @@ class BackendApiClient {
     }
 
     try {
-      final response = await http
+      final response = await _publicClient
           .get(_buildUri('/bus-info/stops/$stopId/arrivals'))
           .timeout(timeout);
 

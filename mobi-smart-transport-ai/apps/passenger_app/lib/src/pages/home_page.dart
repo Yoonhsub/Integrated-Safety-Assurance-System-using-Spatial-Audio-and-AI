@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/api_base_url.dart';
@@ -15,7 +16,28 @@ class HomePage extends StatefulWidget {
     required this.onEditAgentName,
     required this.onReturnToModeSelection,
     required this.dataMode,
-  });
+  })  : _testHarness = false,
+        _testApi = null,
+        _testAuth = null;
+
+  /// Only standalone loopback test entrypoints may select this constructor.
+  /// Normal app routing always uses HomePage above; no auth bypass is installed.
+  @visibleForTesting
+  const HomePage.testHarness({
+    super.key,
+    required this.agentName,
+    required this.onEditAgentName,
+    required this.onReturnToModeSelection,
+    required this.dataMode,
+    required BackendApiClient api,
+    required AuthSession auth,
+  })  : _testHarness = true,
+        _testApi = api,
+        _testAuth = auth;
+
+  final bool _testHarness;
+  final BackendApiClient? _testApi;
+  final AuthSession? _testAuth;
 
   final String agentName;
   final VoidCallback onEditAgentName;
@@ -40,40 +62,59 @@ class _HomePageState extends State<HomePage> {
   String? _selectedBusNo;
   String? _v3VoiceSessionId;
 
-  final VoiceGuideService _voiceGuideService = VoiceGuideService();
-  final AudioHapticCueService _cueService = AudioHapticCueService();
-
-  final BackendApiClient _backendApiClient = BackendApiClient(
-    baseUrl: _apiBaseUrl,
-    useMockData: false,
-  );
-
-  final V3AgentApiClient _v3AgentApiClient = V3AgentApiClient(
-    baseUrl: _apiBaseUrl,
-  );
+  VoiceGuideService? _voiceGuideService;
+  AudioHapticCueService? _cueService;
+  late final BackendApiClient _backendApiClient;
+  late final V3AgentApiClient? _v3AgentApiClient;
+  late final AuthSession _auth;
 
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
 
   @override
   void dispose() {
-    _voiceGuideService.cancelListening();
-    _cueService.dispose();
+    _voiceGuideService?.cancelListening();
+    _cueService?.dispose();
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
+    if (widget._testHarness) {
+      final api = Uri.parse(widget._testApi!.baseUrl);
+      const loopback = {'127.0.0.1', 'localhost'};
+      if (widget._testAuth is FirebaseAuthSession ||
+          api.scheme != 'http' ||
+          !loopback.contains(api.host) ||
+          api.userInfo.isNotEmpty ||
+          api.hasQuery ||
+          api.hasFragment ||
+          (kReleaseMode &&
+              (!const bool.fromEnvironment('MOBI_HOME_TEST_HARNESS') ||
+                  !kIsWeb ||
+                  !loopback.contains(Uri.base.host)))) {
+        throw StateError(
+            'HomePage test dependencies require an explicit loopback test build');
+      }
+    }
+    _auth = widget._testAuth ?? FirebaseAuthSession.instance;
+    _backendApiClient = widget._testApi ??
+        BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
+    _v3AgentApiClient =
+        widget._testHarness ? null : V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _voiceGuideService = widget._testHarness ? null : VoiceGuideService();
+    _cueService = widget._testHarness ? null : AudioHapticCueService();
+    if (widget._testHarness) _voiceStatusMessage = '오프라인 업무 검증 · 음성 비활성';
     _loadBackendHealthStatus();
     _loadPassengerHomeSnapshot();
     _loadBusArrivalSummary();
-    _createVoiceSession();
+    if (_v3AgentApiClient != null) _createVoiceSession();
   }
 
   Future<void> _createVoiceSession() async {
     try {
-      final session = await _v3AgentApiClient.createSession(
+      final session = await _v3AgentApiClient!.createSession(
         wakeWord: widget.agentName,
       );
       if (mounted) setState(() => _v3VoiceSessionId = session.sessionId);
@@ -123,7 +164,7 @@ class _HomePageState extends State<HomePage> {
   RideRequestDraft? _buildRideRequestDraft() {
     final routeId = _selectedRouteId;
     final busNo = _selectedBusNo;
-    final uid = FirebaseAuthSession.instance.currentAccount?.uid;
+    final uid = _auth.currentAccount?.uid;
 
     if (uid == null ||
         uid.isEmpty ||
@@ -152,8 +193,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleVoiceInput() async {
     if (_isListening) {
-      final recognizedWords = _voiceGuideService.lastRecognizedWords.trim();
-      final message = await _voiceGuideService.stopListening();
+      final recognizedWords = _voiceGuideService!.lastRecognizedWords.trim();
+      final message = await _voiceGuideService!.stopListening();
 
       if (!mounted) return;
 
@@ -173,8 +214,8 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    await _cueService.playDing();
-    final message = await _voiceGuideService.startListening(
+    await _cueService!.playDing();
+    final message = await _voiceGuideService!.startListening(
       onResult: (recognizedWords) {
         if (!mounted) return;
 
@@ -219,7 +260,7 @@ class _HomePageState extends State<HomePage> {
       final utterance = recognizedWords.contains(widget.agentName)
           ? recognizedWords
           : '${widget.agentName}, $recognizedWords';
-      final response = await _v3AgentApiClient.converse(
+      final response = await _v3AgentApiClient!.converse(
         sessionId: sessionId,
         wakeWord: widget.agentName,
         utterance: utterance,
@@ -245,7 +286,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _voiceStatusMessage = message;
       });
-      await _cueService.playDing();
+      await _cueService!.playDing();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -276,12 +317,12 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _speakWithGeminiOrDing(String message) async {
     try {
-      final audioBytes = await _v3AgentApiClient.synthesizeSpeech(
+      final audioBytes = await _v3AgentApiClient!.synthesizeSpeech(
         text: message,
       );
-      await _cueService.playGeneratedSpeech(audioBytes);
+      await _cueService!.playGeneratedSpeech(audioBytes);
     } on V3ApiException {
-      await _cueService.playDing();
+      await _cueService!.playDing();
     }
   }
 
@@ -309,7 +350,7 @@ class _HomePageState extends State<HomePage> {
           ),
           IconButton(
             tooltip: '로그아웃',
-            onPressed: FirebaseAuthSession.instance.signOut,
+            onPressed: _auth.signOut,
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -395,12 +436,14 @@ class _HomePageState extends State<HomePage> {
               Semantics(
                 button: true,
                 label: 'V3 버스 탑승 보조 화면 열기',
+                enabled: !widget._testHarness,
                 hint: '두 번 탭하면 V3 음성 기반 버스 탑승 보조 화면으로 이동합니다.',
                 child: SizedBox(
                   height: 64,
                   child: FilledButton.icon(
-                    onPressed: () =>
-                        Navigator.of(context).pushNamed('/v3-guidance'),
+                    onPressed: widget._testHarness
+                        ? null
+                        : () => Navigator.of(context).pushNamed('/v3-guidance'),
                     icon: const Icon(Icons.assistant_navigation),
                     label: Text(
                       '${widget.agentName} 버스 탑승 보조 열기',
@@ -416,17 +459,19 @@ class _HomePageState extends State<HomePage> {
               _VoiceActionButton(
                 label: voiceButtonLabel,
                 isListening: _isListening,
-                onPressed: _toggleVoiceInput,
+                onPressed: widget._testHarness ? null : _toggleVoiceInput,
               ),
               const SizedBox(height: 12),
               Semantics(
                 button: true,
                 label: '현재 상태 음성 안내',
+                enabled: !widget._testHarness,
                 hint: '두 번 탭하면 백엔드 연결 상태, 버스 도착 정보, 탑승 요청 상태를 음성으로 안내합니다.',
                 child: SizedBox(
                   height: 64,
                   child: OutlinedButton.icon(
-                    onPressed: _speakCurrentStatusGuide,
+                    onPressed:
+                        widget._testHarness ? null : _speakCurrentStatusGuide,
                     icon: const Icon(Icons.record_voice_over_outlined),
                     label: const Text(
                       '현재 상태 음성 안내',
@@ -500,7 +545,9 @@ class _HomePageState extends State<HomePage> {
                 ),
               const SizedBox(height: 12),
               RideRequestPanel(
-                  api: _backendApiClient, draft: _buildRideRequestDraft()),
+                  api: _backendApiClient,
+                  session: _auth,
+                  draft: _buildRideRequestDraft()),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],
@@ -548,13 +595,14 @@ class _VoiceActionButton extends StatelessWidget {
 
   final String label;
   final bool isListening;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
       label: label,
+      enabled: onPressed != null,
       hint: isListening ? '두 번 탭하면 음성 입력을 종료합니다.' : '두 번 탭하면 음성 입력을 시작합니다.',
       child: SizedBox(
         height: 120,
