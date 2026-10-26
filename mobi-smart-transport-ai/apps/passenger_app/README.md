@@ -213,9 +213,14 @@ Mock 인증 구현은 제품 코드에 추가하지 않았다.
 
 전용 target은 MOBI_CLOUD_RIDE_VERIFICATION=true, Web loopback origin,
 검토된 고정 Data run, 실제 프로젝트별 Web 등록을 모두 요구한다.
-현재 CloudRidePlan의 클라우드 등록 목록은 **비어 있다**. 실행하면 Firebase 초기화
-전에 차단된다. 환경변수만으로 임의 run이나 이전 사용 run을 활성화할 수 없다.
-실제 Data run·요청 ID·경로 등록 및 클라우드 실행은 후속 검토·승인 대상이다.
+CloudRidePlan과 Backend에 신규 Data run `rtdb-20261026-b742c9e1` 하나를
+고정 등록했다. Auth run은 `auth-20261023-919e07bd`, caseId는 `ride-e2e-01`이다.
+정확한 공개 계약은 `shared/contracts/fixtures/cloud_ride_ui_target.json`에서
+확인한다. 등록은 실제 실행 승인이 아니다. 일반 진입점은 이 계획을 읽지 않으며,
+전용 define·Web loopback origin·검토된 Firebase 앱 설정이 모두 필요하다.
+환경변수로 임의 run이나 이전 사용 run을 활성화할 수 없다. 실제 로그인·IAM·
+RTDB 접근·개별 정리는 별도 승인 대상이다. 실행 전 네 경로 전체의 현재 충돌
+검사에 성공해야 하며, 클라우드에 기존 값이 없다는 사실은 오프라인에서 확인할 수 없다.
 
 HomePage.cloudVerification은 V3/STT/오디오를 생성하지 않는다. 업무 호출은
 기존 BackendApiClient(useMockData=false)와 실제 ID Token을 사용한다.
@@ -259,8 +264,11 @@ Backend의 RETIRED_DATA_RUNS는 사용 완료 Data run을 중앙에서 차단한
 확인된 rtdb-20261025-6e9a7c42는 일반/ride-only 모두 거부하며,
 긍정 등록 목록에 남아 있거나 재등록돼도 실행할 수 없다. Auth run은 퇴역시키지
 않는다. 신규 일반 run은 REVIEWED_GENERAL_RUNS, 기존 Auth 재사용 run은
-REVIEWED_REUSE_RUNS의 정확한 고정 등록이 필요하다. 현재 활성 클라우드 run은
-등록하지 않았다. 설정 변경, 계획 생성 및 서버 SDK 초기화 전 같은 검사를 한다.
+REVIEWED_REUSE_RUNS의 정확한 고정 등록이 필요하다. 신규 UI run만 비퇴역
+등록이며, Auth 재사용·ride-only·case·계정·경로의 실행 계약을 의미한다.
+기존 데이터 유무나 실행 승인·생성 영수증을 증명하지 않는다. 설정 변경, 계획
+생성 및 서버 SDK 초기화 전 같은 검사를 한다. 실행 완료 후에는 별도 검토로
+중앙 퇴역 목록에 명시적으로 추가해야 한다.
 
 공격 회귀: test/cloud_auth_generation_test.dart 및
 backend/api/tests/test_cloud_run_retirement.py. 플랫폼 Fake와 차단된 네트워크를

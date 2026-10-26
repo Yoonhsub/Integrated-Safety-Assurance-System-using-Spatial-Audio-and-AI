@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import os
 import time
+import sys
 from types import SimpleNamespace
 from urllib.parse import parse_qs
 
@@ -100,10 +101,12 @@ class StrictStore:
         return self.memory.transaction(physical, delete)
 
 
-@pytest.fixture
-def setup(monkeypatch, tmp_path):
-    monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS',
-        {('mobi-auth-cloud-test', DATA): (AUTH, CASE)})
+@pytest.fixture(params=['rtdb-offline-reuse-fixt', 'rtdb-20261026-b742c9e1'])
+def setup(monkeypatch, tmp_path, request):
+    monkeypatch.setattr(sys.modules[__name__], 'DATA', request.param)
+    if DATA == 'rtdb-offline-reuse-fixt':
+        monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS',
+            {('mobi-auth-cloud-test', DATA): (AUTH, CASE)})
     for k in list(os.environ):
         if k.startswith(('MOBI_CLOUD_TEST', 'FIREBASE_', 'GOOGLE_', 'MOBI_LOCAL_DEMO')) or k in {
                 'K_SERVICE', 'GAE_ENV', 'OPENAI_API_KEY', 'GEMINI_API_KEY'}:
@@ -177,6 +180,28 @@ def test_existing_account_changes_fail_closed_before_data_write(setup, kind):
 def test_strict_paths_rejected_before_storage(setup,path):
     _,_,db=setup
     with pytest.raises(ValueError):db.get(path)
+    assert not db.calls
+
+
+@pytest.mark.parametrize('kind', ['case', 'request'])
+def test_registered_action_tampering_has_no_storage_calls(setup, kind):
+    from fastapi import HTTPException
+    from app.schemas.ride_request import RideRequestCreate
+    r, _, db = setup
+    service = RideRequestService(db, FcmService(db))
+    token = security.current_principal.set(security.Principal(r.accounts[0]['uid'], 'passenger'))
+    try:
+        if kind == 'case':
+            payload = RideRequestCreate(userId=r.accounts[0]['uid'],
+                stopId=f'ct-{r.scope.run_id}-stop-502', routeId='MOCK-502', busNo='502')
+            with pytest.raises(HTTPException) as error:
+                service.create(payload, idempotency_key=f'cloud-test:{r.scope.run_id}:altered-case')
+            assert error.value.status_code == 403
+        else:
+            with pytest.raises(cloud_test.CloudTestConfigurationError):
+                service.get('ride-i-foreign-request')
+    finally:
+        security.current_principal.reset(token)
     assert not db.calls
 
 

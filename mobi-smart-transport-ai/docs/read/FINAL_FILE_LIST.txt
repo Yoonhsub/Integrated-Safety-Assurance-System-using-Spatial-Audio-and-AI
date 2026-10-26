@@ -615,3 +615,4 @@ shared/contracts/fixtures/cloud_ride_ui_offline.json
 scripts/build_cloud_ride_web.ps1
 apps/passenger_app/test/cloud_auth_generation_test.dart
 backend/api/tests/test_cloud_run_retirement.py
+shared/contracts/fixtures/cloud_ride_ui_target.json

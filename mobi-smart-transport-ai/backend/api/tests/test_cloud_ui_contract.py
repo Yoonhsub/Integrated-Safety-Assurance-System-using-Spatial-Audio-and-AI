@@ -11,8 +11,9 @@ from scripts import cloud_test as cli
 FIXTURE = Path(__file__).resolve().parents[3] / 'shared/contracts/fixtures/cloud_ride_ui_offline.json'
 
 
-def config():
-    data = json.loads(FIXTURE.read_text())
+def config(registered=False):
+    source = FIXTURE.with_name('cloud_ride_ui_target.json') if registered else FIXTURE
+    data = json.loads(source.read_text())
     registration = dict(cloud_test.CONFIRMED_TEST_PROJECTS[data['projectId']])
     return data, {**registration, 'authRunId': data['authRunId'],
                   'dataRunId': data['dataRunId'], 'runId': data['dataRunId'],
@@ -28,11 +29,13 @@ def test_synthetic_run_is_not_registered_for_cloud():
     assert data['dataRunId'] != 'rtdb-20261025-6e9a7c42'
 
 
-def test_ui_fixture_matches_exact_existing_server_contract(monkeypatch):
-    data, value = config()
-    reviewed = dict(cloud_test.REVIEWED_REUSE_RUNS)
-    reviewed[(data['projectId'], data['dataRunId'])] = (data['authRunId'], data['caseId'])
-    monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS', MappingProxyType(reviewed))
+@pytest.mark.parametrize('registered', [False, True])
+def test_ui_fixture_matches_exact_existing_server_contract(monkeypatch, registered):
+    data, value = config(registered)
+    if not registered:
+        reviewed = dict(cloud_test.REVIEWED_REUSE_RUNS)
+        reviewed[(data['projectId'], data['dataRunId'])] = (data['authRunId'], data['caseId'])
+        monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS', MappingProxyType(reviewed))
     plan = cli.execution_plan(value, data['caseId'])
     assert plan['requestId'] == data['requestId']
     assert plan['idempotencyKey'] == data['idempotencyKey']
@@ -44,11 +47,18 @@ def test_ui_fixture_matches_exact_existing_server_contract(monkeypatch):
                for path in plan['allowedStorageMutations'])
     assert not any('fcmTokens' in path or 'v3GuidanceSessions' in path
                    for path in plan['allowedStorageMutations'])
+    base = '/cloudTestRuns/' + data['dataRunId']
+    prefix = 'ct-' + data['authRunId']
+    assert plan['allowedStorageMutations'] == [base + '/manifest',
+        base + '/data/drivers/' + prefix + '-driver-502',
+        base + '/data/drivers/' + prefix + '-driver-105',
+        base + '/data/rideRequests/' + data['requestId']]
 
 
 @pytest.mark.parametrize('change', ['run', 'project', 'auth'])
-def test_unreviewed_ui_binding_cannot_validate(monkeypatch, change):
-    data, value = config()
+@pytest.mark.parametrize('registered', [False, True])
+def test_unreviewed_ui_binding_cannot_validate(monkeypatch, change, registered):
+    data, value = config(registered)
     if change == 'run':
         value['dataRunId'] = value['runId'] = 'rtdb-unreviewed-fixture'
     elif change == 'project':
@@ -59,3 +69,37 @@ def test_unreviewed_ui_binding_cannot_validate(monkeypatch, change):
         monkeypatch.setenv(key, val)
     with pytest.raises(cloud_test.CloudTestConfigurationError):
         cloud_test.validate()
+
+
+def test_exactly_one_live_registered_target_and_wrong_case_denied():
+    data, value = config(True)
+    active = {pair for pair in cloud_test.REVIEWED_REUSE_RUNS
+              if pair[1] not in cloud_test.RETIRED_DATA_RUNS}
+    assert active == {(data['projectId'], data['dataRunId'])}
+    assert cloud_test.REVIEWED_GENERAL_RUNS == frozenset()
+    with pytest.raises(cloud_test.CloudTestConfigurationError):
+        cli.execution_plan(value, 'altered-case')
+    scope = cloud_test.CloudTestScope(data['projectId'], value['databaseUrl'],
+        data['dataRunId'], False, data['authRunId'], True)
+    with pytest.raises(cloud_test.CloudTestConfigurationError):
+        scope.storage_path('/rideRequests/altered-request')
+
+
+def test_registered_target_offline_preflight_no_credentials_or_http(monkeypatch, tmp_path, capsys):
+    import google.auth
+    import requests
+    import httpx
+    def forbidden(*a, **kw):
+        pytest.fail('Offline registration check attempted credentials or HTTP')
+    monkeypatch.setattr(google.auth, 'default', forbidden)
+    monkeypatch.setattr(requests.Session, 'request', forbidden)
+    monkeypatch.setattr(httpx.Client, 'request', forbidden)
+    data, value = config(True)
+    for key, val in cli.environment_for(value).items():
+        monkeypatch.setenv(key, val)
+    source = tmp_path / 'public-target.json'
+    source.write_text(json.dumps(value), encoding='utf-8')
+    assert cli.main(['preflight', '--config', str(source), '--case-id', data['caseId']]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['networkPerformed'] is False
+    assert result['requestId'] == data['requestId']

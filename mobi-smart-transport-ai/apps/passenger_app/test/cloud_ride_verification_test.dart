@@ -22,6 +22,13 @@ import '../../driver_app/lib/src/services/backend_api_client.dart'
 import 'cloud_ride_firebase_fake.dart';
 
 void main() {
+  for (final registered in [false, true]) {
+    group(registered ? 'registered target OFFLINE' : 'synthetic OFFLINE',
+        () => verificationSuite(registered));
+  }
+}
+
+void verificationSuite(bool registered) {
   late CloudRidePlan plan;
   late FirebaseAuthSession session;
   late MockClient transport;
@@ -34,7 +41,9 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     OfflineFirebase.install();
-    plan = CloudRidePlan.offlineFixture();
+    plan = registered
+        ? CloudRidePlan.reviewedForTesting('rtdb-20261026-b742c9e1')
+        : CloudRidePlan.offlineFixture();
     session = FirebaseAuthSession.instance;
     calls = [];
     record = null;
@@ -141,18 +150,46 @@ void main() {
       publicClient: b.publicClient,
       authClient: b.authClient);
 
-  test(
-      'offline fixture matches the Backend JSON contract and cannot be a cloud registration',
+  test('exact JSON contract matches; environment entrypoint stays disabled',
       () {
-    final data = jsonDecode(
-        File('../../shared/contracts/fixtures/cloud_ride_ui_offline.json')
-            .readAsStringSync());
+    final data = jsonDecode(File(
+            '../../shared/contracts/fixtures/cloud_ride_ui_${registered ? 'target' : 'offline'}.json')
+        .readAsStringSync());
     expect(plan.dataRun, data['dataRunId']);
     expect(plan.requestId, data['requestId']);
     expect(plan.idempotencyKey, data['idempotencyKey']);
     expect(plan.stopId, data['stopId']);
+    expect(plan.caseId, data['caseId']);
+    expect(plan.backendUrl, data['backendUrl']);
+    expect(plan.offlineOnly, data['offlineOnly']);
     expect(() => CloudRidePlan.fromEnvironment(role: 'passenger'),
         throwsStateError);
+  });
+  test('retired and unregistered targets cannot be selected', () {
+    for (final run in ['rtdb-20261025-6e9a7c42', 'rtdb-unreviewed-fixture']) {
+      expect(() => CloudRidePlan.reviewedForTesting(run), throwsStateError);
+    }
+  });
+  test('foreign request ID and altered case key are refused before transport',
+      () async {
+    final b = await binding();
+    await expectLater(
+        b.authClient
+            .get(Uri.parse('${plan.backendUrl}/ride-requests/foreign-id')),
+        throwsA(isA<AuthenticatedApiException>()));
+    await expectLater(
+        b.authClient.post(Uri.parse('${plan.backendUrl}/ride-requests'),
+            headers: {
+              'Idempotency-Key': 'cloud-test:${plan.dataRun}:altered-case'
+            },
+            body: jsonEncode({
+              'userId': plan.uid('passenger-a'),
+              'stopId': plan.stopId,
+              'routeId': 'MOCK-502',
+              'busNo': '502'
+            })),
+        throwsA(isA<AuthenticatedApiException>()));
+    expect(calls, isEmpty);
   });
   test('project/app crossover is rejected before transport', () async {
     await binding();

@@ -1,0 +1,13 @@
+{
+  "offlineOnly": false,
+  "projectId": "mobi-auth-cloud-test",
+  "authRunId": "auth-20261023-919e07bd",
+  "dataRunId": "rtdb-20261026-b742c9e1",
+  "caseId": "ride-e2e-01",
+  "backendUrl": "http://127.0.0.1:8023",
+  "stopId": "ct-rtdb-20261026-b742c9e1-stop-502",
+  "routeId": "MOCK-502",
+  "busNo": "502",
+  "idempotencyKey": "cloud-test:rtdb-20261026-b742c9e1:ride-e2e-01",
+  "requestId": "ride-i-7fb9e7e421703f7440ba60c2da81f77083a03fc21ee2399d40cc7bc9ac92344a"
+}

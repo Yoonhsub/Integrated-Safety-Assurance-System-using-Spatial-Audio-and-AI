@@ -45,6 +45,9 @@ CONFIRMED_TEST_PROJECTS = MappingProxyType({
 REVIEWED_REUSE_RUNS = MappingProxyType({
     ('mobi-auth-cloud-test', 'rtdb-20261025-6e9a7c42'):
         ('auth-20261023-919e07bd', 'ride-e2e-01'),
+    # Fixed UI execution contract only; cloud access still needs separate approval.
+    ('mobi-auth-cloud-test', 'rtdb-20261026-b742c9e1'):
+        ('auth-20261023-919e07bd', 'ride-e2e-01'),
 })
 # Explicit completed Data runs, never Auth runs. Retirement overrides every
 # registration/mode, including historical entries retained above.

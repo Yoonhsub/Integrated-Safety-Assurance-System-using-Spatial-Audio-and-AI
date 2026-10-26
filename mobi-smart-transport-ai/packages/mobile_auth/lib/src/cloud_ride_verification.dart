@@ -6,7 +6,7 @@ import 'authenticated_http_client.dart';
 import 'firebase_auth_service.dart';
 import 'firebase_configuration.dart';
 
-/// No cloud data run is registered. Adding one requires source review/approval.
+/// Fixed source registrations are not approval to execute cloud requests.
 /// Normal application entrypoints never read this configuration.
 class CloudRidePlan {
   const CloudRidePlan._(this.dataRun, this.caseId, this.requestId,
@@ -16,7 +16,25 @@ class CloudRidePlan {
   static const authRun = 'auth-20261023-919e07bd';
   static const databaseUrl =
       'https://mobi-auth-cloud-test-default-rtdb.asia-southeast1.firebasedatabase.app';
-  static const _reviewedCloudRuns = <String, CloudRidePlan>{};
+  static const _reviewedCloudRuns = <String, CloudRidePlan>{
+    'rtdb-20261026-b742c9e1': CloudRidePlan._(
+        'rtdb-20261026-b742c9e1',
+        'ride-e2e-01',
+        'ride-i-7fb9e7e421703f7440ba60c2da81f77083a03fc21ee2399d40cc7bc9ac92344a',
+        'http://127.0.0.1:8023',
+        false),
+  };
+
+  /// Exercise the exact source registration with injected SDK/HTTP fakes.
+  /// This does not initialize Auth, create transport, or enable an entrypoint.
+  @visibleForTesting
+  factory CloudRidePlan.reviewedForTesting(String run) {
+    if (!kDebugMode) throw StateError('Plan inspection requires a debug test');
+    final plan = _reviewedCloudRuns[run];
+    if (plan == null) throw StateError('Unregistered cloud ride plan');
+    plan.validate();
+    return plan;
+  }
 
   factory CloudRidePlan.fromEnvironment({required String role}) {
     const enabled = bool.fromEnvironment('MOBI_CLOUD_RIDE_VERIFICATION');
