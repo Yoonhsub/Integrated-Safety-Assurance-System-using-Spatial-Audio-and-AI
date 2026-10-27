@@ -101,7 +101,8 @@ class StrictStore:
         return self.memory.transaction(physical, delete)
 
 
-@pytest.fixture(params=['rtdb-offline-reuse-fixt', 'rtdb-20261026-b742c9e1'])
+# Retired real runs are rejection fixtures only, never successful executions.
+@pytest.fixture(params=['rtdb-offline-reuse-fixt'])
 def setup(monkeypatch, tmp_path, request):
     monkeypatch.setattr(sys.modules[__name__], 'DATA', request.param)
     if DATA == 'rtdb-offline-reuse-fixt':

@@ -213,8 +213,9 @@ Mock 인증 구현은 제품 코드에 추가하지 않았다.
 
 전용 target은 MOBI_CLOUD_RIDE_VERIFICATION=true, Web loopback origin,
 검토된 고정 Data run, 실제 프로젝트별 Web 등록을 모두 요구한다.
-CloudRidePlan과 Backend에 신규 Data run `rtdb-20261026-b742c9e1` 하나를
-고정 등록했다. Auth run은 `auth-20261023-919e07bd`, caseId는 `ride-e2e-01`이다.
+CloudRidePlan과 Backend에 과거 Data run `rtdb-20261026-b742c9e1`의
+고정 계약을 보존하되, 부분 사용 후 2026-10-27 중앙 퇴역 처리했다. 현재 실행 가능한
+클라우드 Data run은 없다. Auth run은 `auth-20261023-919e07bd`, caseId는 `ride-e2e-01`이다.
 정확한 공개 계약은 `shared/contracts/fixtures/cloud_ride_ui_target.json`에서
 확인한다. 등록은 실제 실행 승인이 아니다. 일반 진입점은 이 계획을 읽지 않으며,
 전용 define·Web loopback origin·검토된 Firebase 앱 설정이 모두 필요하다.
@@ -261,11 +262,13 @@ FirebaseAuthSession은 동일 FirebaseAuth delegate의 로그인 세대를 공�
 세션 수명주기에 맞는 requestGuard를 주입해야 한다.
 
 Backend의 RETIRED_DATA_RUNS는 사용 완료 Data run을 중앙에서 차단한다.
-확인된 rtdb-20261025-6e9a7c42는 일반/ride-only 모두 거부하며,
+확인된 rtdb-20261025-6e9a7c42와 부분 사용한 rtdb-20261026-b742c9e1은
+일반/ride-only 모두 거부하며,
 긍정 등록 목록에 남아 있거나 재등록돼도 실행할 수 없다. Auth run은 퇴역시키지
 않는다. 신규 일반 run은 REVIEWED_GENERAL_RUNS, 기존 Auth 재사용 run은
-REVIEWED_REUSE_RUNS의 정확한 고정 등록이 필요하다. 신규 UI run만 비퇴역
-등록이며, Auth 재사용·ride-only·case·계정·경로의 실행 계약을 의미한다.
+REVIEWED_REUSE_RUNS의 정확한 고정 등록이 필요하다. 이 목록은 Auth 재사용·
+ride-only·case·계정·경로의 과거 실행 계약이며, 퇴역을 해제하지 않는다.
+Flutter의 과거 계약도 퇴역 검사에서 거부하므로 요청 ID 복구 전에 차단된다.
 기존 데이터 유무나 실행 승인·생성 영수증을 증명하지 않는다. 설정 변경, 계획
 생성 및 서버 SDK 초기화 전 같은 검사를 한다. 실행 완료 후에는 별도 검토로
 중앙 퇴역 목록에 명시적으로 추가해야 한다.

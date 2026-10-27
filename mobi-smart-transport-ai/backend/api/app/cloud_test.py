@@ -51,7 +51,10 @@ REVIEWED_REUSE_RUNS = MappingProxyType({
 })
 # Explicit completed Data runs, never Auth runs. Retirement overrides every
 # registration/mode, including historical entries retained above.
-RETIRED_DATA_RUNS = frozenset({'rtdb-20261025-6e9a7c42'})
+# The UI run was partially used; only driver-502 cleanup is confirmed.
+RETIRED_DATA_RUNS = frozenset({
+    'rtdb-20261025-6e9a7c42', 'rtdb-20261026-b742c9e1',
+})
 REVIEWED_GENERAL_RUNS = frozenset()  # No new real cloud execution is approved.
 MAIN_SENDER_ID = '882602390759'
 WEB_CONFIG_KEYS = {'MOBI_FIREBASE_API_KEY', 'MOBI_FIREBASE_APP_ID',

@@ -22,7 +22,20 @@ import '../../driver_app/lib/src/services/backend_api_client.dart'
 import 'cloud_ride_firebase_fake.dart';
 
 void main() {
-  for (final registered in [false, true]) {
+  for (final run in ['rtdb-20261025-6e9a7c42', 'rtdb-20261026-b742c9e1']) {
+    test('retired registration rejects $run before intent recovery', () async {
+      final uid = 'ct-${CloudRidePlan.authRun}-passenger-a';
+      final slot = 'mobi.cloud.ride.$run.active.$uid';
+      SharedPreferences.setMockInitialValues({slot: 'historical-request'});
+      // The positive registry still contains the partially used target.
+      // No plan can reach bind(), HTTP transport or CloudRideIntentStore.
+      expect(() => CloudRidePlan.reviewedForTesting(run), throwsStateError);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(slot), 'historical-request');
+    });
+  }
+  // Historical cloud target is retired. Business/epoch regression stays local.
+  for (final registered in [false]) {
     group(registered ? 'registered target OFFLINE' : 'synthetic OFFLINE',
         () => verificationSuite(registered));
   }
@@ -166,7 +179,11 @@ void verificationSuite(bool registered) {
         throwsStateError);
   });
   test('retired and unregistered targets cannot be selected', () {
-    for (final run in ['rtdb-20261025-6e9a7c42', 'rtdb-unreviewed-fixture']) {
+    for (final run in [
+      'rtdb-20261025-6e9a7c42',
+      'rtdb-20261026-b742c9e1',
+      'rtdb-unreviewed-fixture'
+    ]) {
       expect(() => CloudRidePlan.reviewedForTesting(run), throwsStateError);
     }
   });

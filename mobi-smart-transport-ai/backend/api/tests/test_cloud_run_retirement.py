@@ -39,16 +39,19 @@ def environment(monkeypatch, c):
         monkeypatch.setenv(key, value)
 
 
+@pytest.mark.parametrize('retired', ['rtdb-20261025-6e9a7c42', 'rtdb-20261026-b742c9e1'])
 @pytest.mark.parametrize('ride', [False, True], ids=['B1-general', 'B2-ride-only'])
-def test_retired_run_is_blocked_even_when_reregistered(monkeypatch, tmp_path, ride):
+def test_retired_run_is_blocked_even_when_reregistered(monkeypatch, tmp_path, ride, retired):
     # B3: deliberately leave/add the retired run to both positive registries.
-    monkeypatch.setattr(cloud_test, 'REVIEWED_GENERAL_RUNS', frozenset({(PROJECT, RETIRED)}))
-    monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS', {(PROJECT, RETIRED): (AUTH, CASE)})
-    c = config(ride=ride)
+    monkeypatch.setattr(cloud_test, 'REVIEWED_GENERAL_RUNS', frozenset({(PROJECT, retired)}))
+    monkeypatch.setattr(cloud_test, 'REVIEWED_REUSE_RUNS', {(PROJECT, retired): (AUTH, CASE)})
+    c = config(run=retired, ride=ride)
     environment(monkeypatch, c)
     source = tmp_path / 'public-config.json'
     source.write_text(json.dumps(c), encoding='utf-8')
-    for operation in (cloud_test.validate, cloud_test.create_app,
+    for operation in (lambda: cloud_test.ensure_execution_run(PROJECT, retired,
+                          AUTH if ride else '', retired if ride else '', 'ride-only' if ride else ''),
+                      cloud_test.validate, cloud_test.create_app,
                       lambda: cli.configure(c), lambda: cli.plan(c, CASE),
                       lambda: cli.load_config(source)):
         with pytest.raises(cloud_test.CloudTestConfigurationError, match='Retired Data run'):

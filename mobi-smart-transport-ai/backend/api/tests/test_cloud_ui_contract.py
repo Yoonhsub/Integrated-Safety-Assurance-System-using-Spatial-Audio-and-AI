@@ -32,6 +32,10 @@ def test_synthetic_run_is_not_registered_for_cloud():
 @pytest.mark.parametrize('registered', [False, True])
 def test_ui_fixture_matches_exact_existing_server_contract(monkeypatch, registered):
     data, value = config(registered)
+    if registered:
+        with pytest.raises(cloud_test.CloudTestConfigurationError, match='Retired Data run'):
+            cli.execution_plan(value, data['caseId'])
+        return
     if not registered:
         reviewed = dict(cloud_test.REVIEWED_REUSE_RUNS)
         reviewed[(data['projectId'], data['dataRunId'])] = (data['authRunId'], data['caseId'])
@@ -71,11 +75,11 @@ def test_unreviewed_ui_binding_cannot_validate(monkeypatch, change, registered):
         cloud_test.validate()
 
 
-def test_exactly_one_live_registered_target_and_wrong_case_denied():
+def test_no_live_registered_target_and_historical_contract_paths_remain_fixed():
     data, value = config(True)
     active = {pair for pair in cloud_test.REVIEWED_REUSE_RUNS
               if pair[1] not in cloud_test.RETIRED_DATA_RUNS}
-    assert active == {(data['projectId'], data['dataRunId'])}
+    assert active == set()
     assert cloud_test.REVIEWED_GENERAL_RUNS == frozenset()
     with pytest.raises(cloud_test.CloudTestConfigurationError):
         cli.execution_plan(value, 'altered-case')
@@ -85,7 +89,7 @@ def test_exactly_one_live_registered_target_and_wrong_case_denied():
         scope.storage_path('/rideRequests/altered-request')
 
 
-def test_registered_target_offline_preflight_no_credentials_or_http(monkeypatch, tmp_path, capsys):
+def test_retired_target_offline_preflight_blocked_before_credentials_or_http(monkeypatch, tmp_path, capsys):
     import google.auth
     import requests
     import httpx
@@ -99,7 +103,5 @@ def test_registered_target_offline_preflight_no_credentials_or_http(monkeypatch,
         monkeypatch.setenv(key, val)
     source = tmp_path / 'public-target.json'
     source.write_text(json.dumps(value), encoding='utf-8')
-    assert cli.main(['preflight', '--config', str(source), '--case-id', data['caseId']]) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result['networkPerformed'] is False
-    assert result['requestId'] == data['requestId']
+    assert cli.main(['preflight', '--config', str(source), '--case-id', data['caseId']]) == 1
+    assert 'Retired Data run' in capsys.readouterr().err

@@ -16,6 +16,11 @@ class CloudRidePlan {
   static const authRun = 'auth-20261023-919e07bd';
   static const databaseUrl =
       'https://mobi-auth-cloud-test-default-rtdb.asia-southeast1.firebasedatabase.app';
+  // Retirement overrides historical positive registrations and cached intents.
+  static const _retiredDataRuns = <String>{
+    'rtdb-20261025-6e9a7c42',
+    'rtdb-20261026-b742c9e1',
+  };
   static const _reviewedCloudRuns = <String, CloudRidePlan>{
     'rtdb-20261026-b742c9e1': CloudRidePlan._(
         'rtdb-20261026-b742c9e1',
@@ -78,7 +83,7 @@ class CloudRidePlan {
     if ((offlineOnly && !kDebugMode) ||
         (!offlineOnly && !identical(_reviewedCloudRuns[dataRun], this)) ||
         !RegExp(r'^[a-z0-9][a-z0-9-]{7,23}$').hasMatch(dataRun) ||
-        dataRun == 'rtdb-20261025-6e9a7c42' ||
+        _retiredDataRuns.contains(dataRun) ||
         url.scheme != 'http' ||
         url.host != '127.0.0.1' ||
         !url.hasPort ||
