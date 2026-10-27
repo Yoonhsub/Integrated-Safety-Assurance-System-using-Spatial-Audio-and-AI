@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:mobi_passenger_app/src/pages/v3_guidance_page.dart';
 import 'package:mobi_passenger_app/src/mock_scenario/mock_scenario_controller.dart';
 import 'package:mobi_passenger_app/src/services/audio_shutdown.dart';
@@ -91,6 +93,7 @@ Map<String, dynamic> observation(
       'receivedAt': 'test',
     };
 void main() {
+  syntheticSafetyGuidanceTests();
   setUp(fixtureFrames.clear);
   testWidgets('V3 scenario boundary updates without parent rebuild and repeats',
       (t) async {
@@ -780,4 +783,341 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     gate.dispose();
   });
+}
+
+// Test-only projection. No runtime import, endpoint, authentication bypass or
+// JSON Schema extension. Legacy SafetyEvent alone has no session ownership.
+class _ScopedSyntheticReplay {
+  _ScopedSyntheticReplay(this.evidence, this.speech, this.clock)
+      : binding = Map<String, dynamic>.from(evidence['binding'] as Map) {
+    uid = binding['ownerUid'] as String;
+    session = binding['sessionId'] as String;
+    epoch = binding['epoch'] as String;
+    speech.setScope(uid, session, epoch);
+    speech.setEnabled(true);
+  }
+  final Map<String, dynamic> evidence, binding;
+  final VisionObservationSpeech speech;
+  final int Function() clock;
+  late String uid, session, epoch;
+  bool closed = false;
+  bool submit(Map<String, dynamic>? record) {
+    final meta = evidence['testMetadata'] as Map;
+    final approved = evidence['safetyEvent'] as Map;
+    final validScope = !closed &&
+        uid == binding['ownerUid'] &&
+        session == binding['sessionId'] &&
+        epoch == binding['epoch'];
+    final attributes = record?['metadata'] as Map?;
+    if (!validScope ||
+        meta['classification'] != 'SYNTHETIC_EVENT_GUIDANCE' ||
+        meta['noPhysicalAudio'] != true ||
+        record == null ||
+        record['eventId'] != approved['eventId'] ||
+        record['source'] != 'ai_vision_mock' ||
+        attributes?['modelProvider'] != 'mock' ||
+        attributes?['reason'] != 'bus_door_visible' ||
+        attributes?['primaryClass'] != 'bus_door' ||
+        attributes?['riskLevel'] != 'info' ||
+        record['confidence'] != 0.71) {
+      speech.clear();
+      return false;
+    }
+    final now = DateTime.parse(binding['validatedAt'] as String)
+        .add(Duration(microseconds: clock()));
+    final stamp = DateTime.tryParse(record['timestamp'] as String? ?? '');
+    final maxAge = (binding['maxAgeSeconds'] as num).toDouble();
+    final ttl = (binding['observationTtlSeconds'] as num).toDouble();
+    final future = (binding['futureSkewSeconds'] as num).toDouble();
+    final age = stamp == null
+        ? double.infinity
+        : now.difference(stamp).inMicroseconds / 1000000;
+    if (age >= maxAge || age < -future) {
+      speech.clear();
+      return false;
+    }
+    // Replay the synthetic fixture through the existing observation service.
+    // Camera/epoch are explicit TEST binding metadata, never inferred geometry.
+    speech.update([
+      {
+        'sessionId': session,
+        'cameraId': binding['cameraId'],
+        'cameraEpoch': epoch,
+        'visionEventId': attributes!['visionEventId'],
+        'frameIndex': 0,
+        'state': 'available',
+        'inferenceStatus': 'ok',
+        'sourceType': 'replay',
+        'validForSeconds': (maxAge - age).clamp(0.0, ttl),
+        'observedClasses': ['bus_door'],
+        'freshnessVerified': false,
+        'guidanceEligible': false,
+      }
+    ], Duration.zero);
+    return true;
+  }
+
+  void close() {
+    closed = true;
+    speech.setScope(null, '', null);
+  }
+}
+
+class _SyntheticSink extends FakeTts {
+  _SyntheticSink(this.clock);
+  final int Function() clock;
+  String provenance = 'SYNTHETIC_EVENT_GUIDANCE';
+  final events = <Map<String, dynamic>>[];
+  @override
+  Future<void> speak(String text) {
+    events.add({
+      'action': 'play',
+      'text': text,
+      'provenance': provenance,
+      'displayLabel': '검증용 합성·로컬 응답 / 실제 음향 아님',
+      'micros': clock()
+    });
+    return super.speak(text);
+  }
+
+  @override
+  Future<void> stop() async {
+    events.add({'action': 'stop', 'micros': clock()});
+    await super.stop();
+  }
+
+  @override
+  void finish() {
+    events.add({'action': 'complete', 'micros': clock()});
+    super.finish();
+  }
+}
+
+class _NoHardwareFeedback implements CueFeedback {
+  @override
+  Future<void> vibrate({required bool heavy}) async {}
+  @override
+  Future<void> beep() async {}
+}
+
+void syntheticSafetyGuidanceTests() {
+  // Reproduce: export with backend test_synthetic_session_guidance_export,
+  // then pass its external path via MOBI_SYNTHETIC_GUIDANCE_EVIDENCE.
+  // Without a real export these integration checks are explicitly SKIPPED.
+  final source = Platform.environment['MOBI_SYNTHETIC_GUIDANCE_EVIDENCE'];
+  group('SYNTHETIC_EVENT_GUIDANCE offline vertical', () {
+    late Map<String, dynamic> data, event;
+    late _SyntheticSink sink;
+    late SpeechPriorityCoordinator gate;
+    late VisionObservationSpeech speech;
+    late AudioHapticCueService audio;
+    late _ScopedSyntheticReplay bridge;
+    var clock = 0, scenarioNumber = 0;
+    var scenario = 0;
+    void initialize() {
+      scenario = ++scenarioNumber;
+      data =
+          jsonDecode(File(source!).readAsStringSync()) as Map<String, dynamic>;
+      event = Map<String, dynamic>.from(data['safetyEvent'] as Map);
+      clock = 0;
+      sink = _SyntheticSink(() => clock);
+      gate = SpeechPriorityCoordinator(sink);
+      speech = VisionObservationSpeech(gate, nowMicros: () => clock);
+      bridge = _ScopedSyntheticReplay(data, speech, () => clock);
+      audio = AudioHapticCueService(
+          speechPriority: gate,
+          audioPlayer: FakePlayer(),
+          liveAudioPlayer: FakeLive(),
+          feedback: _NoHardwareFeedback());
+    }
+
+    Future<void> cleanup(WidgetTester t) async {
+      final trace = Platform.environment['MOBI_SYNTHETIC_AUDIO_TRACE'];
+      if (trace != null) {
+        final serialized = jsonEncode({
+          'scenario': scenario,
+          'sessionId': bridge.session,
+          'visionEventId': (event['metadata'] as Map)['visionEventId'],
+          'backendEventId': event['eventId'],
+          'events': sink.events,
+          'physicalAudio': false,
+          'spatialRequests': 0,
+        });
+        File(trace).writeAsStringSync('$serialized\n', mode: FileMode.append);
+      }
+      speech.dispose();
+      final shutdown = audio.dispose();
+      await t.pump();
+      await shutdown;
+      gate.dispose();
+    }
+
+    testWidgets('REAL_MODEL_NO_EVENT never becomes guidance or risk audio',
+        (t) async {
+      initialize();
+      try {
+        final real = data['realNoEvent'] as Map;
+        expect(real['classification'], 'REAL_MODEL_NO_EVENT');
+        expect((real['response'] as Map)['stored'], false);
+        expect(bridge.submit(null), false);
+        await t.pump();
+        expect(sink.spoken, isEmpty);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('synthetic stored event generates existing observation message',
+        (t) async {
+      initialize();
+      try {
+        expect(bridge.submit(event), true);
+        await t.pump();
+        expect(sink.spoken, ['녹화 영상에서 버스 문이 감지되었습니다.']);
+        expect(sink.events.first['provenance'], 'SYNTHETIC_EVENT_GUIDANCE');
+        sink.finish();
+        await t.pump();
+        expect(speech.speaking, false);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets(
+        'same event and resends are suppressed in existing session scope',
+        (t) async {
+      initialize();
+      try {
+        bridge.submit(event);
+        await t.pump();
+        sink.finish();
+        await t.pump();
+        for (var i = 0; i < 10; i++) {
+          bridge.submit(event);
+          await t.pump();
+        }
+        expect(sink.spoken.length, 1);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('wrong owner or session never speaks the synthetic event',
+        (t) async {
+      initialize();
+      try {
+        bridge.uid = 'other-passenger';
+        expect(bridge.submit(event), false);
+        bridge.uid = bridge.binding['ownerUid'] as String;
+        bridge.session = 'other-session';
+        expect(bridge.submit(event), false);
+        await t.pump();
+        expect(sink.spoken, isEmpty);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('stale event is rejected using existing freshness policy',
+        (t) async {
+      initialize();
+      try {
+        clock = ((bridge.binding['maxAgeSeconds'] as num) * 1000000).ceil() + 1;
+        expect(bridge.submit(event), false);
+        await t.pump();
+        expect(sink.spoken, isEmpty);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('TTL expiration stops playback and cannot be renewed by resend',
+        (t) async {
+      initialize();
+      try {
+        bridge.submit(event);
+        await t.pump();
+        clock = ((bridge.binding['observationTtlSeconds'] as num) * 1000000)
+                .ceil() +
+            1;
+        speech.tick();
+        await t.pump();
+        bridge.submit(event);
+        await t.pump();
+        expect(speech.speaking, false);
+        expect(sink.stops, greaterThan(0));
+        expect(sink.spoken.length, 1);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets(
+        'existing Live Hold priority preempts info and never replays it',
+        (t) async {
+      initialize();
+      try {
+        bridge.submit(event);
+        await t.pump();
+        final hold = V3AgentResponse.fromJson(
+            Map<String, dynamic>.from(data['hold'] as Map));
+        expect(hold.ttsMode, 'SAFETY_LOCAL');
+        expect(hold.state, 'WAITING_FOR_BUS');
+        sink.provenance = 'EXISTING_LIVE_HOLD_LOCAL_RESPONSE';
+        final playing = audio.speakLocal(hold.message);
+        await t.pump();
+        expect(gate.priorityActive, true);
+        expect(speech.speaking, false);
+        expect(sink.spoken.last, hold.message);
+        bridge.submit(event);
+        sink.finish();
+        await t.pump();
+        await playing;
+        expect(gate.priorityActive, false);
+        expect(sink.spoken.length, 2);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('cancel and session close stop info without replay', (t) async {
+      initialize();
+      try {
+        bridge.submit(event);
+        await t.pump();
+        speech.stop();
+        await t.pump();
+        bridge.submit(event);
+        await t.pump();
+        expect(sink.spoken.length, 1);
+        bridge.close();
+        expect(bridge.submit(event), false);
+        await t.pump();
+        expect(speech.enabled, false);
+      } finally {
+        await cleanup(t);
+      }
+    });
+    testWidgets('Live Hold cancellation and ended session stop all test output',
+        (t) async {
+      initialize();
+      try {
+        bridge.submit(event);
+        await t.pump();
+        final hold = V3AgentResponse.fromJson(
+            Map<String, dynamic>.from(data['hold'] as Map));
+        sink.provenance = 'EXISTING_LIVE_HOLD_LOCAL_RESPONSE';
+        final playing = audio.speakLocal(hold.message);
+        await t.pump();
+        expect(gate.priorityActive, true);
+        bridge.close();
+        final stopping = audio.stopCue();
+        await t.pump();
+        await stopping;
+        await playing;
+        expect(gate.priorityActive, false);
+        expect(speech.enabled, false);
+        expect(bridge.submit(event), false);
+        expect(sink.spoken.length, 2);
+      } finally {
+        await cleanup(t);
+      }
+    });
+  },
+      skip: source == null
+          ? 'Requires explicit offline Backend export; no implicit mock substitute'
+          : false);
 }

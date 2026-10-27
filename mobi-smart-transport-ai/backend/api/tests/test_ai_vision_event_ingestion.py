@@ -283,3 +283,120 @@ def test_legacy_event_duplicate_policy_is_not_implicit_idempotency(
         assert a["eventId"] != b["eventId"]
         assert a["metadata"]["visionEventId"] == b["metadata"]["visionEventId"]
         assert len(isolated_service.recent().events) == 2
+
+
+def test_synthetic_session_guidance_export(monkeypatch, tmp_path):
+    """Test-only binding export, NOT a production Safety Event subscription.
+
+    Provenance and synthetic session binding live outside the unchanged API
+    schema. The legacy stored event alone supplies no owner/session evidence.
+    """
+    import os
+    from uuid import uuid4
+    from fastapi.testclient import TestClient
+    from app.security import Principal, get_principal, current_principal
+    from app.services import firebase_client as storage
+    from app.services.v3_guidance_store import V3GuidanceStore
+    from app.services.vision_binding_service import FreshnessPolicy
+    from app.api.routes import v3_guidance, v3_agent
+    from app.schemas.v3 import GuidanceState
+
+    firebase = FirebaseClient(FirebaseSettings(None, None, None, None, True))
+    service = SafetyEventService(firebase)
+    sessions = V3GuidanceStore()
+    monkeypatch.setattr(storage, "firebase_client", firebase)
+    monkeypatch.setattr(ai_vision_events, "_service", service)
+    monkeypatch.setattr(v3_guidance, "v3_guidance_store", sessions)
+    monkeypatch.setattr(v3_agent, "v3_guidance_store", sessions)
+    for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    owner = Principal("synthetic-fixture-passenger", "passenger")
+    caller = [owner]
+    monkeypatch.setitem(app.dependency_overrides, get_principal, lambda: caller[0])
+    with TestClient(app) as client:
+        created = client.post("/guidance/session", json={})
+        assert created.status_code == 200
+        sid = created.json()["sessionId"]
+        request = VisionInferenceRequest(str(uuid4()), datetime.now(timezone.utc).isoformat(),
+            VisionInputSource.IMAGE_FILE, _FIXTURE)
+        detection = MockVisionProvider().infer(request)
+        interpretation = SafetyInterpreter().interpret(detection)
+        caller[0] = Principal("synthetic-fixture-admin", "admin")
+        response = client.post("/ai-vision/events", json=serialize_interpretation(interpretation))
+        assert response.status_code == 201
+        record = response.json()["safetyEvent"]
+        assert record["source"] == "ai_vision_mock"
+        assert record["metadata"]["primaryClass"] == "bus_door"
+        assert record["metadata"]["reason"] == "bus_door_visible"
+        assert record["metadata"]["riskLevel"] == "info"
+        assert record["confidence"] == 0.71
+        assert record["userId"] is None  # Do not pretend v1 proves ownership.
+        caller[0] = owner
+        marker = current_principal.set(owner)
+        try:
+            with sessions.observation_scope(sid) as owned:
+                epoch = owned.vision_generation
+                assert owned.owner_uid == owner.uid
+                # Session route/stop context is fixture data, not real transit.
+                owned.selected_route_id = "synthetic-fixture-route"
+                owned.selected_stop_id = "synthetic-fixture-stop"
+                owned.state = GuidanceState.BOARDING_CONFIRMATION
+        finally:
+            current_principal.reset(marker)
+        # Existing live boarding refusal must survive synthetic door detection.
+        hold = client.post("/agent/converse", json={"sessionId": sid,
+            "utterance": "자비스, 지금 앞에 온 버스 타도 돼?", "mode": "live"})
+        assert hold.status_code == 200
+        assert hold.json()["intent"] == "ASK_CAN_BOARD_CURRENT_BUS"
+        assert hold.json()["ttsMode"] == "SAFETY_LOCAL"
+        assert hold.json()["state"] == "WAITING_FOR_BUS"
+        assert hold.json()["usedGemini"] is False
+        assert "확인하지 못했어요" in hold.json()["message"]
+        caller[0] = Principal("synthetic-other-passenger", "passenger")
+        assert client.get("/guidance/state", params={"sessionId": sid}).status_code == 403
+        caller[0] = owner
+        assert client.get("/guidance/state", params={"sessionId": sid}).json()["state"] == "WAITING_FOR_BUS"
+
+        # Replay the separately captured REAL no_event result, never relabel it.
+        real_path = os.getenv("MOBI_REAL_NO_EVENT_EVIDENCE")
+        real = None
+        if real_path:
+            evidence = json.loads(Path(real_path).read_text(encoding="utf-8"))
+            assert evidence["status"] == "REAL_INFERENCE_PASS"
+            real_detection = DetectionResult.from_dict(evidence["detectionResult"])
+            assert real_detection.model_info.provider == "ultralytics"
+            real_interpretation = SafetyInterpreter().interpret(real_detection)
+            assert real_interpretation.event is None
+            caller[0] = Principal("synthetic-fixture-admin", "admin")
+            no_event = client.post("/ai-vision/events", json=serialize_interpretation(real_interpretation))
+            assert no_event.status_code == 200 and no_event.json()["stored"] is False
+            real = dict(classification="REAL_MODEL_NO_EVENT", detectionResult=evidence["detectionResult"],
+                        response=no_event.json(), evidencePath=real_path)
+        from fastapi import HTTPException
+        marker = current_principal.set(owner)
+        try:
+            sessions.close_vision(sid)
+            with pytest.raises(HTTPException) as closed:
+                with sessions.observation_scope(sid):
+                    pytest.fail("Closed session must not accept an observation")
+            assert closed.value.status_code == 403
+        finally:
+            current_principal.reset(marker)
+        policy = FreshnessPolicy.from_environment()
+        exported = dict(
+            testMetadata=dict(classification="SYNTHETIC_EVENT_GUIDANCE", label="검증용 합성 Fixture 재생",
+                noPhysicalAudio=True, notActualVehicleOrBoardingEvidence=True,
+                ownerMismatchHttp=403, closedSessionHttp=403),
+            binding=dict(ownerUid=owner.uid, sessionId=sid, epoch=epoch,
+                validatedAt=datetime.now(timezone.utc).isoformat(),
+                observationTtlSeconds=policy.observation_ttl, maxAgeSeconds=policy.max_age,
+                futureSkewSeconds=policy.future_skew, cameraId="synthetic-fixture-camera"),
+            safetyEvent=record, hold=hold.json(), realNoEvent=real)
+        assert len(service.recent().events) == 1  # Synthetic only.
+        destination = os.getenv("MOBI_SYNTHETIC_GUIDANCE_OUTPUT")
+        if destination:
+            target = Path(destination).resolve()
+            assert not target.is_relative_to(_ROOT)
+            assert not target.exists(), "Never overwrite prior evidence"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(exported, ensure_ascii=False, indent=2), encoding="utf-8")
