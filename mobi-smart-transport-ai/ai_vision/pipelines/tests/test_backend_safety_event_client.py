@@ -149,3 +149,28 @@ def test_client_reads_existing_recent_safety_event_endpoint() -> None:
         "http://localhost:8000", transport=httpx.MockTransport(handler)
     ) as client:
         assert client.recent_events(limit=5) == [{"eventId": "safety-1"}]
+
+
+@pytest.mark.parametrize("binding", [dict(session_id="session"),
+    dict(session_generation="generation"), dict(session_id=" ", session_generation="generation")])
+def test_incomplete_session_binding_fails_before_http(binding):
+    with pytest.raises(ValueError):
+        BackendSafetyEventClient("http://backend.test", **binding)
+
+
+def test_client_explicit_session_binding_and_injected_auth(interpretations):
+    class FakeAuth(httpx.Auth):
+        def auth_flow(self, request):
+            request.headers["Authorization"] = "Bearer offline-only.admin"
+            yield request
+    requests = []
+    def handler(request):
+        requests.append(request)
+        assert dict(request.url.params) == {"sessionId":"owned-session", "generation":"current-generation"}
+        assert request.headers["Authorization"] == "Bearer offline-only.admin"
+        return httpx.Response(201,json=_event_response())
+    with BackendSafetyEventClient("http://backend.test", session_id="owned-session",
+            session_generation="current-generation", auth=FakeAuth(),
+            transport=httpx.MockTransport(handler)) as client:
+        assert client.send(interpretations[0]).stored is True
+    assert len(requests) == 1

@@ -148,22 +148,37 @@ class BackendSafetyEventClient:
         *,
         timeout: float = 5.0,
         transport: httpx.BaseTransport | None = None,
+        session_id: str | None = None,
+        session_generation: str | None = None,
+        auth: httpx.Auth | None = None,
     ) -> None:
         parsed = urlsplit(backend_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("backend_url must be an absolute HTTP or HTTPS URL.")
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero.")
+        if (session_id is None) != (session_generation is None):
+            raise ValueError("Session ID and generation must be provided together.")
+        self._binding = None
+        if session_id is not None:
+            if any(not isinstance(value, str) or not value.strip()
+                   for value in (session_id, session_generation)):
+                raise ValueError("Session binding must contain nonblank strings.")
+            self._binding = {
+                "sessionId": _required_text(session_id, "session_id"),
+                "generation": _required_text(session_generation, "session_generation"),
+            }
         self.backend_url = backend_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self.backend_url,
             timeout=timeout,
             transport=transport,
+            auth=auth,
         )
 
     def send(self, interpretation: SafetyInterpretation) -> BackendSafetyEventOutcome:
         payload = serialize_interpretation(interpretation)
-        response = self._request("POST", INGEST_PATH, json=payload)
+        response = self._request("POST", INGEST_PATH, json=payload, params=self._binding)
         expected_http_status = 201 if payload["status"] == "event" else 200
         if response.status_code != expected_http_status:
             raise BackendInvalidResponse(

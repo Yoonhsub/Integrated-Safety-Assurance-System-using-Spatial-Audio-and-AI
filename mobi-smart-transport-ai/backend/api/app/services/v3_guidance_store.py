@@ -17,6 +17,10 @@ class V3SessionRecord:
     owner_uid: str | None = None
     vision_generation: str = field(default_factory=lambda: str(uuid4()))
     vision_closed: bool = False
+    safety_sequence: int = 0
+    safety_items: list[dict] = field(default_factory=list)
+    safety_seen: set[str] = field(default_factory=set)
+    safety_watermark: datetime | None = None
     wake_word: str = "자비스"
     state: GuidanceState = GuidanceState.IDLE
     selected_destination: str | None = None

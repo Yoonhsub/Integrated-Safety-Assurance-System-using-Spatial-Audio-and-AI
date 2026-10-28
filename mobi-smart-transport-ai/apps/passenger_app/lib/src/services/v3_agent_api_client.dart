@@ -7,6 +7,7 @@ import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../models/v3_guidance_models.dart';
 import 'converse_live.dart';
+import 'session_safety_receiver.dart';
 
 class V3ApiException implements Exception {
   const V3ApiException(this.message, {this.statusCode});
@@ -88,6 +89,61 @@ class V3AgentApiClient {
       '/ai-vision/v2/sessions/${Uri.encodeComponent(sessionId)}/observations',
       const <String, String>{},
       customTimeout: const Duration(seconds: 2));
+
+  // Shared across clients/receivers: a non-cancelling transport cannot be
+  // bypassed by rebuilding a panel, changing users or creating another client.
+  static final Map<String, _SafetyFlight> _safetyFlights = {};
+  late final SafetyPollingTransport _legacySafety = openSafetyPolling();
+  SafetyPollingTransport openSafetyPolling() => _SafetyTransport(this);
+
+  Future<Map<String, dynamic>> fetchSafetyEvents(
+          String sessionId, int? after, String? generation) =>
+      _legacySafety.fetch(sessionId, after, generation);
+
+  Future<Map<String, dynamic>> _fetchSafetyEvents(_SafetyTransport owner,
+      String sessionId, int? after, String? generation) async {
+    if (owner.closed) throw const SafetyPollingException(terminal: true);
+    final key = Uri.parse(baseUrl).origin;
+    if (_safetyFlights.containsKey(key)) {
+      throw const SafetyPollingException(blocked: true);
+    }
+    final flight = _SafetyFlight();
+    owner.flight = flight;
+    _safetyFlights[key] = flight;
+    final raw = _authClient.get(
+        _buildUri('/guidance/safety-events', queryParameters: {
+          'sessionId': sessionId,
+          if (after != null) 'after': '$after',
+          if (generation != null) 'generation': generation,
+        }),
+        abortTrigger: flight.abort.future);
+    void finished() {
+      if (identical(_safetyFlights[key], flight)) _safetyFlights.remove(key);
+      if (identical(owner.flight, flight)) owner.flight = null;
+    }
+
+    // Release only after ORIGINAL HTTP/auth/body processing terminates.
+    unawaited(raw.then<void>((_) {
+      finished();
+    }, onError: (Object _, StackTrace __) {
+      finished();
+    }));
+    try {
+      final response =
+          await raw.timeout(const Duration(seconds: 2), onTimeout: () {
+        flight.cancel();
+        throw const SafetyPollingException(blocked: true);
+      });
+      if (owner.closed) throw const SafetyPollingException(terminal: true);
+      return _decodeResponse(response);
+    } on AuthenticatedApiException catch (error) {
+      throw SafetyPollingException(
+          terminal: {401, 403, 499}.contains(error.statusCode));
+    } on http.RequestAbortedException {
+      throw SafetyPollingException(
+          terminal: owner.closed, blocked: !owner.closed);
+    }
+  }
 
   Future<V3GuidanceState> resetSession({required String sessionId}) async {
     final json = await _postJson('/guidance/reset', <String, Object?>{
@@ -484,4 +540,27 @@ class V3AgentApiClient {
   }
 
   http.Client get _client => _httpClient ?? http.Client();
+}
+
+class _SafetyFlight {
+  final abort = Completer<void>();
+  void cancel() {
+    if (!abort.isCompleted) abort.complete();
+  }
+}
+
+class _SafetyTransport implements SafetyPollingTransport {
+  _SafetyTransport(this.api);
+  final V3AgentApiClient api;
+  bool closed = false;
+  _SafetyFlight? flight;
+  @override
+  Future<Map<String, dynamic>> fetch(
+          String sessionId, int? after, String? generation) =>
+      api._fetchSafetyEvents(this, sessionId, after, generation);
+  @override
+  void close() {
+    closed = true;
+    flight?.cancel();
+  }
 }

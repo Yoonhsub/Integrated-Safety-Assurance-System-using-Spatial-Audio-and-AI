@@ -26,6 +26,8 @@ _service = SafetyEventService()
 def ingest_ai_vision_interpretation(
     payload: AiVisionInterpretationIngestRequest,
     response: Response,
+    sessionId: str | None = None,
+    generation: str | None = None,
 ) -> AiVisionInterpretationIngestResponse:
     interpretation = _adapter.from_transport_request(payload)
     try:
@@ -50,7 +52,12 @@ def ingest_ai_vision_interpretation(
             safetyEvent=None,
         )
 
+    from app.services import session_safety_delivery as delivery
+    if sessionId is not None or generation is not None:
+        delivery.validate_binding(sessionId, generation, safety_event)
     record = _service.create(safety_event)
+    if sessionId is not None:
+        delivery.publish(sessionId, generation, record)
     response.status_code = 201
     return AiVisionInterpretationIngestResponse(
         status=AiVisionInterpretationStatus.EVENT,

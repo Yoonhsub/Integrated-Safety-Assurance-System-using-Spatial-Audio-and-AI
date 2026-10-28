@@ -26,6 +26,7 @@ import '../services/voice_guide_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
 import '../widgets/vision_observation_panel.dart';
+import '../widgets/session_safety_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
 import '../mock_scenario/mock_scenario_control_panel.dart';
@@ -62,6 +63,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   static final String _apiBaseUrl = resolveApiBaseUrl();
 
   String _sessionId = '';
+  bool Function()? _safetySessionGuard;
+  String? _safetySessionUid;
+  final _safetyLifecycle = SessionSafetyLifecycle();
   int _visionSpeechGeneration = 0;
   final _speechScope = SpeechRequestScope();
   final _routeRequestScope = SpeechRequestScope();
@@ -195,6 +199,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   @override
   void dispose() {
+    _safetyLifecycle.dispose();
     _speechScope.dispose();
     _routeRequestScope.dispose();
     _speechAuthSubscription?.cancel();
@@ -213,8 +218,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
+      final guard = FirebaseAuthSession.instance.captureRequestGuard();
+      final uid = FirebaseAuthSession.instance.currentAccount?.uid;
       final health = await _client.fetchHealth();
+      if (!mounted || !guard()) return;
       final session = await _client.createSession(wakeWord: _wakeWord);
+      if (!mounted || !guard()) return;
+      _safetySessionGuard = guard;
+      _safetySessionUid = uid;
       _sessionId = session.sessionId;
       setState(() {
         _healthStatus = health;
@@ -1784,28 +1795,41 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _resetSession() async {
-    setState(() => _visionSpeechGeneration++);
+    if (_isBusy || _safetyLifecycle.resetting) return;
+    final guard = _safetySessionGuard;
+    bool current() => mounted && guard != null && guard();
+    if (!current()) return;
     await _runGuarded(() async {
-      await _stopAllCueAudio();
-      final state = await _client.resetSession(sessionId: _sessionId);
-      _liveRouteTimer?.cancel();
-      _liveRouteTimer = null;
-      setState(() {
-        _sessionState = state;
-        _lastAgentResponse = null;
-        _lastRouteRecommendation = null;
-        _lastRoutePlan = null;
-        _lastArrivals = null;
-        _lastBeaconDecision = null;
-        _latestGeofenceMessage = null;
-        _routePlanningStatus = null;
-        _liveRoutePanelVisible = false;
-        _navStopped = false;
-        _liveStatus = null;
-        _liveRouteError = null;
-        _lastRoutePosition = null;
-        _isAgentTraceExpanded = false;
-      });
+      await _safetyLifecycle.reset(
+          isCurrent: current,
+          request: () async {
+            setState(() => _visionSpeechGeneration++);
+            await _stopAllCueAudio();
+            if (!current()) throw const StaleAuthRequestException();
+            final state = await _client.resetSession(sessionId: _sessionId);
+            if (!current()) throw const StaleAuthRequestException();
+            if (state.sessionId != _sessionId) {
+              throw StateError('Reset session mismatch');
+            }
+            _liveRouteTimer?.cancel();
+            _liveRouteTimer = null;
+            setState(() {
+              _sessionState = state;
+              _lastAgentResponse = null;
+              _lastRouteRecommendation = null;
+              _lastRoutePlan = null;
+              _lastArrivals = null;
+              _lastBeaconDecision = null;
+              _latestGeofenceMessage = null;
+              _routePlanningStatus = null;
+              _liveRoutePanelVisible = false;
+              _navStopped = false;
+              _liveStatus = null;
+              _liveRouteError = null;
+              _lastRoutePosition = null;
+              _isAgentTraceExpanded = false;
+            });
+          });
     });
   }
 
@@ -1895,6 +1919,17 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                               .instance.authStateChanges
                               .map((account) => account?.uid),
                           fetch: _client.fetchVisionObservations),
+                    ),
+                  if (_sessionId.isNotEmpty && _safetySessionUid != null)
+                    SessionSafetyHost(
+                      lifecycle: _safetyLifecycle,
+                      openTransport: _client.openSafetyPolling,
+                      sessionId: _sessionId,
+                      ownerUid: _safetySessionUid!,
+                      captureGuard: () => _safetySessionGuard ?? () => false,
+                      authChanges:
+                          FirebaseAuthSession.instance.authStateChanges,
+                      fetch: _client.fetchSafetyEvents,
                     ),
                   _HeroStatusCard(
                     isBusy: _isBusy,

@@ -48,8 +48,9 @@ class AuthenticatedApiClient {
   final http.Client _client;
   final RequestGuardFactory? _requestGuard;
 
-  Future<http.Response> get(Uri uri, {Map<String, String>? headers}) =>
-      _send('GET', uri, headers: headers);
+  Future<http.Response> get(Uri uri,
+          {Map<String, String>? headers, Future<void>? abortTrigger}) =>
+      _send('GET', uri, headers: headers, abortTrigger: abortTrigger);
 
   Future<http.Response> post(
     Uri uri, {
@@ -70,9 +71,15 @@ class AuthenticatedApiClient {
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
+    Future<void>? abortTrigger,
   }) async {
+    var aborted = false;
+    abortTrigger?.then((_) {
+      aborted = true;
+    });
     final isCurrent = _requestGuard?.call() ?? () => true;
     void check() {
+      if (aborted) throw http.RequestAbortedException(uri);
       if (!isCurrent()) throw const StaleAuthRequestException();
     }
 
@@ -83,7 +90,8 @@ class AuthenticatedApiClient {
       await _onUnauthorized?.call();
       throw const AuthenticatedApiException(401);
     }
-    var response = await _sendOnce(method, uri, token, headers, body);
+    var response =
+        await _sendOnce(method, uri, token, headers, body, abortTrigger);
     check();
     if (response.statusCode != 401) {
       _throwForAuthStatus(response.statusCode);
@@ -100,7 +108,8 @@ class AuthenticatedApiClient {
     }
     check();
     if (refreshed != null && refreshed.isNotEmpty) {
-      response = await _sendOnce(method, uri, refreshed, headers, body);
+      response =
+          await _sendOnce(method, uri, refreshed, headers, body, abortTrigger);
       check();
     }
     if (response.statusCode == 401) await _onUnauthorized?.call();
@@ -114,8 +123,11 @@ class AuthenticatedApiClient {
     String token,
     Map<String, String>? headers,
     Object? body,
+    Future<void>? abortTrigger,
   ) {
-    final request = http.Request(method, uri)
+    final request = (abortTrigger == null
+        ? http.Request(method, uri)
+        : http.AbortableRequest(method, uri, abortTrigger: abortTrigger))
       ..headers.addAll(headers ?? const {})
       ..headers['Authorization'] = 'Bearer $token'
       ..followRedirects = false;

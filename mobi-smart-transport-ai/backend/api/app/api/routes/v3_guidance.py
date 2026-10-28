@@ -102,3 +102,9 @@ def apply_event(payload: GuidanceEventRequest) -> GuidanceSessionState:
 
     session.touch()
     return session.to_response()
+
+
+@router.get("/safety-events")
+def safety_events(sessionId: str, after: int | None = None, generation: str | None = None):
+    from app.services.session_safety_delivery import poll
+    return poll(sessionId, after, generation)

@@ -616,3 +616,10 @@ scripts/build_cloud_ride_web.ps1
 apps/passenger_app/test/cloud_auth_generation_test.dart
 backend/api/tests/test_cloud_run_retirement.py
 shared/contracts/fixtures/cloud_ride_ui_target.json
+apps/passenger_app/lib/src/services/session_safety_receiver.dart
+apps/passenger_app/lib/src/widgets/session_safety_panel.dart
+apps/passenger_app/test/session_safety_receiver_test.dart
+backend/api/app/services/session_safety_delivery.py
+backend/api/tests/test_session_safety_delivery.py
+docs/rw/SESSION_SAFETY_DELIVERY.md
+apps/passenger_app/test/session_safety_transport_reset_test.dart
