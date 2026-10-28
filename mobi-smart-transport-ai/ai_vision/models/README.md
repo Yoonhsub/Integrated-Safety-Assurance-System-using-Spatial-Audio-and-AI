@@ -3,7 +3,7 @@
 현재 Android 현장 검증에 사용할 기본 산출물:
 
 ```text
-yolo11n_unified_bus_obstacle_stop_v2_float32.tflite
+yolo11n_unified_bus_obstacle_stop_v3_float32.tflite
 ```
 
 앱 담당자에게 전달할 정확한 Android 입력·출력 규칙과 검수 기준은
@@ -44,8 +44,8 @@ docker run --rm --mount type=bind,src=<project-absolute-path>,dst=/workspace `
   -w /workspace --entrypoint python mobi-tflite-export:python312-cpu `
   ai_vision/pipelines/tflite_bus_inference.py `
   --source ai_vision/pipelines/fixtures/external/bus.jpg `
-  --model-profile unified-v2 `
-  --model ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite `
+  --model-profile unified-v3 `
+  --model ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite `
   --output .tool-tmp/tflite-unified.vision-guidance.json
 ```
 

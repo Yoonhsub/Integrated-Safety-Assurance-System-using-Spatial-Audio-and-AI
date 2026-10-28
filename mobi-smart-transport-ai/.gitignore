@@ -134,6 +134,7 @@ ai_vision/models/*.tflite
 !ai_vision/models/yolo11n_unified_bus_obstacle_v1_float32.tflite
 !ai_vision/models/yolo11n_unified_bus_obstacle_stop_v1_float32.tflite
 !ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite
+!ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite
 ai_vision/models/*.onnx
 ai_vision/models/*.pt
 # Keep the trained bus-door checkpoint in Git LFS so the Android integration
@@ -142,6 +143,7 @@ ai_vision/models/*.pt
 !ai_vision/models/yolo11n_unified_bus_obstacle_v1.pt
 !ai_vision/models/yolo11n_unified_bus_obstacle_stop_v1.pt
 !ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2.pt
+!ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3.pt
 ai_vision/models/*.pth
 ai_vision/models/*.weights
 ai_vision/runs/
@@ -151,6 +153,7 @@ yolo11n.pt
 Ultralytics/
 .ultralytics/
 *.ckpt
+calibration_image_sample_data_*.npy
 
 # Local-only public samples and generated VisionResult evidence.
 ai_vision/pipelines/fixtures/external/*

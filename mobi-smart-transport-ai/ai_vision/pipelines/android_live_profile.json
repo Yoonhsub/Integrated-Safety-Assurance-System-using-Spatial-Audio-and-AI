@@ -14,7 +14,7 @@
     "runtime": "tflite",
     "input_width": 640,
     "input_height": 640,
-    "asset_path": "assets/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite",
+    "asset_path": "assets/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite",
     "status": "field_test_candidate"
   },
   "classes": [

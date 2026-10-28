@@ -8,3 +8,5 @@ ai_vision/models/yolo11n_unified_bus_obstacle_stop_v1.pt filter=lfs diff=lfs mer
 ai_vision/models/yolo11n_unified_bus_obstacle_stop_v1_float32.tflite filter=lfs diff=lfs merge=lfs -text
 ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2.pt filter=lfs diff=lfs merge=lfs -text
 ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite filter=lfs diff=lfs merge=lfs -text
+ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3.pt filter=lfs diff=lfs merge=lfs -text
+ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite filter=lfs diff=lfs merge=lfs -text

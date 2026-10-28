@@ -35,11 +35,11 @@ DEFAULT_NMS_IOU_THRESHOLD = 0.45
 DEFAULT_MODEL_NAME = "yolov11n"
 DEFAULT_MODEL_VERSION = "coco-tflite-float32-baseline"
 DEFAULT_MODEL_PATH = Path("ai_vision/models/yolo11n_coco_bus_baseline_float32.tflite")
-DEFAULT_UNIFIED_MODEL_PATH = Path("ai_vision/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite")
+DEFAULT_UNIFIED_MODEL_PATH = Path("ai_vision/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite")
 # 이 SavedModel 기반 export는 box 좌표도 640 pixel 값이 아니라 0~1 비율로 낸다.
 TFLITE_OUTPUT_COORDINATES_NORMALIZED = True
 
-# 통합 v2 모델의 채널 4~9 순서. 버스·문은 승차 안내 후보이고, 나머지는 현장
+# 통합 v3 모델의 채널 4~9 순서. 버스·문은 승차 안내 후보이고, 나머지는 현장
 # 검증용 관측 클래스다. 정류장·고정 장애물은 현 단계에서 더 보수적인 시작 임계값을 쓴다.
 UNIFIED_CLASS_IDS = ("bus", "bus_door", "parked_pm", "pole", "tree_trunk", "bus_stop")
 DEFAULT_UNIFIED_CONFIDENCE_THRESHOLDS = {
@@ -252,7 +252,7 @@ def decode_unified_detections(
     confidence_thresholds: Mapping[str, float] | None = None,
     nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
 ) -> list[RawDetection]:
-    """통합 v2 TFLite ``[1,10,candidate_count]`` 출력을 여섯 클래스로 해석한다.
+    """통합 v3 TFLite ``[1,10,candidate_count]`` 출력을 여섯 클래스로 해석한다.
 
     채널 0~3은 정규화된 ``cx, cy, w, h``이고, 채널 4~9는 ``UNIFIED_CLASS_IDS``
     순서의 점수다. NMS는 클래스별로 적용하므로 버스 차체와 문, 또는 서로 다른
@@ -358,7 +358,7 @@ def vision_result_from_unified_tflite_output(
     confidence_thresholds: Mapping[str, float] | None = None,
     nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
 ) -> VisionResult:
-    """통합 v2 TFLite 출력 하나를 여섯 클래스 ``VisionResult``로 변환한다."""
+    """통합 v3 TFLite 출력 하나를 여섯 클래스 ``VisionResult``로 변환한다."""
     thresholds = unified_confidence_thresholds(confidence_thresholds)
     transform = make_letterbox_transform(source_size, input_width=input_width, input_height=input_height)
     return build_vision_result(
@@ -372,7 +372,7 @@ def vision_result_from_unified_tflite_output(
             nms_iou_threshold=nms_iou_threshold,
         ),
         model_name="yolo11n-unified-bus-obstacle-stop",
-        model_version="v2-tflite-float32",
+        model_version="v3-tflite-float32",
         thresholds=thresholds,
     )
 
@@ -475,7 +475,7 @@ def run_unified_tflite_image_inference(
     confidence_thresholds: Mapping[str, float] | None = None,
     nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
 ) -> VisionResult:
-    """통합 v2 TFLite로 이미지 한 장의 여섯 클래스 결과를 검증한다."""
+    """통합 v3 TFLite로 이미지 한 장의 여섯 클래스 결과를 검증한다."""
     if not source.is_file():
         raise FileNotFoundError(f"source image not found: {source}")
     try:
@@ -599,9 +599,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH, help="TFLite model path")
     parser.add_argument(
         "--model-profile",
-        choices=("coco-bus", "bus-door", "unified-v2"),
+        choices=("coco-bus", "bus-door", "unified-v3"),
         default="coco-bus",
-        help="coco-bus=[1,84,N], bus-door=[1,6,N], unified-v2=[1,10,N]",
+        help="coco-bus=[1,84,N], bus-door=[1,6,N], unified-v3=[1,10,N]",
     )
     parser.add_argument("--output", required=True, type=Path, help="JSON result path")
     parser.add_argument("--confidence", type=float, default=DEFAULT_BUS_CONFIDENCE_THRESHOLD)
@@ -614,7 +614,7 @@ def main() -> None:
     args = _parse_args()
     if args.video:
         if args.model_profile != "coco-bus":
-            raise SystemExit("video sampling supports only coco-bus; validate unified-v2 with an image or use the Android app path")
+            raise SystemExit("video sampling supports only coco-bus; validate unified-v3 with an image or use the Android app path")
         payload = run_tflite_video_inference(
             args.source, model_path=args.model, frame_stride=args.frame_stride, max_samples=args.max_samples,
             confidence_threshold=args.confidence,
@@ -629,7 +629,7 @@ def main() -> None:
         result = run_bus_door_tflite_image_inference(
             args.source, model_path=args.model, confidence_threshold=args.confidence
         )
-    elif args.model_profile == "unified-v2":
+    elif args.model_profile == "unified-v3":
         model_path = DEFAULT_UNIFIED_MODEL_PATH if args.model == DEFAULT_MODEL_PATH else args.model
         result = run_unified_tflite_image_inference(args.source, model_path=model_path)
     else:

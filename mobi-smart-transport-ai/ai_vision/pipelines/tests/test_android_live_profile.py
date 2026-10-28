@@ -29,6 +29,6 @@ class AndroidLiveProfileTest(unittest.TestCase):
         self.assertIn("bus", profile.classes)
         self.assertIn("bus_door", profile.classes)
         self.assertEqual(profile.classes, ("bus", "bus_door", "bus_stop", "parked_pm", "pole", "tree_trunk"))
-        self.assertEqual(profile.model.asset_path, "assets/models/yolo11n_unified_bus_obstacle_stop_v2_float32.tflite")
+        self.assertEqual(profile.model.asset_path, "assets/models/yolo11n_unified_bus_obstacle_stop_v3_float32.tflite")
         self.assertEqual(profile.model.status, "field_test_candidate")
         self.assertEqual(profile.output_contract, "ai_vision/pipelines/vision_result.py::VisionResult")
