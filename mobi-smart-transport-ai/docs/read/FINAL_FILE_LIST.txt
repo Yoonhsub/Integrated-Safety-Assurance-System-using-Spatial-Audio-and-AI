@@ -630,3 +630,15 @@ apps/passenger_app/lib/src/services/tts_diagnostics_web.dart
 apps/passenger_app/test/local_tts_verification_test.dart
 scripts/build_local_tts_verification.ps1
 docs/rw/LOCAL_TTS_VERIFICATION.md
+apps/passenger_app/lib/local_spatial_verification_main.dart
+apps/passenger_app/lib/src/pages/local_spatial_verification_page.dart
+apps/passenger_app/lib/src/services/spatial_verification_engine.dart
+apps/passenger_app/lib/src/services/spatial_verification_output.dart
+apps/passenger_app/lib/src/services/spatial_verification_output_stub.dart
+apps/passenger_app/lib/src/services/spatial_verification_output_web.dart
+apps/passenger_app/web/mobi_spatial_verification.js
+apps/passenger_app/test/local_spatial_verification_test.dart
+apps/passenger_app/test/web_spatial_verification_test.cjs
+scripts/build_local_spatial_verification.ps1
+docs/rw/LOCAL_SPATIAL_VERIFICATION.md
+apps/passenger_app/test/coordinator_disposal_test.dart

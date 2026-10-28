@@ -152,6 +152,8 @@ class PriorityLease {
   PriorityLease._(this._release);
   final VoidCallback _release;
   bool active = true;
+  // Retire ownership without running callbacks on a disposed coordinator.
+  void _retire() => active = false;
   void release() {
     if (active) {
       active = false;
@@ -175,10 +177,13 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
   final SpeechEngine engine;
   Future<void> _tail = Future.value();
   final Set<Object> _leases = {};
+  final Set<PriorityLease> _leaseHandles = {};
+  bool _disposed = false;
   _Run? _run;
   bool _engineAvailable = true;
   final Object _uncertainOutput = Object();
-  bool get priorityActive => _leases.isNotEmpty;
+  // A retired coordinator remains closed, never permission for new output.
+  bool get priorityActive => _disposed || _leases.isNotEmpty;
   Future<T> _command<T>(Future<T> Function() action) {
     final next = _tail.then((_) => action());
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
@@ -193,10 +198,12 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
     try {
       await engine.stop().timeout(const Duration(seconds: 3));
     } catch (_) {
-      _engineAvailable = false;
-      // Unknown native output keeps Observation blocked until app reload.
-      _leases.add(_uncertainOutput);
-      notifyListeners();
+      if (!_disposed) {
+        _engineAvailable = false;
+        // Unknown native output keeps Observation blocked until app reload.
+        _leases.add(_uncertainOutput);
+        notifyListeners();
+      }
       rethrow;
     }
   }
@@ -204,16 +211,22 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
   /// Reserve priority synchronously: independent warning outputs never wait
   /// for a speech engine that is preparing, stopping or failing.
   PriorityLease claimPriority() {
+    if (_disposed) throw SpeechCancelled();
     final token = Object();
+    late final PriorityLease lease;
+    lease = PriorityLease._(() {
+      if (_disposed) return;
+      _leases.remove(token);
+      _leaseHandles.remove(lease);
+      notifyListeners();
+    });
     _leases.add(token);
+    _leaseHandles.add(lease);
     notifyListeners();
     unawaited(_command(() async {
       if (_run?.priority == false) await _stopRun();
     }).catchError((Object _) {}));
-    return PriorityLease._(() {
-      _leases.remove(token);
-      notifyListeners();
-    });
+    return lease;
   }
 
   Future<PriorityLease> acquirePriority() async {
@@ -231,7 +244,7 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
   Future<bool> _speak(
       Object owner, String text, bool priority, bool Function() valid) async {
     final run = await _command<_Run?>(() async {
-      bool allowed() => valid() && (priority || !priorityActive);
+      bool allowed() => !_disposed && valid() && (priority || !priorityActive);
       if (!allowed()) return null;
       if (!_engineAvailable) throw StateError('음성 엔진 종료를 확인할 수 없습니다');
       await engine
@@ -269,6 +282,22 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
           await _stopRun();
         }
       });
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    // Native shutdown is still observed by its owner; retirement is not an ACK.
+    // Cancel completion waits so existing serialized cleanup can continue.
+    final run = _run;
+    if (run != null && !run.cancel.isCompleted) run.cancel.complete();
+    for (final lease in _leaseHandles) {
+      lease._retire();
+    }
+    _leaseHandles.clear();
+    _leases.clear();
+    super.dispose();
+  }
 }
 
 final sharedSpeechPriority = SpeechPriorityCoordinator(
