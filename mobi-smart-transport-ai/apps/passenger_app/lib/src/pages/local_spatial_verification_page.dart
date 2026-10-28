@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/spatial_verification_engine.dart';
+import '../services/directional_guidance.dart';
 import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 
@@ -36,7 +37,9 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
       _disposed = false;
   Map<String, dynamic> _probe = {};
   final _log = <String>[];
-  String _heard = 'AUDIBLE_DIRECTION_NOT_VERIFIED';
+  String _heard = 'AUDIBLE_INTEGRATION_NOT_VERIFIED';
+  int _guidanceNumber = 0;
+  DirectionalGuidance? _lastGuidance;
   bool get _allowed => kDebugMode && widget.enabled;
   bool _valid(int epoch, int request) =>
       mounted &&
@@ -56,7 +59,8 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
   @override
   void initState() {
     super.initState();
-    _engine = SpatialVerificationEngine(widget.output, widget.tts);
+    _engine = SpatialVerificationEngine(widget.output, widget.tts,
+        onGuidanceTrace: (id, phase) => _record('$id $phase'));
     _priority = SpeechPriorityCoordinator(_engine);
     _cues = widget.cuesFactory?.call(_priority) ??
         AudioHapticCueService(speechPriority: _priority);
@@ -89,6 +93,64 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
         _failed = true;
         _record('AUDIO_BLOCKED · reload required');
       }
+    }
+  }
+
+  Future<void> _newGuidance(TestDirection? direction) async {
+    final guidance = DirectionalGuidance(
+        guidanceId: 'local-guidance-${++_guidanceNumber}',
+        sessionGeneration: _generation.toString(),
+        authEpoch: _epoch,
+        priority: GuidancePriority.observation,
+        text: direction == null
+            ? '방향 정보 없이 일반 음성만 재생하는 로컬 테스트입니다.'
+            : '방향 Cue 다음에 일반 음성이 나오는 로컬 테스트입니다.',
+        provenance: DirectionalGuidance.syntheticProvenance,
+        testDirection: direction,
+        directionEvidence: DirectionEvidence.explicitLocalFixture);
+    await _submitGuidance(guidance);
+  }
+
+  Future<void> _submitGuidance(DirectionalGuidance guidance) async {
+    if (!_allowed || !_current || _failed || _stopping || _hold) return;
+    if (guidance.authEpoch != _epoch ||
+        guidance.sessionGeneration != _generation.toString()) {
+      _record('OLD_GUIDANCE_SCOPE_REJECTED');
+      return;
+    }
+    final epoch = _epoch;
+    var request = _request;
+    bool current() => _valid(epoch, request) && !_priority.priorityActive;
+    final command = _engine.registerGuidance(guidance, current);
+    if (command == null) {
+      _record('DUPLICATE_GUIDANCE_IGNORED ${guidance.guidanceId}');
+      return;
+    }
+    request = ++_request;
+    _lastGuidance = guidance;
+    _record(
+        'SYNTHETIC_DIRECTIONAL_GUIDANCE ${guidance.guidanceId} epoch=$epoch generation=$_generation');
+    try {
+      // Explicit gesture unlock only for a reviewed direction; never for TTS-only.
+      if (guidance.hasReviewedDirection) {
+        await widget.output.prepareFromGesture();
+      }
+      if (!current()) return;
+      final complete =
+          await _priority.speakObservation(_owner, command, current);
+      if (current()) {
+        _record(
+            '${guidance.guidanceId} ${complete ? 'GUIDANCE_COMPLETED' : 'GUIDANCE_CANCELLED'}');
+      }
+    } on SpeechCancelled {
+      if (_valid(epoch, request)) _record('GUIDANCE_CANCELLED');
+    } catch (_) {
+      if (_valid(epoch, request)) {
+        _failed = true;
+        _record('GUIDANCE_BLOCKED · reload required');
+      }
+    } finally {
+      _engine.retireGuidance(command);
     }
   }
 
@@ -161,6 +223,16 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
     }
   }
 
+  Future<void> _exitPage() async {
+    if (!_allowed || _disposed || _stopping) return;
+    // Navigation transitions keep the old Widget mounted. Retire audio now,
+    // before any Cue completion can start its following utterance.
+    await _stop('PAGE_EXIT', end: true);
+    if (!mounted || _disposed) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('검증 페이지 종료 · 잔여 소리 확인'))));
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -217,6 +289,24 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
                                     ready ? () => _play(mode, direction) : null,
                                 child: Text('$mode $direction'))
                         ]),
+                      const Text(
+                          '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
+                      Wrap(spacing: 8, children: [
+                        for (final direction in TestDirection.values)
+                          ElevatedButton(
+                              onPressed:
+                                  ready ? () => _newGuidance(direction) : null,
+                              child: Text(
+                                  '${direction.name.toUpperCase()} Cue → TTS')),
+                        ElevatedButton(
+                            onPressed: ready ? () => _newGuidance(null) : null,
+                            child: const Text('방향 없는 TTS 안내')),
+                        OutlinedButton(
+                            onPressed: ready && _lastGuidance != null
+                                ? () => _submitGuidance(_lastGuidance!)
+                                : null,
+                            child: const Text('직전 guidanceId 재전송'))
+                      ]),
                       Wrap(spacing: 8, children: [
                         ElevatedButton(
                             onPressed: ready ? _tts : null,
@@ -253,12 +343,7 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
                                 : null,
                             child: const Text('새 세션')),
                         OutlinedButton(
-                            onPressed: () {
-                              Navigator.of(context).pushReplacement(
-                                  MaterialPageRoute<void>(
-                                      builder: (_) => const Scaffold(
-                                          body: Text('검증 페이지 종료 · 잔여 소리 확인'))));
-                            },
+                            onPressed: !_stopping ? _exitPage : null,
                             child: const Text('페이지 종료'))
                       ]),
                       Text('실제 청취: $_heard'),

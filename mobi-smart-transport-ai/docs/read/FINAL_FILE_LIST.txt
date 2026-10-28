@@ -642,3 +642,5 @@ apps/passenger_app/test/web_spatial_verification_test.cjs
 scripts/build_local_spatial_verification.ps1
 docs/rw/LOCAL_SPATIAL_VERIFICATION.md
 apps/passenger_app/test/coordinator_disposal_test.dart
+apps/passenger_app/lib/src/services/directional_guidance.dart
+apps/passenger_app/test/directional_guidance_test.dart

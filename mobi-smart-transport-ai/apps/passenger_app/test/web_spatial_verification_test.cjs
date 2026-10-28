@@ -60,3 +60,10 @@ test('graph creation error cannot leave a connected or playable source',async()=
  const f=setup();await f.api.prepare();f.ctx.createPanner=()=>{throw new Error('unsupported HRTF');};
  await assert.rejects(f.api.play('HRTF','LEFT'));assert.equal(f.starts,0);await f.api.dispose();
 });
+
+test('short directional cue reuses HRTF graph with a 600ms local buffer',async()=>{
+ const f=setup();await f.api.prepare();const p=f.api.playCue('LEFT');
+ const event=JSON.parse(f.api.snapshot()).events.find(e=>e.kind==='graph_connected');
+ assert.equal(event.mode,'HRTF');assert.equal(event.direction,'LEFT');assert.equal(event.durationMs,600);
+ assert.equal(f.panners[0].panningModel,'HRTF');await f.api.stop();assert.equal(await p,false);assert.equal(f.sources[0].connections.length,0);
+});

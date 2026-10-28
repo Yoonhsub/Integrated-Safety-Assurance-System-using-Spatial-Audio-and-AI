@@ -67,3 +67,60 @@ Use stereo headphones, keep volume comfortable, and explicitly click buttons:
 Automated graph/state tests and human listening are separate. Until user confirms,
 AUDIBLE_DIRECTION_NOT_VERIFIED. Android, bone-conduction headphones, actual head
 tracking and real environment geometry remain NOT_VERIFIED.
+
+## Sequential directional Guidance verification
+
+The same explicit debug page now offers LEFT/CENTER/RIGHT Cue → TTS and TTS-only.
+This is SYNTHETIC_DIRECTIONAL_GUIDANCE, not a real model or Backend Safety Event.
+The standard operational Guidance/SessionSafetyReceiver paths are unchanged.
+
+Local immutable contract: guidanceId, sessionGeneration, authEpoch,
+priority=observation, text, optional testDirection, provenance and
+DirectionEvidence. A pinned lifecycle callback reuses the engine revision and
+existing page request/epoch/generation guards. The callback includes the existing
+priority gate, so claiming Live Hold invalidates a Cue before a following TTS.
+Only provenance=SYNTHETIC_DIRECTIONAL_GUIDANCE plus explicitLocalFixture evidence
+may play a directional Cue. Missing/unverified direction uses ordinary TTS only.
+Every spoken integration message is prefixed as a synthetic verification message.
+
+The existing engine registers an opaque one-shot command, runs one
+SpeechPriorityCoordinator request, plays a600ms HRTF cue on the existing context,
+awaits source completion AND confirmed output.stop, then prepares/plays existing
+Web Speech. The utterance is not routed into Web Audio. Checks after every await
+prevent a cancelled scope from continuing into TTS. Errors/cancellation propagate;
+no fallback TTS after Cue/stop failure. No new coordinator or audio state machine.
+
+Scoped duplicate key=[authEpoch,sessionGeneration,guidanceId]. Registration checks
+before coordinator admission prevent duplicates from preempting current playback.
+The existing project bounded128-ID dedup convention is reused; pending commands
+are retired on completion/rejection and the registry clears on disposal. STOP or
+Hold does not clear IDs or queue automatic replay. Session lifecycle buttons are
+local verification only, not actual Firebase login/logout. Wrong generation/epoch
+is refused before admission; future production direction binding needs verified
+provenance and a real active-session adapter, not image bbox inference.
+
+Human sequence: click LEFT Cue → TTS, then CENTER, then RIGHT and let each finish.
+Click directionless TTS to check no Cue. To test Cue cancellation press STOP or
+Live Hold immediately during its0.6s tone; for TTS cancellation press after speech
+starts. End/logout/reset/page-exit tests must leave no old queued speech. Native
+API/callback automation is separate from AUDIBLE_INTEGRATION confirmation.
+
+## Future voice-buffer contract (not implemented)
+
+Web Speech exposes no standard PCM extraction or AudioNode route. A future local
+buffer provider must specify immutable source/provenance, guidance/session/epoch
+ownership, PCM encoding or decoded AudioBuffer, finite sampleRate, channelCount,
+frameCount and duration, channel layout, resource ownership/disposal, start/end/
+error acknowledgement and cancellation. A cancelled or uncertain stop must keep
+current quarantine and priority leases, never authorize another source early.
+
+Direction requires a declared coordinate frame: head-relative listener axes
+(+X right,+Y up,-Z forward), or world-relative direction with explicit calibrated
+transform/timebase. Arbitrary test coordinates are not real distances. Real head
+orientation must include timestamp, freshness and calibration, supplied by a
+separate reviewed input. No yaw/pitch/roll correction, new TTS engine, external
+voice API or PCM voice spatialization is introduced here.
+
+The page-exit button invalidates the current scope and awaits existing STOP
+before starting navigation. Widget disposal alone is too late during route
+transition animations; no Cue-completion TTS may start in that window.

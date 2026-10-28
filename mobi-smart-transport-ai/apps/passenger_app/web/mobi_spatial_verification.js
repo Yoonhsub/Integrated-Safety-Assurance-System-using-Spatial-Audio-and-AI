@@ -42,7 +42,7 @@
     }).finally(() => { preparing = null; });
     return preparing;
   }
-  function play(mode, direction) {
+  function playBuffer(mode, direction, durationMs) {
     ready();
     if (!['STEREO','HRTF'].includes(mode) || !Object.hasOwn(positions,direction)) throw new Error('Unreviewed direction');
     if (stopping || active || !ctx || ctx.state !== 'running') throw new Error('Output busy or unprepared');
@@ -54,7 +54,7 @@
         const panner = mode === 'STEREO' ? ctx.createStereoPanner() : ctx.createPanner();
         run = {source,gain,panner,resolve,id:++sequence,done:false};
         active = run; phase = 'requested';
-        const buffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * 4), ctx.sampleRate);
+        const buffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * durationMs / 1000), ctx.sampleRate);
         const data = buffer.getChannelData(0); let seed = 502;
         for (let i=0; i<data.length; i++) {
           seed = (1664525 * seed + 1013904223) >>> 0;
@@ -64,8 +64,8 @@
         source.buffer = buffer;
         gain.gain.setValueAtTime(0, ctx.currentTime);
         gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.03);
-        gain.gain.setValueAtTime(0.12, ctx.currentTime + 3.95);
-        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 4);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime + durationMs / 1000 - 0.05);
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + durationMs / 1000);
         const pan = direction === 'LEFT' ? -1 : direction === 'RIGHT' ? 1 : 0;
         if (mode === 'STEREO') panner.pan.value = pan;
         else {
@@ -80,14 +80,16 @@
         }
         source.connect(gain);gain.connect(panner);panner.connect(ctx.destination);
         source.onended=()=>{if(!run.done)finish(run,true);};
-        mark('graph_connected',{mode,direction,pan,position:mode==='HRTF'?positions[direction]:null});
-        source.start();phase='playing';mark('started',{mode,direction});
+        mark('graph_connected',{mode,direction,durationMs,pan,position:mode==='HRTF'?positions[direction]:null});
+        source.start();phase='playing';mark('started',{mode,direction,durationMs});
       } catch(error) {
         if(run) { try {disconnect(run);} catch(_){} run.done=true; active=null; }
         phase='failed';mark('error');reject(error);
       }
     });
   }
+  function play(mode,direction){return playBuffer(mode,direction,4000);}
+  function playCue(direction){return playBuffer('HRTF',direction,600);}
   function stop() {
     if(stopping)return stopping;
     revision++;const run=active;phase='stopping';mark('stop_requested');
@@ -116,6 +118,6 @@
     active:!!active,blocked,disposed,runId:sequence,events:[...events],
     coordinates:'listener origin; forward -Z; right +X; up +Y; arbitrary test units',
     source:'LOCAL_GENERATED_MONO_TEST_BUFFER',ttsSpatialized:false});}
-  window.MobiSpatialVerification={prepare,play,stop,dispose,snapshot};
+  window.MobiSpatialVerification={prepare,play,playCue,stop,dispose,snapshot};
   window.addEventListener('pagehide',()=>{void dispose().catch(()=>{});});
 })();
