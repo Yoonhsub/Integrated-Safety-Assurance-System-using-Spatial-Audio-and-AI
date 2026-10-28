@@ -623,3 +623,10 @@ backend/api/app/services/session_safety_delivery.py
 backend/api/tests/test_session_safety_delivery.py
 docs/rw/SESSION_SAFETY_DELIVERY.md
 apps/passenger_app/test/session_safety_transport_reset_test.dart
+apps/passenger_app/lib/local_tts_verification_main.dart
+apps/passenger_app/lib/src/pages/local_tts_verification_page.dart
+apps/passenger_app/lib/src/services/tts_diagnostics_stub.dart
+apps/passenger_app/lib/src/services/tts_diagnostics_web.dart
+apps/passenger_app/test/local_tts_verification_test.dart
+scripts/build_local_tts_verification.ps1
+docs/rw/LOCAL_TTS_VERIFICATION.md

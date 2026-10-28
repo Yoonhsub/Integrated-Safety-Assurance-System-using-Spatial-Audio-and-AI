@@ -41,3 +41,25 @@ test('repeated stop and stale callback remain silent and do not queue audio',asy
  await tts.stop();await tts.stop();requests[0].onend();
  assert.equal(await old,false);assert.equal(requests.length,1);
 });
+
+
+test('prefer local Korean voice; snapshot distinguishes request/start/completion',async()=>{
+ const {tts,s,requests}=setup();
+ s.getVoices=()=>[{lang:'ko-KR',localService:false},{lang:'ko-KR',localService:true}];
+ tts.prepare(true);const playing=tts.speak('테스트 음성 출력입니다.');
+ assert.equal(requests[0].voice.localService,true);
+ assert.equal(JSON.parse(tts.snapshot()).phase,'requested');
+ requests[0].onstart();assert.equal(JSON.parse(tts.snapshot()).counts.starts,1);
+ s.speaking=false;requests[0].onend();assert.equal(await playing,true);
+ assert.equal(JSON.parse(tts.snapshot()).counts.completions,1);
+ assert.equal(JSON.parse(tts.snapshot()).selectedVoiceLocal,true);
+});
+
+test('late retired start callback cannot change current engine diagnostics',async()=>{
+ const {tts,s,requests}=setup();const old=tts.speak('old');await tts.stop();await old;
+ const next=tts.speak('new');const id=JSON.parse(tts.snapshot()).runId;
+ requests[0].onstart();requests[0].onend();
+ assert.equal(JSON.parse(tts.snapshot()).runId,id);
+ assert.equal(JSON.parse(tts.snapshot()).phase,'requested');
+ s.speaking=false;requests[1].onend();await next;
+});
