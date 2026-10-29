@@ -17,7 +17,11 @@ abstract interface class DirectionalCueOutput {
 }
 
 class _GuidanceRequest {
-  _GuidanceRequest(this.guidance, this.isCurrent);
+  _GuidanceRequest(
+      this.guidance, this.isCurrent, this.admit, this.phase, this.spokenText);
+  final bool Function()? admit;
+  final void Function(String)? phase;
+  final String? spokenText;
   final DirectionalGuidance guidance;
   final bool Function() isCurrent;
 }
@@ -34,7 +38,10 @@ class SpatialVerificationEngine implements SpeechEngine {
   /// Pinned lifecycle guard includes auth epoch, session generation and priority.
   /// Reserve before entering the coordinator so duplicates cannot preempt output.
   String? registerGuidance(
-      DirectionalGuidance guidance, bool Function() isCurrent) {
+      DirectionalGuidance guidance, bool Function() isCurrent,
+      {bool Function()? admit,
+      void Function(String)? phase,
+      String? spokenText}) {
     guidance.validate();
     if (_disposed || !isCurrent() || _seen.contains(guidance.scopeKey)) {
       return null;
@@ -45,7 +52,8 @@ class SpatialVerificationEngine implements SpeechEngine {
     _seen.add(guidance.scopeKey);
     if (_seen.length > 128) _seen.remove(_seen.first);
     final command = '@guidance:${++_nextGuidance}';
-    _guidanceRequests[command] = _GuidanceRequest(guidance, isCurrent);
+    _guidanceRequests[command] =
+        _GuidanceRequest(guidance, isCurrent, admit, phase, spokenText);
     return command;
   }
 
@@ -57,7 +65,10 @@ class SpatialVerificationEngine implements SpeechEngine {
   }
 
   void _trace(_GuidanceRequest request, String phase) {
-    if (!_disposed) onGuidanceTrace?.call(request.guidance.guidanceId, phase);
+    if (!_disposed) {
+      onGuidanceTrace?.call(request.guidance.guidanceId, phase);
+      request.phase?.call(phase);
+    }
   }
 
   Future<void> _speakGuidance(_GuidanceRequest request, int revision) async {
@@ -69,6 +80,7 @@ class SpatialVerificationEngine implements SpeechEngine {
       }
       await output.prepareFromGesture();
       _guidanceCheck(request, revision);
+      if (!(request.admit?.call() ?? true)) throw SpeechCancelled();
       _trace(request, 'CUE_START');
       _guidanceCheck(request, revision);
       final complete = await (output as DirectionalCueOutput)
@@ -83,9 +95,10 @@ class SpatialVerificationEngine implements SpeechEngine {
     }
     await tts.prepare(requireKoreanVoice: true);
     _guidanceCheck(request, revision);
+    if (!(request.admit?.call() ?? true)) throw SpeechCancelled();
     _trace(request, 'TTS_START');
     _guidanceCheck(request, revision);
-    await tts.speak(guidance.spokenText);
+    await tts.speak(request.spokenText ?? guidance.spokenText);
     _guidanceCheck(request, revision);
     _trace(request, 'TTS_COMPLETED');
   }

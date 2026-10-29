@@ -14,6 +14,8 @@ import '../features/voice_live/live_voice_page.dart';
 import '../mock_scenario/mock_script_lines.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
+import '../services/local_guidance_runtime.dart';
+import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
 import '../services/mock_script_audio_service.dart';
@@ -41,11 +43,13 @@ class V3GuidancePage extends StatefulWidget {
     required this.agentName,
     required this.onReturnToModeSelection,
     required this.dataMode,
+    this.localRuntime,
   });
 
   final String agentName;
   final VoidCallback onReturnToModeSelection;
   final String dataMode;
+  final LocalGuidanceRuntime? localRuntime;
 
   @override
   State<V3GuidancePage> createState() => _V3GuidancePageState();
@@ -62,6 +66,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   static final String _apiBaseUrl = resolveApiBaseUrl();
 
+  AuthSession get _auth =>
+      widget.localRuntime?.auth ?? FirebaseAuthSession.instance;
+  bool Function() _captureAuthGuard() =>
+      widget.localRuntime?.captureGuard() ??
+      FirebaseAuthSession.instance.captureRequestGuard();
+  SpeechPriorityCoordinator get _priority =>
+      widget.localRuntime?.priority ?? sharedSpeechPriority;
+
   String _sessionId = '';
   bool Function()? _safetySessionGuard;
   String? _safetySessionUid;
@@ -72,13 +84,15 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   StreamSubscription<dynamic>? _speechAuthSubscription;
   bool _speechAuthValid = true;
   SpeechRequest _speechRequest() {
-    final uid = FirebaseAuthSession.instance.currentAccount?.uid;
+    final uid = _auth.currentAccount?.uid;
+    final authGuard = _captureAuthGuard();
     final session = _sessionId;
     return _speechScope.capture(() =>
         mounted &&
         _speechAuthValid &&
+        authGuard() &&
         _sessionId == session &&
-        FirebaseAuthSession.instance.currentAccount?.uid == uid);
+        _auth.currentAccount?.uid == uid);
   }
 
   late final V3AgentApiClient _client;
@@ -154,12 +168,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void initState() {
     super.initState();
-    _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
-    _cueService = AudioHapticCueService(onAudioError: (message) {
-      if (mounted) setState(() => _errorMessage = message);
-    });
+    _client =
+        widget.localRuntime?.client ?? V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _cueService = AudioHapticCueService(
+        speechPriority: _priority,
+        onAudioError: (message) {
+          if (mounted) setState(() => _errorMessage = message);
+        });
     _spatialCueService = SpatialCueService();
     _mockScriptAudioService = MockScriptAudioService(
+      speechPriority: _priority,
       webClipPlayer: (assetPath, pan, gain) => _spatialCueService.playClip(
         _mockVoiceAssetUrl(assetPath),
         pan: pan,
@@ -167,10 +185,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       ),
       webClipStop: _spatialCueService.stopClip,
     );
-    final ownerUid = FirebaseAuthSession.instance.currentAccount?.uid;
-    _speechAuthSubscription =
-        FirebaseAuthSession.instance.authStateChanges.listen((account) {
-      if (account?.uid != ownerUid) {
+    final authGuard = _captureAuthGuard();
+    _speechAuthSubscription = _auth.authStateChanges.listen((account) {
+      if (!authGuard()) {
         _speechAuthValid = false;
         unawaited(_stopAllCueAudio().catchError((Object _) {}));
       }
@@ -192,9 +209,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _bootstrap();
     // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
     // 캐시한다(일회성 실패로 좌표가 비는 '들쭉날쭉' 방지).
-    if (kIsWeb) startWebGeoWatch();
+    if (widget.localRuntime == null && kIsWeb) startWebGeoWatch();
     // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
-    _ensureLocation(forceRequest: true);
+    if (widget.localRuntime == null) _ensureLocation(forceRequest: true);
   }
 
   @override
@@ -218,8 +235,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
-      final guard = FirebaseAuthSession.instance.captureRequestGuard();
-      final uid = FirebaseAuthSession.instance.currentAccount?.uid;
+      final guard = _captureAuthGuard();
+      final uid = _auth.currentAccount?.uid;
       final health = await _client.fetchHealth();
       if (!mounted || !guard()) return;
       final session = await _client.createSession(wakeWord: _wakeWord);
@@ -1875,13 +1892,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           IconButton(
             tooltip: '로그아웃',
             onPressed: () async {
+              _safetyLifecycle.dispose();
               _speechAuthValid = false;
               try {
                 await _stopAllCueAudio();
               } catch (_) {
                 // Logout still invalidates all pending voice requests.
               } finally {
-                await FirebaseAuthSession.instance.signOut();
+                await _auth.signOut();
               }
             },
             icon: const Icon(Icons.logout),
@@ -1906,29 +1924,37 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (widget.localRuntime != null && _sessionId.isNotEmpty)
+                    widget.localRuntime!.controls(_sessionId,
+                        () => _cueService.speakLocal('검증용 Live Hold 안내입니다.'),
+                        () async {
+                      _safetyLifecycle.silence();
+                      await _stopAllCueAudio();
+                    }),
                   if (_sessionId.isNotEmpty)
                     ScenarioObservationBuilder(
                       controller: _mockScenarioController,
                       builder: (context, isPlaying) => VisionObservationPanel(
                           sessionId: _sessionId,
                           scopeVersion: _visionSpeechGeneration,
+                          speechPriority: _priority,
                           priorityBlocked: isPlaying,
-                          ownerUid:
-                              FirebaseAuthSession.instance.currentAccount?.uid,
-                          authChanges: FirebaseAuthSession
-                              .instance.authStateChanges
+                          ownerUid: _auth.currentAccount?.uid,
+                          authChanges: _auth.authStateChanges
                               .map((account) => account?.uid),
                           fetch: _client.fetchVisionObservations),
                     ),
                   if (_sessionId.isNotEmpty && _safetySessionUid != null)
                     SessionSafetyHost(
                       lifecycle: _safetyLifecycle,
+                      priority: _priority,
+                      audio: widget.localRuntime?.audio,
+                      allowSynthetic: widget.localRuntime != null,
                       openTransport: _client.openSafetyPolling,
                       sessionId: _sessionId,
                       ownerUid: _safetySessionUid!,
                       captureGuard: () => _safetySessionGuard ?? () => false,
-                      authChanges:
-                          FirebaseAuthSession.instance.authStateChanges,
+                      authChanges: _auth.authStateChanges,
                       fetch: _client.fetchSafetyEvents,
                     ),
                   _HeroStatusCard(

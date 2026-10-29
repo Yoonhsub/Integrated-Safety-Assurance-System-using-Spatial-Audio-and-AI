@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'speech_priority_coordinator.dart';
+import 'session_guidance_audio.dart';
 
 typedef SafetyFetch = Future<Map<String, dynamic>> Function(
     String, int?, String?);
@@ -28,13 +29,18 @@ class SessionSafetyReceiver extends ChangeNotifier {
       bool allowSynthetic = false,
       Stream<Object?>? authChanges,
       this.cancelFetch,
+      this.audio,
+      this.monotonicMicros,
       this.trace})
       : _allowSynthetic = allowSynthetic {
+    if (audio != null && !identical(audio!.priority, priority)) {
+      throw ArgumentError('Audio coordinator mismatch');
+    }
     if (allowSynthetic && kReleaseMode) {
       throw StateError('Synthetic guidance is test/debug only');
     }
     _authSubscription = authChanges?.listen((_) {
-      if (!isCurrent() && !_closed) _invalidate();
+      if (!isCurrent() && !_closed) _invalidate(reason: 'AUTH_EPOCH_CHANGED');
     }, onError: (Object _) {
       if (!_closed) _invalidate();
     });
@@ -50,6 +56,12 @@ class SessionSafetyReceiver extends ChangeNotifier {
   final VoidCallback? cancelFetch;
   final void Function(String)? trace;
   final SpeechPriorityCoordinator priority;
+  final SessionGuidanceAudio? audio;
+  final int Function()? monotonicMicros;
+  final _clock = Stopwatch()..start();
+  int _now() => monotonicMicros?.call() ?? _clock.elapsedMicroseconds;
+  ObservationAdmission? _admission;
+  final _seenEvents = <String>{};
   final bool _allowSynthetic;
   final Object _audioOwner = Object();
   Timer? _timer, _expiry, _retry;
@@ -66,35 +78,41 @@ class SessionSafetyReceiver extends ChangeNotifier {
 
   void _priorityChanged() {
     if (priority.priorityActive) {
-      _stop();
+      if (priority.outputUncertain) _admission?.mark('AUDIO_QUARANTINED');
+      _stop(priority.outputUncertain ? 'AUDIO_QUARANTINED' : 'HIGHER_PRIORITY');
       notifyListeners();
     }
   }
 
   void setEnabled(bool value) {
     enabled = value;
-    if (!value) _stop();
+    if (!value) _stop('STOP');
     notifyListeners();
   }
 
-  void _stop() {
+  void _stop([String reason = 'SUPERSEDED']) {
+    _admission?.cancel(reason);
+    _admission = null;
     message = null;
     _epoch++;
     _expiry?.cancel();
-    unawaited(priority.stopObservation(_audioOwner).catchError((Object _) {}));
+    unawaited(priority.stopObservation(_audioOwner).catchError((Object error) {
+      trace?.call('AUDIO_STOP_FAILURE ${error.runtimeType}');
+      debugPrint('Session Guidance stop failure: ${error.runtimeType}');
+    }));
   }
 
   void close({bool notify = true}) {
     if (!_closed) _invalidate(notify: notify);
   }
 
-  void _invalidate({bool notify = true}) {
+  void _invalidate({bool notify = true, String reason = 'SESSION_CLOSED'}) {
     _closed = true;
     enabled = false;
     _timer?.cancel();
     _retry?.cancel();
     cancelFetch?.call();
-    _stop();
+    _stop(reason);
     message = null;
     status = '세션 종료 · 안내 차단';
     if (notify) notifyListeners();
@@ -108,9 +126,13 @@ class SessionSafetyReceiver extends ChangeNotifier {
     }
     if (_busy || (_retry?.isActive ?? false)) return;
     _busy = true;
-    final watch = Stopwatch()..start();
+    final requestStarted = _now();
     try {
       final data = await fetch(sessionId, _cursor, _generation);
+      final received = _now();
+      if (received < requestStarted) {
+        throw StateError('Invalid monotonic clock');
+      }
       if (_closed) return;
       if (!isCurrent()) {
         _invalidate();
@@ -128,7 +150,7 @@ class SessionSafetyReceiver extends ChangeNotifier {
         throw const FormatException('Invalid safety scope');
       }
       if (_generation != null && _generation != gen) {
-        _invalidate();
+        _invalidate(reason: 'SESSION_GENERATION_CHANGED');
         return;
       }
       final baseline = _cursor == null;
@@ -142,6 +164,7 @@ class SessionSafetyReceiver extends ChangeNotifier {
       _failures = 0;
       if (baseline) trace?.call('polling_resumed');
       if (baseline) {
+        audio?.onScope?.call(sessionId, gen);
         _stop();
         message = null;
         notifyListeners();
@@ -163,19 +186,37 @@ class SessionSafetyReceiver extends ChangeNotifier {
           throw const FormatException('Unreviewed safety event');
         }
         sequence = raw['sequence'] as int;
+        final id = raw['eventId'] as String;
+        if (!_seenEvents.add(id)) continue;
+        if (_seenEvents.length > 128) _seenEvents.remove(_seenEvents.first);
         final ttl = raw['validForSeconds'];
         if (ttl is! num || !ttl.isFinite || ttl <= 0 || ttl > 3) continue;
         latest = raw;
       }
-      if (latest != null) {
-        _stop();
+      if (latest != null && latest['message'] != _spokenMeaning) {
         final ttl = (latest['validForSeconds'] as num).toDouble() -
-            watch.elapsedMicroseconds / 1000000;
+            (received - requestStarted) / 1000000;
         if (ttl > 0) {
+          _stop();
           message = latest['message'] as String;
           final epoch = _epoch;
+          final selected = audio ?? SessionGuidanceAudio(priority: priority);
+          final admission = ObservationAdmission(
+              deadlineMicros: received + (ttl * 1000000).floor(),
+              nowMicros: _now,
+              eventId: latest['eventId'] as String,
+              sessionGeneration: gen,
+              eventCreatedAt:
+                  latest['timestamp'] is String ? latest['timestamp'] : null,
+              receivedAt: DateTime.now().toUtc().toIso8601String(),
+              authEpoch: selected.authEpochSnapshot,
+              trace: selected.trace);
+          admission.mark('receivedAt');
+          _admission = admission;
           _expiry = Timer(Duration(microseconds: (ttl * 1000000).floor()), () {
-            _stop();
+            admission.expired();
+            // Expire display/admission only. A started info job owns its playback
+            // until normal completion, lifecycle invalidation or the30s watchdog.
             message = null;
             notifyListeners();
           });
@@ -183,10 +224,17 @@ class SessionSafetyReceiver extends ChangeNotifier {
               !priority.priorityActive &&
               _spokenMeaning != message) {
             _spokenMeaning = message;
-            unawaited(priority
-                .speakObservation(_audioOwner, message!,
-                    () => !_closed && enabled && epoch == _epoch && isCurrent())
-                .catchError((Object _) => false));
+            unawaited(_deliver(
+                selected,
+                admission,
+                SessionGuidanceObservation(
+                    sessionId: sessionId,
+                    ownerUid: ownerUid,
+                    generation: gen,
+                    eventId: latest['eventId'] as String,
+                    text: message!,
+                    synthetic: latest['synthetic'] as bool),
+                epoch));
           }
         }
       }
@@ -198,7 +246,7 @@ class SessionSafetyReceiver extends ChangeNotifier {
           _invalidate();
           return;
         }
-        _stop();
+        _stop('POLL_FAILURE');
         message = null;
         _cursor = null;
         // Keep the session generation pinned across transport failures.
@@ -219,6 +267,29 @@ class SessionSafetyReceiver extends ChangeNotifier {
     }
   }
 
+  Future<void> _deliver(
+      SessionGuidanceAudio output,
+      ObservationAdmission admission,
+      SessionGuidanceObservation observation,
+      int epoch) async {
+    try {
+      await output.speak(_audioOwner, observation,
+          () => !_closed && enabled && epoch == _epoch && isCurrent(),
+          admission: admission);
+    } catch (error) {
+      admission.mark('AUDIO_FAILURE_${error.runtimeType}');
+      admission.cancel(error is SpeechPlaybackTimeout
+          ? 'PLAYBACK_WATCHDOG'
+          : error is SpeechCancelled
+              ? 'CANCELLED'
+              : 'ENGINE_OR_STOP_FAILURE');
+      trace?.call('AUDIO_FAILURE ${error.runtimeType}');
+      debugPrint('Session Guidance audio failure: ${error.runtimeType}');
+    } finally {
+      if (identical(_admission, admission)) _admission = null;
+    }
+  }
+
   @override
   void dispose() {
     _closed = true;
@@ -226,7 +297,7 @@ class SessionSafetyReceiver extends ChangeNotifier {
     _retry?.cancel();
     cancelFetch?.call();
     _authSubscription?.cancel();
-    _stop();
+    _stop('DISPOSE');
     priority.removeListener(_priorityChanged);
     super.dispose();
   }

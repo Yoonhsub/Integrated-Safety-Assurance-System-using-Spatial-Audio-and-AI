@@ -172,6 +172,11 @@ class _Run {
 
 /// All native TTS control commands serialize, but completion never locks stop.
 /// Priority leases cover both TTS and existing generated/script audio playback.
+class SpeechPlaybackTimeout extends TimeoutException {
+  SpeechPlaybackTimeout()
+      : super('Playback completion deadline', const Duration(seconds: 30));
+}
+
 class SpeechPriorityCoordinator extends ChangeNotifier {
   SpeechPriorityCoordinator(this.engine);
   final SpeechEngine engine;
@@ -184,6 +189,7 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
   final Object _uncertainOutput = Object();
   // A retired coordinator remains closed, never permission for new output.
   bool get priorityActive => _disposed || _leases.isNotEmpty;
+  bool get outputUncertain => !_engineAvailable;
   Future<T> _command<T>(Future<T> Function() action) {
     final next = _tail.then((_) => action());
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
@@ -236,13 +242,20 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
   }
 
   Future<bool> speakObservation(
-          Object owner, String text, bool Function() valid) =>
-      _speak(owner, text, false, valid);
+          Object owner, String text, bool Function() valid,
+          {bool Function()? admit,
+          VoidCallback? onStarted,
+          VoidCallback? onDeadline}) =>
+      _speak(owner, text, false, valid,
+          admit: admit, onStarted: onStarted, onDeadline: onDeadline);
   Future<bool> speakPriority(
           Object owner, String text, bool Function() valid) =>
       _speak(owner, text, true, valid);
   Future<bool> _speak(
-      Object owner, String text, bool priority, bool Function() valid) async {
+      Object owner, String text, bool priority, bool Function() valid,
+      {bool Function()? admit,
+      VoidCallback? onStarted,
+      VoidCallback? onDeadline}) async {
     final run = await _command<_Run?>(() async {
       bool allowed() => !_disposed && valid() && (priority || !priorityActive);
       if (!allowed()) return null;
@@ -252,6 +265,9 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
           .timeout(const Duration(seconds: 3));
       if (!allowed()) return null;
       await _stopRun();
+      if (!allowed()) return null;
+      if (!(admit?.call() ?? true)) return null;
+      onStarted?.call();
       if (!allowed()) return null;
       final next = _Run(owner, priority, engine.speak(text));
       // Observe errors immediately, even if cancel wins the race.
@@ -263,7 +279,10 @@ class SpeechPriorityCoordinator extends ChangeNotifier {
     if (run == null) return false;
     try {
       await Future.any([run.done, run.cancel.future])
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 30), onTimeout: () {
+        onDeadline?.call();
+        throw SpeechPlaybackTimeout();
+      });
       return !run.cancel.isCompleted;
     } finally {
       await _command(() async {

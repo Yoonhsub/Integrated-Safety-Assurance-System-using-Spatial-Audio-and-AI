@@ -644,3 +644,8 @@ docs/rw/LOCAL_SPATIAL_VERIFICATION.md
 apps/passenger_app/test/coordinator_disposal_test.dart
 apps/passenger_app/lib/src/services/directional_guidance.dart
 apps/passenger_app/test/directional_guidance_test.dart
+apps/passenger_app/lib/local_guidance_audio_main.dart
+apps/passenger_app/lib/src/services/local_guidance_runtime.dart
+apps/passenger_app/lib/src/services/session_guidance_audio.dart
+apps/passenger_app/test/session_guidance_audio_test.dart
+apps/passenger_app/test/observation_playback_lifetime_test.dart

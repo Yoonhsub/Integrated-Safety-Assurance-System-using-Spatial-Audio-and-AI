@@ -124,3 +124,90 @@ voice API or PCM voice spatialization is introduced here.
 The page-exit button invalidates the current scope and awaits existing STOP
 before starting navigation. Widget disposal alone is too late during route
 transition animations; no Cue-completion TTS may start in that window.
+
+
+## Actual Passenger Guidance receiver integration (local only)
+
+Build with `scripts/build_local_spatial_verification.ps1 -GuidanceRuntime
+-OutputPath <new external directory>`. The existing script, graph, speech engine
+and coordinator are reused. Serve on127.0.0.1:5280 with the isolated local Backend
+on127.0.0.1:8280. This entry mounts the actual V3GuidancePage, creates its session
+through the real HTTP API, and uses SessionSafetyHost/Receiver with the same
+cancelable authenticated polling client. Fake Auth is defined only in the guarded
+entry; normal main never selects it. Release/profile or non-loopback DI fails.
+Normal Firebase auth, session ownership and default TTS policy remain in place.
+The test CSP only adds the exact local Backend origin, not external API access.
+No Backend CORS or Safety Event schema was changed.
+
+SessionGuidanceAudio is called only after the receiver's existing owner,
+generation, sequence, freshness, priority, opt-in and semantic dedup checks.
+Production accepts no direction source and speaks only the server message.
+A raw event direction/coordinate field is not trusted. Local DirectionReceipt is
+separate from the wire schema and matches eventId, sessionId, ownerUid, authEpoch,
+server generation, createdAt (0..3seconds) and the exact listener-relative frame.
+An invalid explicit receipt suppresses all audio and records a diagnostic.
+Only a synthetic event plus that receipt can select a test Cue. One explicit
+button gesture arms one cue; it does not grant persistent automatic playback.
+Cue completion and confirmed stop precede ordinary, non-spatialized Web Speech.
+The same coordinator arbitrates receiver audio, local Hold and script TTS.
+
+Enable the actual panel's `세션 안전 정보 음성` switch first. Emit directionless
+information, or LEFT/CENTER/RIGHT local events via the real /ai-vision/events API.
+The fixed server message does not assert direction, distance or boarding safety.
+Same-message suppression and the maximum3-second event admission freshness
+remain unchanged: use actual session reset and re-enable the switch before each
+next same-message direction test. Already-started information playback now has
+the separate bounded lifetime described below. STOP disables the voice switch; it does
+not queue a replay. Hold/reset/logout/dispose invalidate old runs. Failed stop
+continues to quarantine through the existing coordinator; cleanup errors remain
+observable without tokens or payloads in logs.
+
+The no_event button replays separately captured REAL model evidence through the
+local Backend. This is evidence replay, not a fresh model inference or a model
+positive detection. No event means no guidance audio. Local controls and synthetic
+directions are absent from the normal production page. No future production
+trusted-direction provider is enabled. PCM voice spatialization, physical head
+tracking, real Firebase, Android and bone-conduction hardware remain unverified.
+
+
+## Information event freshness versus playback lifetime
+
+Only priority=info SessionSafetyReceiver observations use this separation. Existing
+raw camera VisionObservationSpeech and risk/Live Hold validity policies are not
+extended. Event TTL still must be finite, >0 and <=3seconds. Request elapsed time
+is subtracted conservatively using a Stopwatch monotonic domain. Just before the
+first audible Cue/TTS request, after prepare and coordinator queuing, the same
+deadline is checked again. Expired admission is never replayed or retried.
+
+ObservationAdmission is a metadata/admission receipt, not another Coordinator,
+audio engine or scheduler. Once a fresh observation starts Cue or TTS, subsequent
+freshness expiry clears display/admission but does not invalidate its cancellation
+token. Cue completion -> confirmed stop -> TTS preparation still rechecks auth,
+session generation, priority and cancellation. Started info playback can complete
+beyond3seconds; a3second admission value is never used as playback watchdog.
+The existing Coordinator30second completion bound and3second stop-confirmation
+bound remain. Missing completion -> bounded stop; unconfirmed stop -> existing
+quarantine blocks new audio. Old late ACK/dispose protections remain unchanged.
+STOP, Hold, logout/auth epoch, generation, close/dispose and polling/ownership
+failure still invalidate active audio. New distinct information may supersede it;
+identical meaning/eventId is consumed without cutting an ongoing copy. Event ID
+dedup is a bounded128-entry receiver cache, not durable exactly-once delivery.
+
+Trace separates server eventCreatedAt and receivedAt UTC from receiver-relative
+monotonic microseconds. It records admission deadline/check, Cue/TTS request and
+completion boundaries, cancelReason, session generation and logical Observation
+ownership. authEpoch is the numeric local injected epoch when available; normal
+Firebase uses an opaque captured Auth guard and does not expose a numeric epoch.
+activeAudioLease denotes the existing Observation run owner, not an invented
+PriorityLease. Native Web Speech onstart/onend state remains separate browser
+telemetry. Errors remain observable; quarantine is not successful cancellation.
+
+The local producer receives generation only from the owner-verified receiver
+baseline. It performs no extra polling or retry, preserving the shared in-flight
+limit. Missing baseline fails closed; reset/generation mismatch cannot bind it.
+
+A local producer receipt barrier handles an event arriving before its POST
+response. It waits only within the original remaining admission freshness, then
+rechecks scope/epoch and exact eventId receipt. Timeout or epoch change outputs
+nothing. This hook is available only to explicit debug DI, never normal Auth or
+production event delivery, and cannot extend admission or queue an old event.

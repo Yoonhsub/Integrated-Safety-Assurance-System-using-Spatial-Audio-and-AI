@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/session_safety_receiver.dart';
+import '../services/session_guidance_audio.dart';
 import '../services/speech_priority_coordinator.dart';
 
 class SessionSafetyPanel extends StatefulWidget {
@@ -11,6 +12,7 @@ class SessionSafetyPanel extends StatefulWidget {
       required this.fetch,
       required this.authChanges,
       this.priority,
+      this.audio,
       this.lifecycle,
       this.openTransport,
       this.allowSynthetic = false});
@@ -21,6 +23,7 @@ class SessionSafetyPanel extends StatefulWidget {
   final SafetyPollingTransport Function()? openTransport;
   final Stream<Object?> authChanges;
   final SpeechPriorityCoordinator? priority;
+  final SessionGuidanceAudio? audio;
   final bool allowSynthetic;
   @override
   State<SessionSafetyPanel> createState() => _SessionSafetyPanelState();
@@ -45,6 +48,7 @@ class _SessionSafetyPanelState extends State<SessionSafetyPanel> {
                     widget.lifecycle!.revision == revision)),
         fetch: _transport?.fetch ?? widget.fetch,
         priority: widget.priority ?? sharedSpeechPriority,
+        audio: widget.audio,
         authChanges: widget.authChanges,
         allowSynthetic: widget.allowSynthetic,
         cancelFetch: _transport?.close,
@@ -92,6 +96,8 @@ class SessionSafetyLifecycle extends ChangeNotifier {
     trace?.call('new_receiver_bound');
   }
 
+  void silence() => _receiver?.setEnabled(false);
+
   void detach(SessionSafetyReceiver receiver) {
     if (identical(_receiver, receiver)) _receiver = null;
   }
@@ -134,6 +140,7 @@ class SessionSafetyLifecycle extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     active = false;
     revision++;
@@ -155,6 +162,7 @@ class SessionSafetyHost extends StatelessWidget {
       required this.fetch,
       required this.authChanges,
       this.priority,
+      this.audio,
       this.allowSynthetic = false,
       this.openTransport});
   final SessionSafetyLifecycle lifecycle;
@@ -163,6 +171,7 @@ class SessionSafetyHost extends StatelessWidget {
   final SafetyFetch fetch;
   final Stream<Object?> authChanges;
   final SpeechPriorityCoordinator? priority;
+  final SessionGuidanceAudio? audio;
   final bool allowSynthetic;
   final SafetyPollingTransport Function()? openTransport;
   @override
@@ -182,6 +191,7 @@ class SessionSafetyHost extends StatelessWidget {
             fetch: fetch,
             authChanges: authChanges,
             priority: priority,
+            audio: audio,
             allowSynthetic: allowSynthetic,
             openTransport: openTransport);
       });
