@@ -649,3 +649,10 @@ apps/passenger_app/lib/src/services/local_guidance_runtime.dart
 apps/passenger_app/lib/src/services/session_guidance_audio.dart
 apps/passenger_app/test/session_guidance_audio_test.dart
 apps/passenger_app/test/observation_playback_lifetime_test.dart
+
+apps/passenger_app/lib/local_android_backend_main.dart
+apps/passenger_app/lib/src/local_backend/local_backend_probe.dart
+apps/passenger_app/test/local_backend_probe_test.dart
+scripts/run_android_local_backend.py
+backend/api/tests/test_android_local_backend.py
+docs/rw/ANDROID_LOCAL_BACKEND.md

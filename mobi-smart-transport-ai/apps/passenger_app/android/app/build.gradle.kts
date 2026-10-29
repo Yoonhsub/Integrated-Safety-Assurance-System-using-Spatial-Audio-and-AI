@@ -20,11 +20,12 @@ val targetFile = File(explicitTarget).let {
 }
 val mainTarget = sourceRoot.resolve("lib/main.dart").canonicalFile
 val cameraTarget = sourceRoot.resolve("lib/local_vision_main.dart").canonicalFile
-if (!targetFile.isFile || targetFile !in setOf(mainTarget, cameraTarget)) {
+val backendTarget = sourceRoot.resolve("lib/local_android_backend_main.dart").canonicalFile
+if (!targetFile.isFile || targetFile !in setOf(mainTarget, cameraTarget, backendTarget)) {
     isolationFailure("Unknown or outside-project Flutter target")
 }
 val defines = mutableMapOf<String, String>()
-val isolationKeys = setOf("MOBI_OFFLINE_CAMERA")
+val isolationKeys = setOf("MOBI_OFFLINE_CAMERA", "MOBI_ANDROID_LOCAL_BACKEND")
 val encodedDefines = (project.findProperty("dart-defines") as? String).orEmpty()
 if (encodedDefines.isNotEmpty()) {
     encodedDefines.split(',').forEach { encoded ->
@@ -43,15 +44,19 @@ if (encodedDefines.isNotEmpty()) {
     }
 }
 val offlineCamera = targetFile == cameraTarget
+val localBackend = targetFile == backendTarget
 val presentIsolationKeys = defines.keys.intersect(isolationKeys)
 when {
     offlineCamera && (presentIsolationKeys != setOf("MOBI_OFFLINE_CAMERA") ||
         defines["MOBI_OFFLINE_CAMERA"] != "true") ->
         isolationFailure("Camera entry requires exactly its true isolation define")
+    localBackend && (presentIsolationKeys != setOf("MOBI_ANDROID_LOCAL_BACKEND") ||
+        defines["MOBI_ANDROID_LOCAL_BACKEND"] != "true") ->
+        isolationFailure("Backend entry requires exactly its true isolation define")
     targetFile == mainTarget && presentIsolationKeys.isNotEmpty() ->
         isolationFailure("Normal Passenger entry cannot use test isolation defines")
 }
-val testApplication = offlineCamera
+val testApplication = offlineCamera || localBackend
 if (testApplication && gradle.startParameter.taskNames.any {
         it.contains("profile", ignoreCase = true) || it.contains("release", ignoreCase = true)
     }) {
@@ -82,6 +87,7 @@ android {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.mobi_passenger_app"
         if (offlineCamera) applicationIdSuffix = ".offlinevision"
+        if (localBackend) applicationIdSuffix = ".localbackend"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
@@ -106,6 +112,30 @@ android {
             </manifest>
         """.trimIndent())
         sourceSets.getByName("debug").manifest.srcFile(offlineManifest)
+    }
+
+    if (localBackend) {
+        val generated = layout.buildDirectory.dir("generated/local-backend").get().asFile
+        val manifest = generated.resolve("AndroidManifest.xml")
+        generated.mkdirs()
+        manifest.writeText("""
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+                <uses-permission android:name="android.permission.INTERNET" />
+                <application android:networkSecurityConfig="@xml/local_backend_network">
+                    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" tools:node="remove" />
+                </application>
+            </manifest>
+        """.trimIndent())
+        val res = generated.resolve("res/xml/local_backend_network.xml")
+        res.parentFile.mkdirs()
+        res.writeText("""
+            <network-security-config>
+                <base-config cleartextTrafficPermitted="false" />
+                <domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain></domain-config>
+            </network-security-config>
+        """.trimIndent())
+        sourceSets.getByName("debug").manifest.srcFile(manifest)
+        sourceSets.getByName("debug").res.srcDir(generated.resolve("res"))
     }
 
     buildTypes {
