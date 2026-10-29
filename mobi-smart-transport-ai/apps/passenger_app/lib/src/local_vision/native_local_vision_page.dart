@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'frame_pump.dart';
 import 'vision_codec.dart';
 import 'vision_worker.dart';
+import '../widgets/vision_observation_panel.dart';
 
 /// Phone-only observations. No backend, Producer identity, TTS or safety input.
 class LocalVisionPage extends StatefulWidget {
@@ -93,7 +94,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       return;
     }
     await _stopping;
-    if (!mounted || _disposing) return;
+    if (!mounted || _disposing || _starting || _camera != null) return;
     final generation = ++_generation;
     setState(() {
       _starting = true;
@@ -131,7 +132,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       _runTime
         ..reset()
         ..start();
-      await camera.startImageStream(_onFrame);
+      await camera.startImageStream((image) => _onFrame(image, generation));
       if (mounted && generation == _generation) {
         setState(() => _status = '휴대폰 내부 카메라 관찰 중');
       }
@@ -153,7 +154,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     }
   }
 
-  void _onFrame(CameraImage image) {
+  void _onFrame(CameraImage image, int generation) {
+    if (_disposing || generation != _generation) return;
     final camera = _camera, description = _description;
     if (!_pump.active || camera == null || description == null) return;
     final degrees = switch (camera.value.deviceOrientation) {
@@ -255,6 +257,15 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               onChanged: busy || _camera != null
                   ? null
                   : (v) => setState(() => _front = v)),
+          if (_camera?.value.isInitialized == true) ...[
+            const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
+            AspectRatio(
+                aspectRatio: _camera!.value.aspectRatio,
+                child: CameraPreview(_camera!)),
+          ],
+          if (_worker != null)
+            Text(
+                'TFLite 로드 ${_worker!.loadMs.toStringAsFixed(1)}ms · warm-up ${_worker!.warmUpMs.toStringAsFixed(1)}ms'),
           if (item == null)
             const SizedBox(
                 height: 160, child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
@@ -266,20 +277,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                       fit: BoxFit.fill, gaplessPlayback: true),
                   CustomPaint(painter: _BoxPainter(item.boxes)),
                 ])),
-          if (item != null) ...[
-            Text(item.boxes.isEmpty
-                ? '버스·문 감지 없음'
-                : item.boxes
-                    .map((b) => b.classId == 'bus' ? '버스 감지' : '버스 문 감지')
-                    .toSet()
-                    .join(' · ')),
-            Text(
-                '추론 ${item.inferenceMs.toStringAsFixed(1)}ms · 처리 ${item.processingMs.toStringAsFixed(1)}ms'),
-            Text(
-                '프레임 수신 ${item.frame.receivedAt.toIso8601String()} · 실제 촬영 시각 미검증'),
-          ],
+          if (item != null) VisionObservationPanel.localCamera(item),
           Text(
-              '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired}'),
+              '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired} · 중복/역순 거부 ${_pump.rejected}'),
           Text(
               '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
           const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),

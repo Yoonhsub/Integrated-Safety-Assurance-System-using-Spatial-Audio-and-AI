@@ -3,6 +3,15 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 
+String _frameId() {
+  final random = math.Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  final h = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
+}
+
 const busDoorModelHash =
     '7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85';
 void verifyModel(Uint8List bytes) {
@@ -35,8 +44,11 @@ class VisionFrame {
       required this.rotation,
       required this.mirror,
       required this.receivedAt,
-      required this.receivedMicros});
+      required this.receivedMicros,
+      String? frameId})
+      : frameId = frameId ?? _frameId();
   final int width, height, rotation, receivedMicros;
+  final String frameId;
   final String format;
   final List<FramePlane> planes;
   final bool mirror;
@@ -49,7 +61,8 @@ class VisionFrame {
       rotation: rotation,
       mirror: mirror,
       receivedAt: receivedAt,
-      receivedMicros: receivedMicros);
+      receivedMicros: receivedMicros,
+      frameId: frameId);
 }
 
 class LocalBox {
@@ -238,4 +251,54 @@ class LocalObservation {
   final List<LocalBox> boxes;
   final int width, height;
   final double inferenceMs, processingMs;
+
+  /// Shared DetectionResult wire contract, never a Safety Event or a trusted
+  /// server observation. capturedAt remains the host callback receipt time.
+  Map<String, Object?> toDetectionResult() {
+    if (width <= 0 ||
+        height <= 0 ||
+        !inferenceMs.isFinite ||
+        inferenceMs < 0 ||
+        !processingMs.isFinite ||
+        processingMs < 0 ||
+        !RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+            .hasMatch(frame.frameId)) {
+      throw const FormatException('잘못된 프레임 메타데이터');
+    }
+    final detections = boxes.map((b) {
+      if (!['bus', 'bus_door'].contains(b.classId) ||
+          ![b.confidence, b.x, b.y, b.w, b.h].every((v) => v.isFinite) ||
+          b.confidence < 0 ||
+          b.confidence > 1 ||
+          b.x < 0 ||
+          b.y < 0 ||
+          b.w <= 0 ||
+          b.h <= 0 ||
+          b.x + b.w > 1.000000001 ||
+          b.y + b.h > 1.000000001) {
+        throw const FormatException('잘못된 DetectionResult 객체');
+      }
+      return <String, Object?>{
+        'classId': b.classId,
+        'className': b.classId == 'bus' ? '버스' : '버스 문',
+        'confidence': b.confidence,
+        'bbox': {'x': b.x, 'y': b.y, 'w': b.w, 'h': b.h},
+      };
+    }).toList();
+    return {
+      'schemaVersion': '1.0.0',
+      'source': 'android_camera',
+      'status': 'ok',
+      'frameId': frame.frameId,
+      'capturedAt': frame.receivedAt.toUtc().toIso8601String(),
+      'imageSize': {'width': width, 'height': height},
+      'modelInfo': {
+        'provider': 'tflite',
+        'name': 'yolo11n_bus_door_v1_float32',
+        'version': '0d2b911',
+        'identifier': 'sha256:$busDoorModelHash',
+      },
+      'detections': detections,
+    };
+  }
 }

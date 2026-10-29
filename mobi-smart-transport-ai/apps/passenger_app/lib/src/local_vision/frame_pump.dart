@@ -17,8 +17,8 @@ class FramePump extends ChangeNotifier {
   LocalObservation? observation;
   String? error;
   bool lost = false;
-  int? _lastReceived;
-  int received = 0, processed = 0, replaced = 0, expired = 0;
+  int? _lastReceived, _lastSubmitted;
+  int received = 0, processed = 0, replaced = 0, expired = 0, rejected = 0;
 
   void start() {
     if (_disposed || _busy) throw StateError('이전 추론이 종료되지 않았습니다.');
@@ -27,7 +27,8 @@ class FramePump extends ChangeNotifier {
     lost = false;
     _lastReceived = nowMicros();
     error = null;
-    received = processed = replaced = expired = 0;
+    received = processed = replaced = expired = rejected = 0;
+    _lastSubmitted = null;
     _expiry?.cancel();
     _expiry =
         Timer.periodic(const Duration(milliseconds: 100), (_) => expire());
@@ -51,6 +52,13 @@ class FramePump extends ChangeNotifier {
 
   void submit(VisionFrame frame) {
     if (!active || _disposed) return;
+    if (frame.receivedMicros < 0 ||
+        frame.receivedMicros > nowMicros() ||
+        (_lastSubmitted != null && frame.receivedMicros <= _lastSubmitted!)) {
+      rejected++;
+      return;
+    }
+    _lastSubmitted = frame.receivedMicros;
     _lastReceived = frame.receivedMicros;
     if (lost) {
       lost = false;
@@ -77,10 +85,12 @@ class FramePump extends ChangeNotifier {
         try {
           final value = await infer(frame);
           if (!active || generation != _generation) break;
-          if (value.frame.receivedMicros != frame.receivedMicros ||
+          if (value.frame.frameId != frame.frameId ||
+              value.frame.receivedMicros != frame.receivedMicros ||
               value.frame.receivedAt != frame.receivedAt) {
             throw StateError("프레임 식별 정보 불일치");
           }
+          value.toDetectionResult();
           if (nowMicros() - frame.receivedMicros >= ttl.inMicroseconds) {
             expired++;
             observation = null;

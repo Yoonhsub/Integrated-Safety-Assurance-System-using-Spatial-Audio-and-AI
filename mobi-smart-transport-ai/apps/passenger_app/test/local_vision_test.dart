@@ -1,3 +1,8 @@
+import 'package:mobi_passenger_app/local_vision_main.dart' as camera_app;
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:mobi_passenger_app/src/widgets/vision_observation_panel.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +46,112 @@ LocalObservation observation(VisionFrame f) =>
 Future<void> flush() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test('local camera entry rejects a build without explicit isolation', () {
+    expect(camera_app.main, throwsStateError);
+  });
+  test('DetectionResult preserves UUID, source time and exact model metadata',
+      () {
+    final f = frame(0);
+    expect(f.metadata().frameId, f.frameId);
+    final value = LocalObservation(
+        f.metadata(),
+        Uint8List(0),
+        [
+          const LocalBox('bus', .9, .1, .2, .3, .4),
+          const LocalBox('bus_door', .7, .5, .2, .1, .3)
+        ],
+        2,
+        2,
+        12,
+        17);
+    final json = value.toDetectionResult();
+    expect(json['source'], 'android_camera');
+    expect(json['status'], 'ok');
+    expect(json['capturedAt'], f.receivedAt.toIso8601String());
+    expect(
+        (json['modelInfo'] as Map)['identifier'], 'sha256:$busDoorModelHash');
+    expect(json.containsKey('guidanceEligible'), false);
+    expect((json['detections'] as List).map((d) => d['className']),
+        ['버스', '버스 문']);
+    final evidence = Platform.environment['MOBI_ANDROID_SCHEMA_EVIDENCE'];
+    if (evidence != null) {
+      File(evidence).writeAsStringSync(jsonEncode([
+        json,
+        observation(f).toDetectionResult(),
+        for (final rotation in [0, 90, 180, 270])
+          observation(frame(0, rotation: rotation)).toDetectionResult(),
+      ]));
+    }
+  });
+  test('empty frame is valid detection output without a fabricated event', () {
+    final result = observation(frame(0)).toDetectionResult();
+    expect(result['detections'], isEmpty);
+    expect(result.containsKey('safetyEvent'), false);
+  });
+  for (final box in [
+    const LocalBox('person', .9, 0, 0, .1, .1),
+    const LocalBox('bus', 1.1, 0, 0, .1, .1),
+    const LocalBox('bus', .8, .9, 0, .2, .1),
+    const LocalBox('bus', .8, 0, 0, 0, .1),
+    const LocalBox('bus', double.nan, 0, 0, .1, .1),
+  ]) {
+    test(
+        'reject unsupported class, confidence or bbox ${box.classId}/${box.confidence}/${box.w}',
+        () {
+      final value = LocalObservation(frame(0), Uint8List(0), [box], 2, 2, 1, 2);
+      expect(value.toDetectionResult, throwsFormatException);
+    });
+  }
+  test('duplicate, reordered and future frames cannot create extra inference',
+      () async {
+    var now = 10, calls = 0;
+    final pump = FramePump((f) async {
+      calls++;
+      return observation(f);
+    }, () => now);
+    addTearDown(pump.dispose);
+    pump.start();
+    final f = frame(10);
+    pump.submit(f);
+    await flush();
+    pump.submit(f);
+    pump.submit(frame(9));
+    pump.submit(frame(11));
+    await flush();
+    expect(calls, 1);
+    expect(pump.rejected, 3);
+    await pump.stop();
+    now = 12;
+    pump.start();
+    pump.submit(frame(12));
+    await flush();
+    expect(calls, 2);
+    await pump.stop();
+  });
+  test('same timestamps but different frame UUID cannot replace observation',
+      () async {
+    final pump = FramePump((_) async => observation(frame(0)), () => 0);
+    addTearDown(pump.dispose);
+    pump.start();
+    pump.submit(frame(0));
+    await flush();
+    expect(pump.observation, isNull);
+    expect(pump.error, isNotNull);
+    await pump.stop();
+  });
+  testWidgets(
+      'local observation details do not initialize server polling or speech',
+      (tester) async {
+    final value = LocalObservation(frame(0), Uint8List(0),
+        [const LocalBox('bus', .9, .1, .1, .2, .2)], 2, 2, 1, 2);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: VisionObservationPanel.localCamera(value))));
+    expect(find.textContaining('guidanceEligible=false'), findsOneWidget);
+    expect(find.textContaining('bbox ['), findsOneWidget);
+    expect(find.textContaining('android'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   test('wrong/LFS-pointer model bytes fail before native runtime', () {
     expect(
         () => verifyModel(Uint8List.fromList(

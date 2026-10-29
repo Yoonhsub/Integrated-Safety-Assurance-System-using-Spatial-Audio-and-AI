@@ -18,9 +18,9 @@ Firebase 로그인/토큰/보호 API를 포함하지 않는 명시적 로컬 시
 ```powershell
 Set-Location '<통합 worktree>\mobi-smart-transport-ai\apps\passenger_app'
 flutter devices
-flutter run -d <Android-device-id> -t lib/local_vision_main.dart
+# 네트워크 권한이 없어 Flutter VM/hot-reload 연결은 지원하지 않음. APK를 설치해 직접 실행한다.
 # 실제 기기가 없을 때 빌드 확인만
-flutter build apk --debug -t lib/local_vision_main.dart
+flutter build apk --debug -t lib/local_vision_main.dart --dart-define=MOBI_OFFLINE_CAMERA=true
 ```
 
 앱에서 `TFLite 모델 선택` → `카메라 시작` → 권한 허용 순으로 진행한다. 정지/재시작, 화면 나가기, 백그라운드 전환을 시험한다. 기본은 후면 카메라이며 전면 선택은 정지 상태에서만 가능하다.
@@ -39,3 +39,18 @@ Python 참조의 tie-to-even 정수 반올림과 맞춘 letterbox를 사용한�
 SDK 플랫폼34/35/36은 기존 플러그인들의 compileSdk에 필요할 수 있다. 새로운 SDK 약관은 사용자가 `flutter doctor --android-licenses`에서 직접 확인해야 한다. Gradle은 SDK 자동 다운로드를 비활성화했다.
 
 향후 서버 전달 시 모바일 Observation을 기존 서버 인증 Observation과 구분하고, 승객 UID/기기 Producer identity/카메라/안내 세션을 서버에서 검증하는 권한 모델을 설계한다. 승객 토큰에 Producer 역할을 임의 부여하거나 관리자 키/공유 Producer 암호를 앱에 넣지 않는다. 불변 eventId/본문 재시도, token 갱신, frame epoch/순서/만료, 로그아웃 취소 정책은 모바일용으로 별도 구현한다.
+
+
+## 2026-10-29 로컬 입력 계약 보완
+
+기존 Python VisionStreamRunner를 Android 프로세스에서 실행하지 않는다. 같은 최신 프레임 우선 원칙을 기존 Dart FramePump/worker isolate로 구현하며, Python 코드나 서버 인증을 앱에 복제하지 않는다.
+각 카메라 callback은 UUID를 한 번 부여하고 worker 결과까지 보존한다. 중복·역순·미래 monotonic 시각과 다른 UUID의 결과를 거부한다. 스트림 callback은 카메라 실행 generation과 결합해 이전 스트림이 새 세션으로 유입되지 않는다.
+LocalObservation.toDetectionResult()는 기존 공유 DetectionResult 1.0.0 JSON 계약을 사용한다. 모델 해시/프로필 고정, 정규화 bbox/className/confidence 검증, 빈 detections 정상 허용을 유지한다. 시각은 호스트 callback 수신 시각이며 노출 시각이 아니다.
+VisionObservationPanel.localCamera는 동일 파일의 읽기 전용 표시 경로다. 서버 polling/소유권 검증을 위조하거나 TTS 엔진을 만들지 않는다. 모델 상태·frameId·포맷·회전·bbox·지연을 표시하고 guidanceEligible=false를 명시한다. 이 표시는 서버가 검증한 세션 Observation을 의미하지 않는다.
+실시간 CameraPreview와 추론에 사용한 보정 JPEG/bbox를 별도로 표시한다. native 모델 호출/카메라 권한/회전/발열/FPS/메모리는 실제 Android 기기에서만 PASS로 판정한다.
+
+### 네트워크 없는 Android 시험 APK
+
+MOBI_OFFLINE_CAMERA=true는 명시적 local_vision_main 디버그 빌드에만 허용한다. Gradle이 일반 main/릴리스와의 혼용을 거부한다. 해당 APK는 applicationId 끝에 .offlinevision을 사용하며 INTERNET permission과 FirebaseInitProvider를 병합 Manifest에서 제거한다. Dart 진입점도 이 설정 없이 실행되지 않는다. 일반 Passenger Manifest는 기존 인터넷 권한과 Provider를 유지한다. 파일 선택은 Android 문서 선택기이며 로컬에 미리 준비한 승인 모델만 선택한다.
+
+오프라인 APK는 INTERNET이 없어 Flutter debug VM 연결/hot reload가 불가능할 수 있다. 연결된 승인 기기에서 APK를 직접 설치한 후 앱 아이콘으로 시작한다. .offlinevision 별도 패키지이므로 일반 Passenger 설치를 덮어쓰지 않는다. 원격 문서 제공자 대신 휴대폰 로컬에 준비한 모델 파일만 선택한다.

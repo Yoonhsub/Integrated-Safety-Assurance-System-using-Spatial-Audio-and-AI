@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../local_vision/vision_codec.dart';
 import 'package:flutter/material.dart';
 import '../services/speech_priority_coordinator.dart';
 import '../services/vision_observation_speech.dart';
@@ -16,6 +17,28 @@ class VisionObservationPanel extends StatefulWidget {
     this.scopeVersion,
     this.priorityBlocked = false,
   });
+
+  /// Read-only local preview, deliberately bypasses neither server ownership
+  /// nor guidance eligibility: it never polls or constructs a speech engine.
+  static Widget localCamera(LocalObservation observation) {
+    final result = observation.toDetectionResult();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('로컬 DetectionResult · Schema 계약 검사 통과'),
+      const Text('guidanceEligible=false · 방향/거리/승차 가능 여부 미확인'),
+      Text('frameId: ${result['frameId']}'),
+      Text(
+          '입력 ${observation.frame.format} ${observation.frame.width}×${observation.frame.height} · 회전 ${observation.frame.rotation}° · mirror=${observation.frame.mirror}'),
+      Text('보정 이미지 ${observation.width}×${observation.height}'),
+      Text('프레임 수신 ${result['capturedAt']} · 센서 노출 시각 미검증'),
+      Text(
+          '추론 ${observation.inferenceMs.toStringAsFixed(1)}ms · 처리 ${observation.processingMs.toStringAsFixed(1)}ms'),
+      if (observation.boxes.isEmpty) const Text('현재 검출 객체 없음 · 안전함을 의미하지 않음'),
+      for (final b in observation.boxes)
+        Text(
+            '${b.classId == 'bus' ? '버스' : '버스 문'} · ${b.confidence.toStringAsFixed(3)} · bbox [${b.x.toStringAsFixed(3)}, ${b.y.toStringAsFixed(3)}, ${b.w.toStringAsFixed(3)}, ${b.h.toStringAsFixed(3)}]'),
+    ]);
+  }
+
   final String sessionId;
   final Future<Map<String, dynamic>> Function(String) fetch;
   final String? ownerUid;
