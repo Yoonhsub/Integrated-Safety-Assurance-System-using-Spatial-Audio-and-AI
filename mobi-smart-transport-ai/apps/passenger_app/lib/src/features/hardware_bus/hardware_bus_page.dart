@@ -1,3 +1,4 @@
+import 'obstacle_cue_input.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'bus_passage.dart';
@@ -11,7 +12,10 @@ const beaconA = 'C3:00:00:5C:B9:47';
 const beaconB = 'C3:00:00:5C:B9:48';
 
 class HardwareBusPage extends StatefulWidget {
-  const HardwareBusPage({super.key, this.scannerFactory});
+  const HardwareBusPage(
+      {super.key, this.scannerFactory, this.obstacles, this.sessionNow});
+  final ObstacleCueSnapshot? obstacles;
+  final Duration Function()? sessionNow;
   final BeaconScanner Function(BeaconIdResolver)? scannerFactory;
   @override
   State<HardwareBusPage> createState() => _HardwareBusPageState();
@@ -310,6 +314,8 @@ class _HardwareBusPageState extends State<HardwareBusPage>
               busAngle: _busAngle,
               warning: _warning,
               audioScope: '$_toneBeaconMac/$_epoch',
+              obstacles: widget.obstacles,
+              sessionNow: widget.sessionNow,
             ),
             _card('A', beaconA),
             _card('B', beaconB),

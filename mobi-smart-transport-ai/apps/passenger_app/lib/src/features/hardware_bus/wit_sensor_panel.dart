@@ -1,3 +1,4 @@
+import 'obstacle_cue_input.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -18,6 +19,8 @@ class WitSensorPanel extends StatefulWidget {
     this.warning = false,
     this.busEnabled = true,
     this.audioScope = '',
+    this.obstacles,
+    this.sessionNow,
   });
   final Future<bool> Function() ensureReady;
   final int? beaconRssi;
@@ -26,6 +29,8 @@ class WitSensorPanel extends StatefulWidget {
   final double busAngle;
   final bool warning, busEnabled;
   final String audioScope;
+  final ObstacleCueSnapshot? obstacles;
+  final Duration Function()? sessionNow;
 
   @override
   State<WitSensorPanel> createState() => _WitSensorPanelState();
@@ -283,6 +288,8 @@ class _WitSensorPanelState extends State<WitSensorPanel>
               warning: widget.warning,
               busEnabled: widget.busEnabled,
               audioScope: widget.audioScope,
+              obstacles: widget.obstacles,
+              sessionNow: widget.sessionNow,
             ),
           ],
         ),

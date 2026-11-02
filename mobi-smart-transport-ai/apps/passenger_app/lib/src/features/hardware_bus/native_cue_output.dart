@@ -21,7 +21,8 @@ class NativeCueOutput implements CueOutput {
       'left': cue.direction.left,
       'right': cue.direction.right,
       'sensorAgeMs': state.sensorAgeMs,
-      'beaconAgeMs': state.beaconAgeMs,
+      // Identified obstacles do not depend on bus beacon reception.
+      'beaconAgeMs': cue.object.obstacleRisk != null ? -1 : state.beaconAgeMs,
       'intervalMs':
           warning ? cue.repeatInterval.inMilliseconds : state.targetIntervalMs,
       'pattern': warning ? 'warning' : 'target',

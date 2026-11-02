@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'cue_control.dart';
+import 'obstacle_cue_input.dart';
 import 'native_cue_output.dart';
 import 'direction_pan.dart';
 import 'wit_sensor_protocol.dart';
@@ -20,6 +21,8 @@ class DirectionAudioPanel extends StatefulWidget {
     this.warning = false,
     this.busEnabled = true,
     this.audioScope = '',
+    this.obstacles,
+    this.sessionNow,
   });
   final double? z, reference;
   final bool fresh;
@@ -30,6 +33,12 @@ class DirectionAudioPanel extends StatefulWidget {
   final double busAngle;
   final bool warning, busEnabled;
   final String audioScope;
+
+  /// Optional producer snapshot; no detector or synthetic input is created here.
+  final ObstacleCueSnapshot? obstacles;
+
+  /// Required with obstacles: the same monotonic clock as snapshot capture time.
+  final Duration Function()? sessionNow;
   @override
   State<DirectionAudioPanel> createState() => _DirectionAudioPanelState();
 }
@@ -58,7 +67,6 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   bool get _beaconFresh =>
       widget.beaconRssi != null && _beaconAge >= 0 && _beaconAge < 3000;
   bool get _sensorReady =>
-      widget.busEnabled &&
       widget.fresh &&
       widget.sensorAgeMs >= 0 &&
       widget.sensorAgeMs < 1000 &&
@@ -66,10 +74,29 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       widget.reference != null &&
       widget.z!.isFinite &&
       widget.reference!.isFinite;
-  bool get _ready =>
-      _sensorReady &&
-      (!_proximity || _beaconFresh) &&
-      (_pan?.supported ?? false);
+  Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
+  bool get _externalWarning => _controller.active?.object.obstacleRisk != null;
+  String get _playingMessage => _externalWarning
+      ? '장애물 경고음 · 센서 방향 보정 중'
+      : _manualWarning
+          ? '예시 경고음 재생 중'
+          : '실제 비콘 간격 · 센서 방향 보정 중';
+  bool get _ready {
+    final now = _now;
+    return CueController()
+            .tick(
+              now: now,
+              context: CueContext.walking,
+              headYaw: widget.z ?? double.nan,
+              reference: widget.reference ?? double.nan,
+              reverse: _reverse,
+              inputReady: _sensorReady,
+              objects: _objects(now),
+            )
+            .selection !=
+        null;
+  }
+
   int get _interval => _proximity && _beaconFresh
       ? beaconToneIntervalMs(widget.beaconRssi!)
       : 1000;
@@ -113,15 +140,30 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   }
 
   CueDecision _decision() {
-    final now = _clock.elapsed;
+    final now = _now;
     return _controller.tick(
       now: now,
       context: CueContext.walking,
       headYaw: widget.z ?? double.nan,
       reference: widget.reference ?? double.nan,
       reverse: _reverse,
-      inputReady: _sensorReady && (!_proximity || _beaconFresh),
-      objects: [
+      inputReady: _sensorReady,
+      objects: _objects(now),
+    );
+  }
+
+  List<CueObject> _objects(Duration now) {
+    List<CueObject> obstacles = const [];
+    if (widget.obstacles != null && widget.sessionNow != null) {
+      try {
+        obstacles = widget.obstacles!.toCueObjects();
+      } on ArgumentError {
+        // Reject invalid snapshots; never retain an older warning as fallback.
+      }
+    }
+    return [
+      ...obstacles,
+      if (widget.busEnabled && _beaconFresh) ...[
         CueObject(
           id: 'manual-target',
           kind: CueObjectKind.target,
@@ -129,12 +171,11 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           angleDegrees: _objectAngle,
           observedAt: now,
         ),
-        if (_manualWarning)
+        if (_manualWarning && _sensorReady)
           CueObject(
             id: 'manual-warning',
             kind: CueObjectKind.obstacle,
             distance: CueDistance.near,
-            // A rear hazard remains audible without claiming a front bearing.
             angleDegrees: _warningBehind
                 ? relativeAngle(widget.z!, widget.reference!) *
                     (_reverse ? -1 : 1)
@@ -142,7 +183,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
             observedAt: now,
           ),
       ],
-    );
+    ];
   }
 
   Future<void> _start() async {
@@ -158,7 +199,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       if (_disposed || generation != _generation) return;
       _playing = _output.running;
       _route = _output.route;
-      _message = _manualWarning ? '예시 경고음 재생 중' : '실제 비콘 간격 · 센서 방향 보정 중';
+      _message = _playingMessage;
       if (_playing) {
         _duration
           ..reset()
@@ -202,7 +243,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         return;
       }
       _route = _output.route;
-      _message = _manualWarning ? '예시 경고음 재생 중' : '실제 비콘 간격 · 센서 방향 보정 중';
+      _message = _playingMessage;
     } catch (e) {
       if (generation == _generation) await _stop('출력 상태 확인 실패: $e');
     } finally {
@@ -239,8 +280,9 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     if ((_playing || _starting) &&
         (!_ready ||
             oldWidget.reference != widget.reference ||
-            oldWidget.beaconName != widget.beaconName ||
-            oldWidget.audioScope != widget.audioScope)) {
+            (!_externalWarning &&
+                (oldWidget.beaconName != widget.beaconName ||
+                    oldWidget.audioScope != widget.audioScope)))) {
       unawaited(_stop('센서 상태 또는 기준각이 바뀌어 테스트음을 중지했습니다.'));
     }
   }
@@ -254,19 +296,21 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   @override
   Widget build(BuildContext context) {
-    final pan = _warningBehind
-        ? _pan
-        : (_playing ? _controller.active?.direction ?? _pan : _pan);
+    final pan = _externalWarning
+        ? _controller.active?.direction
+        : _warningBehind
+            ? _pan
+            : (_playing ? _controller.active?.direction ?? _pan : _pan);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Divider(height: 28),
         Text(
-          '버스 방향 안내',
+          '버스·장애물 방향 안내',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const Text(
-          '골전도 이어폰을 연결하고 도로 정면에서 기준을 설정하세요. 버스 탐색 중에 소리를 시작하세요.',
+          '골전도 이어폰을 연결하고 도로 정면에서 기준을 설정하세요. 버스 또는 장애물 입력이 있을 때 소리를 시작하세요.',
         ),
         Text(
           _proximity
@@ -277,7 +321,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         ),
         Text('도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
         if (pan != null)
-          Text(_warningBehind
+          Text(_warningBehind && !_externalWarning
               ? '후방 대상 · 방향 없는 경고음'
               : pan.supported
                   ? '출력 Cue: ${pan.cue.code}'
@@ -305,7 +349,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           children: [
             FilledButton(
               onPressed: _ready && !_playing && !_starting ? _start : null,
-              child: const Text('버스 소리 시작'),
+              child: Text(widget.obstacles != null ? '안내 소리 시작' : '버스 소리 시작'),
             ),
             OutlinedButton(
               onPressed: _playing || _starting
