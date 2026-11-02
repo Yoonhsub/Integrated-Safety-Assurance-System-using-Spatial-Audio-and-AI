@@ -77,25 +77,26 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
   bool get _externalWarning => _controller.active?.object.obstacleRisk != null;
   String get _playingMessage => _externalWarning
-      ? '장애물 경고음 · 센서 방향 보정 중'
+      ? '장애물 공간 경고음 · 센서 방향 보정 중'
       : _manualWarning
           ? '예시 경고음 재생 중'
           : '실제 비콘 간격 · 센서 방향 보정 중';
-  bool get _ready {
+  CueSelection? get _preview {
     final now = _now;
     return CueController()
-            .tick(
-              now: now,
-              context: CueContext.walking,
-              headYaw: widget.z ?? double.nan,
-              reference: widget.reference ?? double.nan,
-              reverse: _reverse,
-              inputReady: _sensorReady,
-              objects: _objects(now),
-            )
-            .selection !=
-        null;
+        .tick(
+          now: now,
+          context: CueContext.walking,
+          headYaw: widget.z ?? double.nan,
+          reference: widget.reference ?? double.nan,
+          reverse: _reverse,
+          inputReady: _sensorReady,
+          objects: _objects(now),
+        )
+        .selection;
   }
+
+  bool get _ready => _preview != null;
 
   int get _interval => _proximity && _beaconFresh
       ? beaconToneIntervalMs(widget.beaconRssi!)
@@ -296,8 +297,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   @override
   Widget build(BuildContext context) {
-    final pan = _externalWarning
-        ? _controller.active?.direction
+    final displayed = _playing ? _controller.active : _preview;
+    final spatial = displayed?.usesHrtf ?? false;
+    final pan = spatial
+        ? displayed?.direction
         : _warningBehind
             ? _pan
             : (_playing ? _controller.active?.direction ?? _pan : _pan);
@@ -312,23 +315,31 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         const Text(
           '골전도 이어폰을 연결하고 도로 정면에서 기준을 설정하세요. 버스 또는 장애물 입력이 있을 때 소리를 시작하세요.',
         ),
-        Text(
-          _proximity
-              ? (_beaconFresh
-                  ? '비콘 ${widget.beaconName}: ${widget.beaconRssi} dBm · 간격 ${(_interval / 1000).toStringAsFixed(2)}초'
-                  : '버스 비콘 수신 대기 · 버스 탐색을 시작해주세요')
-              : '간격 조절 꺼짐 · 고정 간격 1초',
-        ),
-        Text('도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
+        if (widget.busEnabled)
+          Text(
+            _proximity
+                ? (_beaconFresh
+                    ? '비콘 ${widget.beaconName}: ${widget.beaconRssi} dBm · 간격 ${(_interval / 1000).toStringAsFixed(2)}초'
+                    : '버스 비콘 수신 대기 · 버스 탐색을 시작해주세요')
+                : '간격 조절 꺼짐 · 고정 간격 1초',
+          ),
+        if (widget.busEnabled)
+          Text('도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
         if (pan != null)
-          Text(_warningBehind && !_externalWarning
-              ? '후방 대상 · 방향 없는 경고음'
-              : pan.supported
-                  ? '출력 Cue: ${pan.cue.code}'
-                  : '후방 목표 · 재생 중지'),
+          Text(spatial
+              ? (pan.targetAngle.abs() > 95
+                  ? '후방 장애물 · 공간 경고음'
+                  : '장애물 · 공간 경고음')
+              : _warningBehind
+                  ? '후방 대상 · 방향 없는 경고음'
+                  : pan.supported
+                      ? '출력 Cue: ${pan.cue.code}'
+                      : '후방 목표 · 재생 중지'),
         if (pan != null)
           Text(
-            '목표 상대각: ${pan.targetAngle.toStringAsFixed(1)}° · 왼쪽 ${(pan.left * 100).round()}% / 오른쪽 ${(pan.right * 100).round()}%',
+            spatial
+                ? '장애물 상대 방향: ${pan.targetAngle.toStringAsFixed(1)}° (정면 0° · 오른쪽 +90° · 후방 ±180°)'
+                : '목표 상대각: ${pan.targetAngle.toStringAsFixed(1)}° · 왼쪽 ${(pan.left * 100).round()}% / 오른쪽 ${(pan.right * 100).round()}%',
           ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -359,9 +370,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
             ),
           ],
         ),
-        const Text(
-          '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다.',
-        ),
+        if (widget.busEnabled)
+          const Text(
+            '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다.',
+          ),
       ],
     );
   }

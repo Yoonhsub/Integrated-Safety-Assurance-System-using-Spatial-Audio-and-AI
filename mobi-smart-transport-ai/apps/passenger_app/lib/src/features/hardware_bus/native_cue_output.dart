@@ -26,6 +26,7 @@ class NativeCueOutput implements CueOutput {
       'intervalMs':
           warning ? cue.repeatInterval.inMilliseconds : state.targetIntervalMs,
       'pattern': warning ? 'warning' : 'target',
+      if (cue.usesHrtf) 'azimuthDegrees': cue.direction.targetAngle,
     });
     running = result?['running'] == true;
     route = result?['route'] as String? ?? '';

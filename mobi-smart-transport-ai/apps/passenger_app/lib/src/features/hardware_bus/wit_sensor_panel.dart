@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'wit_sensor_protocol.dart';
 import 'direction_audio_panel.dart';
 import 'direction_pan.dart';
+import 'spatial_warning_check_panel.dart';
 
 const witSensorMac = 'F1:35:40:62:CD:43';
 
@@ -54,6 +55,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   int _generation = 0, _frames = 0;
   bool _connecting = false, _connected = false, _closing = false;
   bool _disposed = false;
+  bool _listeningCheck = false;
   String _status = '센서 전원을 켜고 제조사 앱의 연결을 끊어주세요.';
 
   bool _current(int generation) =>
@@ -275,21 +277,37 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             const Text(
               '정류장에서 도로 정면을 보고 기준을 설정하세요. 센서를 머리에 고정하고 좌우 부호를 확인하세요.',
             ),
-            DirectionAudioPanel(
-              key: const ValueKey('direction-audio'),
-              z: _filteredYaw,
-              reference: _reference,
-              fresh: _fresh,
-              sensorAgeMs: _age.elapsedMilliseconds,
-              beaconRssi: widget.beaconRssi,
-              beaconSeenAt: widget.beaconSeenAt,
-              beaconName: widget.beaconName,
-              busAngle: widget.busAngle,
-              warning: widget.warning,
-              busEnabled: widget.busEnabled,
-              audioScope: widget.audioScope,
-              obstacles: widget.obstacles,
-              sessionNow: widget.sessionNow,
+            if (!_listeningCheck)
+              DirectionAudioPanel(
+                key: const ValueKey('direction-audio'),
+                z: _filteredYaw,
+                reference: _reference,
+                fresh: _fresh,
+                sensorAgeMs: _age.elapsedMilliseconds,
+                beaconRssi: widget.beaconRssi,
+                beaconSeenAt: widget.beaconSeenAt,
+                beaconName: widget.beaconName,
+                busAngle: widget.busAngle,
+                warning: widget.warning,
+                busEnabled: widget.busEnabled,
+                audioScope: widget.audioScope,
+                obstacles: widget.obstacles,
+                sessionNow: widget.sessionNow,
+              ),
+            ExpansionTile(
+              key: const ValueKey('spatial-listening-check'),
+              title: const Text('공간 경고음 청취 확인 (검증용)'),
+              onExpansionChanged: (open) =>
+                  setState(() => _listeningCheck = open),
+              children: [
+                if (_listeningCheck)
+                  SpatialWarningCheckPanel(
+                    z: _filteredYaw,
+                    reference: _reference,
+                    fresh: _fresh,
+                    sensorAgeMs: _age.elapsedMilliseconds,
+                  ),
+              ],
             ),
           ],
         ),

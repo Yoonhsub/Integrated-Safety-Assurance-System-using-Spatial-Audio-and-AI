@@ -71,11 +71,12 @@ void main() {
             .direction
             .targetAngle,
         0);
-    expect(
-        decide(CueController(),
-                snapshot(ObstacleRisk.danger, angle: 180).toCueObjects())
-            .selection,
-        isNull);
+    final rear = decide(CueController(),
+            snapshot(ObstacleRisk.danger, angle: 180).toCueObjects())
+        .selection!;
+    expect(rear.usesHrtf, isTrue);
+    expect(rear.direction.targetAngle.abs(), 180);
+    expect(rear.direction.left, rear.direction.right);
   });
   test('invalid directions, duplicate IDs and oversized input are rejected',
       () {
@@ -114,7 +115,9 @@ void main() {
             .selection!);
     expect(calls[0].arguments['pattern'], 'target');
     expect(calls[0].arguments['intervalMs'], 900);
+    expect((calls[0].arguments as Map).containsKey('azimuthDegrees'), isFalse);
     expect(calls[1].arguments['pattern'], 'warning');
     expect(calls[1].arguments['intervalMs'], 500);
+    expect(calls[1].arguments['azimuthDegrees'], -45);
   });
 }

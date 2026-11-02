@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.sin
 
-/** Stereo diagnostic tone. No HRTF rendering, system-volume changes or background playback. */
+/** Bus diagnostic pan and measured binaural obstacle warning. No system-volume changes. */
 class ToneTestEngine(context: Context) {
     private val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val handler = Handler(Looper.getMainLooper())
@@ -21,8 +21,9 @@ class ToneTestEngine(context: Context) {
     private var updatedAt = 0L
     private var sensorAt = 0L
     private var beaconAt = 0L
-    @Volatile private var intervalMs = 1000
-    @Volatile private var pattern = "target"
+    private data class RenderState(val intervalMs: Int, val pattern: String, val azimuth: Double?)
+    @Volatile private var renderState = RenderState(1000, "target", null)
+    private val warningBank by lazy { SpatialWarningBank(context.assets.open("hrtf/warning_bank.bin")) }
     private var left = 0.0f
     private var right = 0.0f
     private var reason = "대기 중"
@@ -49,7 +50,9 @@ class ToneTestEngine(context: Context) {
         AudioDeviceInfo.TYPE_USB_HEADSET
     )
 
-    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String) {
+    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double?) {
+        require(azimuth == null || (azimuth.isFinite() && azimuth in -180.0..180.0 && patternName == "warning"))
+        require(azimuth == null || interval >= 250)
         require(patternName == "target" || patternName == "warning") { "잘못된 소리 패턴" }
         require(l.isFinite() && r.isFinite() && l in 0.0..1.0 && r in 0.0..1.0)
         require(age in 0..999) { "새 센서 각도를 수신한 뒤 시작해주세요." }
@@ -57,9 +60,10 @@ class ToneTestEngine(context: Context) {
         require(beaconAge == -1 || beaconAge in 0..2999) { "기준 비콘을 다시 스캔해주세요." }
     }
 
-    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String): Map<String, Any> {
+    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null): Map<String, Any> {
         stop("새 테스트 준비")
-        validate(l, r, age, interval, beaconAge, patternName)
+        validate(l, r, age, interval, beaconAge, patternName, azimuth)
+        if (azimuth != null) warningBank // Fail before acquiring focus if data is missing.
         val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { isHeadphone(it) }
         val output = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
             ?: outputs.firstOrNull()
@@ -88,8 +92,7 @@ class ToneTestEngine(context: Context) {
             audio.setStereoVolume(0f, 0f)
             left = l.toFloat()
             right = r.toFloat()
-            intervalMs = interval
-            pattern = patternName
+            renderState = RenderState(interval, patternName, azimuth)
             startedAt = SystemClock.elapsedRealtime()
             updatedAt = startedAt
             sensorAt = startedAt - age
@@ -117,12 +120,20 @@ class ToneTestEngine(context: Context) {
             val warningSecondStart = (rate * 0.16).toInt()
             var frame = 0L
             var pulseStart = 0L
+            var previous = renderState
+            var spatial = previous.azimuth?.let { SpatialWarningRenderer(warningBank, it) }
             try {
                 while (workerGeneration.get() == generation) {
+                    val current = renderState
+                    if (previous.pattern != current.pattern || (previous.azimuth == null) != (current.azimuth == null)) {
+                        pulseStart = frame
+                        spatial = current.azimuth?.let { SpatialWarningRenderer(warningBank, it) }
+                    }
+                    previous = current
                     for (i in 0 until chunkFrames) {
-                        if (frame - pulseStart >= intervalMs.toLong() * rate / 1000) pulseStart = frame
+                        if (frame - pulseStart >= current.intervalMs.toLong() * rate / 1000) pulseStart = frame
                         val phase = (frame - pulseStart).toInt()
-                        val warning = pattern == "warning"
+                        val warning = current.pattern == "warning"
                         val pulseFrames = if (warning) warningPulseFrames else targetPulseFrames
                         val localPhase = if (warning && phase >= warningSecondStart) phase - warningSecondStart else phase
                         val sample = if (localPhase in 0 until pulseFrames) {
@@ -130,8 +141,12 @@ class ToneTestEngine(context: Context) {
                             val frequency = if (warning) 1100 else 700
                             (sin(2 * PI * frequency * localPhase / rate) * envelope * 0.12 * Short.MAX_VALUE).toInt().toShort()
                         } else 0.toShort()
-                        pcm[i * 2] = sample
-                        pcm[i * 2 + 1] = sample
+                        if (current.azimuth != null && spatial != null) {
+                            spatial.render(phase, current.azimuth, pcm, i * 2)
+                        } else {
+                            pcm[i * 2] = sample
+                            pcm[i * 2 + 1] = sample
+                        }
                         frame++
                     }
                     var offset = 0
@@ -147,14 +162,13 @@ class ToneTestEngine(context: Context) {
         }, "MobiDiagnosticTone").apply { isDaemon = true; start() }
     }
 
-    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String): Map<String, Any> {
+    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null): Map<String, Any> {
         if (track == null) return state()
         try {
-            validate(l, r, age, interval, beaconAge, patternName)
+            validate(l, r, age, interval, beaconAge, patternName, azimuth)
             left = l.toFloat()
             right = r.toFloat()
-            intervalMs = interval
-            pattern = patternName
+            renderState = RenderState(interval, patternName, azimuth)
             updatedAt = SystemClock.elapsedRealtime()
             sensorAt = updatedAt - age
             beaconAt = if (beaconAge < 0) 0L else updatedAt - beaconAge
@@ -170,7 +184,8 @@ class ToneTestEngine(context: Context) {
         val audio = track ?: return
         val route = audio.routedDevice
         if (route != null && isHeadphone(route)) {
-            audio.setStereoVolume(left, right)
+            if (renderState.azimuth != null) audio.setStereoVolume(1f, 1f)
+            else audio.setStereoVolume(left, right)
             reason = "방향/간격 테스트음 재생 중"
         } else {
             audio.setStereoVolume(0f, 0f)
@@ -179,7 +194,8 @@ class ToneTestEngine(context: Context) {
     }
 
     fun state(): Map<String, Any> = mapOf(
-        "running" to (track != null), "reason" to reason, "pattern" to pattern,
+        "running" to (track != null), "reason" to reason, "pattern" to renderState.pattern,
+        "spatial" to (renderState.azimuth != null),
         "route" to (track?.routedDevice?.productName?.toString() ?: "이어폰 확인 중")
     )
 

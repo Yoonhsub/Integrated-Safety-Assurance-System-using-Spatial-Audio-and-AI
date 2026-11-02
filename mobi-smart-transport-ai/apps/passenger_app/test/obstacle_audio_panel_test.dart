@@ -97,22 +97,54 @@ void main() {
     expect(calls.last.method, 'stop');
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets(
-      'missing shared clock and rear hazard cannot start a false front warning',
-      (tester) async {
+  testWidgets('missing shared clock cannot start a warning', (tester) async {
     await tester.pumpWidget(panel(obstacles: risk(), clock: false));
     expect(
         tester
             .widget<FilledButton>(find.widgetWithText(FilledButton, '안내 소리 시작'))
             .onPressed,
         isNull);
-    await tester.pumpWidget(panel(obstacles: risk(angle: 180)));
-    expect(
-        tester
-            .widget<FilledButton>(find.widgetWithText(FilledButton, '안내 소리 시작'))
-            .onPressed,
-        isNull);
     expect(calls.where((c) => c.method == 'start'), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'rear obstacle uses spatial azimuth and never displays a front cue',
+      (tester) async {
+    await tester.pumpWidget(panel(obstacles: risk(angle: 180)));
+    await start(tester);
+    final args = calls.lastWhere((c) => c.method == 'start').arguments as Map;
+    expect((args['azimuthDegrees'] as num).abs(), 180);
+    expect(args['left'], args['right']);
+    expect(args['pattern'], 'warning');
+    expect(args['beaconAgeMs'], -1);
+    expect(find.text('후방 장애물 · 공간 경고음'), findsOneWidget);
+    expect(find.text('출력 Cue: FRONT'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'rear source follows head turn through side to front without restarting',
+      (tester) async {
+    final obstacle = risk(angle: 180);
+    await tester.pumpWidget(panel(obstacles: obstacle));
+    await start(tester);
+    await tester.pumpWidget(panel(obstacles: obstacle, yaw: 90));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+        calls
+            .lastWhere((c) => c.method == 'update')
+            .arguments['azimuthDegrees'],
+        90);
+    await tester.pumpWidget(panel(obstacles: obstacle, yaw: 180));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+        calls
+            .lastWhere((c) => c.method == 'update')
+            .arguments['azimuthDegrees'],
+        0);
+    expect(calls.where((c) => c.method == 'start').length, 1);
+    expect(find.text('후방 장애물 · 공간 경고음'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
