@@ -5,6 +5,9 @@ enum CueObjectKind { target, obstacle, irrelevant }
 
 enum CueDistance { near, medium, far }
 
+/// Supplied by a future risk interpreter, never inferred from BLE strength.
+enum ObstacleRisk { none, caution, danger }
+
 enum CueContext { waiting, walking, boarding, complete }
 
 enum CueAction { play, update, stop, none }
@@ -16,10 +19,12 @@ class CueObject {
     required this.distance,
     required this.angleDegrees,
     required this.observedAt,
+    this.obstacleRisk,
   });
   final String id;
   final CueObjectKind kind;
   final CueDistance distance;
+  final ObstacleRisk? obstacleRisk;
 
   /// Direction in the calibrated world frame; positive is right.
   final double angleDegrees;
@@ -111,6 +116,13 @@ class CueController {
       return 0;
     }
     if (object.kind == CueObjectKind.target) return 1;
+    if (object.obstacleRisk != null) {
+      return switch (object.obstacleRisk!) {
+        ObstacleRisk.none => 0,
+        ObstacleRisk.caution => 2,
+        ObstacleRisk.danger => 3,
+      };
+    }
     if (object.distance == CueDistance.far) return 0;
     final moving =
         context == CueContext.walking || context == CueContext.boarding;
