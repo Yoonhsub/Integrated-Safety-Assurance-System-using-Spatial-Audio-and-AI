@@ -118,6 +118,7 @@ android {
             <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                 xmlns:tools="http://schemas.android.com/tools">
                 <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+                <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
                 <application>
                     <provider android:name="com.google.firebase.provider.FirebaseInitProvider" tools:node="remove" />
                 </application>
@@ -133,6 +134,7 @@ android {
         manifest.writeText("""
             <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
                 <uses-permission android:name="android.permission.INTERNET" />
+                <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
                 <application android:networkSecurityConfig="@xml/local_backend_network">
                     <provider android:name="com.google.firebase.provider.FirebaseInitProvider" tools:node="remove" />
                 </application>
@@ -156,6 +158,7 @@ android {
         manifest.writeText("""
             <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
                 <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+                <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
                 <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
                 <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
                 <application>
@@ -185,4 +188,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// #68 native HRTF bank tests; test app target/define isolation above is retained.
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }

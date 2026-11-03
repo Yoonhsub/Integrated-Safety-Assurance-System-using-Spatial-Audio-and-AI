@@ -1,10 +1,10 @@
 package com.example.mobi_passenger_app
 
-import io.flutter.embedding.android.FlutterActivity
+import com.mobi.passenger.HardwareBusActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+class MainActivity : HardwareBusActivity() {
     private var audio: LocalStereoCue? = null
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)

@@ -31,15 +31,16 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
     setState(() => _isSwitching = true);
 
     try {
-      final response = await AuthenticatedApiClient(
-        onUnauthorized: FirebaseAuthSession.instance.signOut,
-      )
-          .post(
-            Uri.parse('$_apiBaseUrl/config/data-mode'),
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({'mode': mode}),
-          )
-          .timeout(const Duration(seconds: 5));
+      final response =
+          await AuthenticatedApiClient(
+                onUnauthorized: FirebaseAuthSession.instance.signOut,
+              )
+              .post(
+                Uri.parse('$_apiBaseUrl/config/data-mode'),
+                headers: const {'Content-Type': 'application/json'},
+                body: jsonEncode({'mode': mode}),
+              )
+              .timeout(const Duration(seconds: 5));
 
       if (!mounted) return;
 
@@ -82,8 +83,8 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                 Text(
                   'MOBI 스마트 교통 시스템',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
@@ -91,8 +92,8 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                 Text(
                   '데모 테스트 모드를 선택해주세요',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: colorScheme.onSurface.withValues(alpha: 0.6),
-                      ),
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
                 ),
                 const SizedBox(height: 48),
                 // Mock 데이터 모드 카드
@@ -129,10 +130,17 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                     onPressed: _isSwitching
                         ? null
                         : () =>
-                            Navigator.of(context).pushNamed('/native-audio'),
+                              Navigator.of(context).pushNamed('/native-audio'),
                     icon: const Icon(Icons.volume_up_outlined),
                     label: const Text('음성·방향 확인 (Android)'),
                   ),
+                OutlinedButton.icon(
+                  onPressed: _isSwitching
+                      ? null
+                      : () => Navigator.of(context).pushNamed('/hardware-bus'),
+                  icon: const Icon(Icons.bluetooth_searching),
+                  label: const Text('실기기 연동확인'),
+                ),
                 // 전환 중 로딩 표시
                 if (_isSwitching) ...[
                   const SizedBox(height: 24),
@@ -199,19 +207,17 @@ class _ModeCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
+                        style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         description,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withValues(alpha: 0.6),
-                            ),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.6),
+                        ),
                       ),
                     ],
                   ),

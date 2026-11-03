@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <application
         android:label="mobi_passenger_app"
         android:name="${applicationName}"
@@ -46,6 +49,7 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
         <!-- Android 11+ package visibility for the existing flutter_tts engine. -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />

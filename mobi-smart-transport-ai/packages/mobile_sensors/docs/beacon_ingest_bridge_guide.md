@@ -128,3 +128,9 @@ The bridge sends `macAddress` when it can resolve a MAC-like identifier. The bac
 
 Hardware-free tests inject scan callbacks and clocks. They do not demonstrate
 RF delivery timing, permissions, OS background behavior, or bus identity.
+
+## 2026-10-23 UTC 전송 및 독립 하드웨어 앱
+
+BeaconIngestPayload는 timestamp.toUtc().toIso8601String()으로 동일 시점의 UTC 값을 전송한다. 로컬 DateTime과 기존 UTC 값에 관한 회귀 테스트를 포함하여 패키지 테스트 33개가 통과했다.
+실제 비콘·WT901·골전도 독립 테스트는 저장소 루트 temporary_test_app에서 수행한다. 앱 기능/실행 안내와 최신 검사 결과는 해당 README.md 및 실행방법.md를 따른다.
+안준환의 현재 담당은 개발자 C(Head Tracking / Spatial Audio / 골전도)이며 기존 패키지는 BLE 공통 입력으로 사용한다.

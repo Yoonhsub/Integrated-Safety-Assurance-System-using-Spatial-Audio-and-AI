@@ -8,15 +8,17 @@ import 'pages/native_audio_page.dart';
 import 'services/agent_name_store.dart';
 import 'local_vision/local_vision_page.dart';
 import 'pages/standalone_vision_page.dart';
+import 'features/hardware_bus/hardware_bus_page.dart';
 
 class MobiApp extends StatefulWidget {
-  const MobiApp(
-      {super.key,
-      this.firebaseConfigured = false,
-      this.firebaseInitialization,
-      this.onlineConfigurationIssue,
-      this.authSession,
-      this.authOnly = const AuthOnlyConfiguration.fromEnvironment()});
+  const MobiApp({
+    super.key,
+    this.firebaseConfigured = false,
+    this.firebaseInitialization,
+    this.onlineConfigurationIssue,
+    this.authSession,
+    this.authOnly = const AuthOnlyConfiguration.fromEnvironment(),
+  });
 
   final bool firebaseConfigured;
   final Future<bool>? firebaseInitialization;
@@ -44,16 +46,19 @@ class _MobiAppState extends State<MobiApp> {
     _firebasePreparing = widget.firebaseInitialization != null;
     final initialization = widget.firebaseInitialization;
     if (initialization != null) {
-      initialization.then((ready) {
-        if (mounted) {
-          setState(() {
-            _firebaseReady = ready;
-            _firebasePreparing = false;
-          });
-        }
-      }, onError: (Object _) {
-        if (mounted) setState(() => _firebasePreparing = false);
-      });
+      initialization.then(
+        (ready) {
+          if (mounted) {
+            setState(() {
+              _firebaseReady = ready;
+              _firebasePreparing = false;
+            });
+          }
+        },
+        onError: (Object _) {
+          if (mounted) setState(() => _firebasePreparing = false);
+        },
+      );
     }
     if (widget.authOnly.enabled) {
       _isLoadingAgentName = false;
@@ -103,11 +108,12 @@ class _MobiAppState extends State<MobiApp> {
   Widget build(BuildContext context) {
     if (widget.authOnly.enabled) {
       return AuthOnlyApp(
-          configurationReady: _firebaseReady,
-          configuration: widget.authOnly,
-          requiredRole: 'passenger',
-          appLabel: 'MOBI 승객 앱',
-          session: widget.authSession);
+        configurationReady: _firebaseReady,
+        configuration: widget.authOnly,
+        requiredRole: 'passenger',
+        appLabel: 'MOBI 승객 앱',
+        session: widget.authSession,
+      );
     }
     final agentName = _agentName;
     final dataMode = _selectedDataMode;
@@ -142,76 +148,93 @@ class _MobiAppState extends State<MobiApp> {
               appBar: AppBar(
                 title: const Text('온라인 서비스'),
                 leading: BackButton(
-                    onPressed: () => setState(() => _onlineSelected = false)),
+                  onPressed: () => setState(() => _onlineSelected = false),
+                ),
               ),
               body: widget.onlineConfigurationIssue != null
                   ? Center(
                       child: Text(
-                          'UNAVAILABLE · ${widget.onlineConfigurationIssue}'))
+                        'UNAVAILABLE · ${widget.onlineConfigurationIssue}',
+                      ),
+                    )
                   : _firebasePreparing
-                      ? const Center(child: CircularProgressIndicator())
-                      : AuthGate(
-                          configurationReady: _firebaseReady,
-                          requiredRole: 'passenger',
-                          session: widget.authSession,
-                          appLabel: 'MOBI 승객 앱',
-                          builder: (context, account) => home,
-                        ),
+                  ? const Center(child: CircularProgressIndicator())
+                  : AuthGate(
+                      configurationReady: _firebaseReady,
+                      requiredRole: 'passenger',
+                      session: widget.authSession,
+                      appLabel: 'MOBI 승객 앱',
+                      builder: (context, account) => home,
+                    ),
             )
           : Scaffold(
               appBar: AppBar(title: const Text('MOBI Passenger')),
               body: Builder(
-                  builder: (context) => ListView(
-                        padding: const EdgeInsets.all(24),
-                        children: [
-                          const Text('사용할 기능을 선택해 주세요.'),
-                          const SizedBox(height: 16),
-                          FilledButton.icon(
-                            onPressed: () => Navigator.of(context)
-                                .pushNamed('/standalone-vision'),
-                            icon: const Icon(Icons.camera_alt_outlined),
-                            label: const Text('로컬 시연 · 카메라와 음향'),
-                          ),
-                          const Text(
-                              'LOCAL_DEMO · 로그인·PC·Backend 없이 휴대폰에서 실행합니다. 서버 전송과 안전 Guidance는 없습니다.'),
-                          const SizedBox(height: 24),
-                          OutlinedButton(
-                            onPressed: () =>
-                                setState(() => _onlineSelected = true),
-                            child: const Text('온라인 서비스 · Firebase 로그인'),
-                          ),
-                          const Text(
-                              '온라인 기능에는 인터넷과 Backend 연결이 필요합니다. USB 로컬 서버를 사용하는 경우 PC 연결이 필요합니다.'),
-                        ],
-                      )),
-            ),
-      routes: <String, WidgetBuilder>{
-        '/standalone-vision': (_) => const StandaloneVisionPage(),
-        '/native-audio': (_) => AuthGate(
-              configurationReady: _firebaseReady,
-              requiredRole: 'passenger',
-              session: widget.authSession,
-              appLabel: 'MOBI 승객 앱',
-              builder: (context, account) => const NativeAudioPage(),
-            ),
-        '/local-vision': (_) => AuthGate(
-              configurationReady: _firebaseReady,
-              requiredRole: 'passenger',
-              session: widget.authSession,
-              appLabel: 'MOBI 승객 앱',
-              builder: (context, account) => const LocalVisionPage(),
-            ),
-        '/v3-guidance': (_) => AuthGate(
-              configurationReady: _firebaseReady,
-              requiredRole: 'passenger',
-              session: widget.authSession,
-              appLabel: 'MOBI 승객 앱',
-              builder: (context, account) => V3GuidancePage(
-                agentName: agentName ?? '모비',
-                onReturnToModeSelection: _resetToModeSelection,
-                dataMode: dataMode ?? 'mock',
+                builder: (context) => ListView(
+                  padding: const EdgeInsets.all(24),
+                  children: [
+                    const Text('사용할 기능을 선택해 주세요.'),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () =>
+                          Navigator.of(context).pushNamed('/standalone-vision'),
+                      icon: const Icon(Icons.camera_alt_outlined),
+                      label: const Text('로컬 시연 · 카메라와 음향'),
+                    ),
+                    const Text(
+                      'LOCAL_DEMO · 로그인·PC·Backend 없이 휴대폰에서 실행합니다. 서버 전송과 안전 Guidance는 없습니다.',
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          Navigator.of(context).pushNamed('/hardware-bus'),
+                      icon: const Icon(Icons.bluetooth_searching),
+                      label: const Text('실기기 연동확인 · BLE/WT901/HRTF'),
+                    ),
+                    const Text(
+                      '로컬 하드웨어 시연 · 비콘 테스트 매핑과 가정 방향 사용 · 실제 위험 Guidance와 분리',
+                    ),
+                    const SizedBox(height: 24),
+                    OutlinedButton(
+                      onPressed: () => setState(() => _onlineSelected = true),
+                      child: const Text('온라인 서비스 · Firebase 로그인'),
+                    ),
+                    const Text(
+                      '온라인 기능에는 인터넷과 Backend 연결이 필요합니다. USB 로컬 서버를 사용하는 경우 PC 연결이 필요합니다.',
+                    ),
+                  ],
+                ),
               ),
             ),
+      routes: <String, WidgetBuilder>{
+        // Local hardware diagnostics carry no server identity or Guidance authority.
+        '/hardware-bus': (_) => const HardwareBusPage(),
+        '/standalone-vision': (_) => const StandaloneVisionPage(),
+        '/native-audio': (_) => AuthGate(
+          configurationReady: _firebaseReady,
+          requiredRole: 'passenger',
+          session: widget.authSession,
+          appLabel: 'MOBI 승객 앱',
+          builder: (context, account) => const NativeAudioPage(),
+        ),
+        '/local-vision': (_) => AuthGate(
+          configurationReady: _firebaseReady,
+          requiredRole: 'passenger',
+          session: widget.authSession,
+          appLabel: 'MOBI 승객 앱',
+          builder: (context, account) => const LocalVisionPage(),
+        ),
+        '/v3-guidance': (_) => AuthGate(
+          configurationReady: _firebaseReady,
+          requiredRole: 'passenger',
+          session: widget.authSession,
+          appLabel: 'MOBI 승객 앱',
+          builder: (context, account) => V3GuidancePage(
+            agentName: agentName ?? '모비',
+            onReturnToModeSelection: _resetToModeSelection,
+            dataMode: dataMode ?? 'mock',
+          ),
+        ),
       },
     );
   }
