@@ -97,6 +97,11 @@ class FcmService:
         return self._get_token_record(FcmOwnerType.DRIVER, driver_id)
 
     def send(self, payload: NotificationRequest) -> NotificationResponse:
+        from app.cloud_test import requested, validate
+        if requested():
+            validate()  # Fails closed on mixed settings; no token lookup at all.
+            return NotificationResponse(accepted=False, messageId=None,
+                                        detail='Cloud-test FCM disabled; no token lookup or send.')
         target = self._target_from_payload(payload)
         token_record = self._get_token_record(target.ownerType, target.ownerId)
         if token_record is None:

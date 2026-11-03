@@ -14,6 +14,7 @@ from app.schemas.v3 import (
     MockGeofenceResponse,
     TtsMode,
     V3Cue,
+    utc_now,
 )
 from app.services.v3_guidance_store import v3_guidance_store
 
@@ -91,6 +92,12 @@ def mock_beacons(payload: MockBeaconsRequest) -> BeaconDecisionResponse:
         session.state = GuidanceState.BOARDING_CONFIRMATION
 
     session.last_decision = decision
+    session.last_decision_at = utc_now()
+    if (
+        decision != BeaconDecision.TARGET_BUS_NEAR
+        and session.state == GuidanceState.BOARDING_CONFIRMATION
+    ):
+        session.state = GuidanceState.WAITING_FOR_BUS
     session.nearest_beacon = nearest.model_dump(mode="json") if nearest else None
     session.target_bus = target.model_dump(mode="json") if target else None
     session.touch()

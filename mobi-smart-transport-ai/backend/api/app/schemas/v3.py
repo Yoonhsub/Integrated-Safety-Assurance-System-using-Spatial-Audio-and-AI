@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
 from app.schemas.base import StrictApiModel
 
@@ -550,12 +550,15 @@ class BeaconIngestRequest(StrictApiModel):
     sessionId: str = Field(default="demo-session", min_length=1, pattern=NON_BLANK_PATTERN)
     deviceId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
     beaconId: str = Field(min_length=1, pattern=NON_BLANK_PATTERN)
+    # Collector identity only; never proof of a vehicle association.
+    macAddress: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
     busId: str | None = None
     routeNo: str | None = None
     rssi: int = Field(ge=-120, le=0)
     distanceMeters: float | None = Field(default=None, ge=0)
     source: BeaconSource
-    timestamp: datetime
+    # Client BLE plugin callback time, not HTTP send/receive time. Offset required.
+    timestamp: AwareDatetime
 
 
 class BeaconIngestResponse(StrictApiModel):

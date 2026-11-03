@@ -1,0 +1,12 @@
+# YOLO IDs below are contiguous indices for the selected training subset.
+# ai_vision/training/class_mapping.json maps each index to the project taxonomy.
+path: ../../datasets/custom_bus_safety
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: bus
+  1: bus_door
+  2: bus_stop
+  3: obstacle

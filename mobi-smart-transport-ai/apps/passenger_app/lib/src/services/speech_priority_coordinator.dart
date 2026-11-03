@@ -1,0 +1,380 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'speech_engine.dart';
+export 'speech_engine.dart';
+import 'browser_speech_stub.dart'
+    if (dart.library.js_interop) 'browser_speech_web.dart';
+import 'tts_cancel_stub.dart'
+    if (dart.library.js_interop) 'tts_cancel_web.dart';
+
+class FlutterSpeechEngine implements SpeechEngine {
+  FlutterSpeechEngine([FlutterTts? tts]) : this.platform(tts: tts);
+  FlutterSpeechEngine.platform({
+    FlutterTts? tts,
+    bool? webPlatform,
+    this.requireOfflineKoreanVoice = false,
+    this.requestNativeFocus = false,
+    this.diagnostic,
+    bool Function()? browserActive,
+    void Function()? browserCancel,
+  })  : _tts = tts ?? FlutterTts(),
+        _web = webPlatform ?? kIsWeb,
+        _browserActive = browserActive ?? browserSpeechStillActive,
+        _browserCancel = browserCancel ?? cancelBrowserSpeech {
+    _tts.setStartHandler(() => _report('TTS_STARTED'));
+    _tts.setCancelHandler(_cancelled);
+    _tts.setCompletionHandler(_finished);
+    _tts.setErrorHandler((_) {
+      _report('TTS_ERROR');
+      if (_acknowledgeStop()) return;
+      if (_web && _browserActive()) {
+        return; // Ignore a prior Web cancel while the current voice is active.
+      }
+      final pending = _completion;
+      _completion = null;
+      if (pending != null && !pending.isCompleted) {
+        pending.completeError(StateError('TTS 엔진 오류'));
+      }
+    });
+  }
+  final FlutterTts _tts;
+  final bool requireOfflineKoreanVoice, requestNativeFocus;
+  final void Function(String)? diagnostic;
+  void _report(String event) {
+    try {
+      diagnostic?.call(event);
+    } catch (error) {
+      debugPrint('TTS diagnostic failure: ${error.runtimeType}');
+    }
+  }
+
+  final bool _web;
+  final bool Function() _browserActive;
+  final void Function() _browserCancel;
+  Completer<void>? _stopAck;
+  bool _unavailable = false;
+  bool _acknowledgeStop() {
+    final ack = _stopAck;
+    if (ack == null) return false;
+    if (!ack.isCompleted) ack.complete();
+    return true;
+  }
+
+  void _cancelled() {
+    _report('TTS_CANCELLED');
+    if (_acknowledgeStop()) return;
+    if (_web && _browserActive()) return;
+    final pending = _completion;
+    _completion = null;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(SpeechCancelled());
+    }
+  }
+
+  Completer<void>? _completion;
+  Timer? _completionTimer;
+  void _finished() {
+    _report('TTS_COMPLETED_CALLBACK');
+    if (_acknowledgeStop()) return;
+    _completionTimer?.cancel();
+    // A delayed prior cancel/end must not release a new Web safety voice.
+    if (_completion != null && _web && _browserActive()) {
+      final pending = _completion;
+      _completionTimer = Timer(const Duration(milliseconds: 25), () {
+        if (identical(_completion, pending)) _finished();
+      });
+      return;
+    }
+    final pending = _completion;
+    _completion = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
+  }
+
+  @override
+  Future<void> prepare({required bool requireKoreanVoice}) async {
+    _report('TTS_INITIALIZING');
+    try {
+      if (_unavailable) throw StateError('TTS 종료 확인 실패: 앱을 다시 열어 주세요');
+      Map<String, String>? pinnedVoice;
+      if (requireKoreanVoice || requireOfflineKoreanVoice) {
+        final voices = await _tts.getVoices;
+        final korean = voices is List
+            ? voices.where((v) =>
+                v is Map &&
+                (v['locale']?.toString().toLowerCase().startsWith('ko') ??
+                    false) &&
+                (!requireOfflineKoreanVoice ||
+                    (RegExp(r'^ko(?:[-_]|$)')
+                            .hasMatch(v['locale'].toString().toLowerCase()) &&
+                        {'0', 'false'}
+                            .contains(v['network_required']?.toString()))))
+            : const [];
+        if (korean.isEmpty) {
+          _report('KOREAN_LOCAL_VOICE_UNAVAILABLE');
+          throw StateError('사용 가능한 한국어 로컬 TTS 음성이 없습니다');
+        }
+        final voice = korean.first as Map;
+        if (requireOfflineKoreanVoice &&
+            (voice['name'] is! String || (voice['name'] as String).isEmpty)) {
+          throw StateError('Local voice identity missing');
+        }
+        pinnedVoice = {
+          'name': voice['name'].toString(),
+          'locale': voice['locale'].toString()
+        };
+        if (!requireOfflineKoreanVoice) await _tts.setVoice(pinnedVoice);
+      }
+      final language = await _tts.setLanguage('ko-KR');
+      if (requireOfflineKoreanVoice && language != 1) {
+        _report('TTS_KOREAN_LANGUAGE_UNAVAILABLE');
+        throw StateError('Korean language initialization failed');
+      }
+      // Android setLanguage may replace the selected voice. Pin the verified
+      // offline voice last, including for high-priority local speech.
+      if (requireOfflineKoreanVoice) {
+        final selected = await _tts.setVoice(pinnedVoice!);
+        if (selected != 1) {
+          _report('TTS_VOICE_SELECTION_FAILED');
+          throw StateError('Local Korean voice selection failed');
+        }
+        _report('KOREAN_VOICE_SELECTED');
+        _report('KOREAN_OFFLINE_PINNED_LAST');
+      }
+      _report('TTS_READY');
+      await _tts.setSpeechRate(0.5);
+      await _tts.setPitch(1.0);
+      // Own completion/cancellation handles Web's unresolved cancel Future.
+      await _tts.awaitSpeakCompletion(false);
+    } catch (error) {
+      _report('TTS_INITIALIZATION_FAILED_${error.runtimeType}');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> speak(String text) {
+    final pending = _completion = Completer<void>();
+    unawaited(_tts.speak(text, focus: requestNativeFocus).then((result) {
+      if (result == 0 || (!_web && result == null)) {
+        if (!pending.isCompleted) {
+          pending.completeError(StateError('TTS 실행 불가'));
+        }
+      }
+    }, onError: (Object error, StackTrace stack) {
+      if (!pending.isCompleted) pending.completeError(error, stack);
+    }));
+    return pending.future;
+  }
+
+  @override
+  Future<void> stop() async {
+    _report('TTS_STOP_REQUEST');
+    _completionTimer?.cancel();
+    final pending = _completion;
+    _completion = null; // A retiring callback must never finish a new run.
+    final ack = pending == null || _web ? null : Completer<void>();
+    _stopAck = ack;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(SpeechCancelled());
+    }
+    try {
+      if (_web) _browserCancel();
+      await _tts.stop().timeout(const Duration(seconds: 2));
+      if (ack != null) {
+        // Android stop's method reply precedes its onStop callback.
+        await ack.future.timeout(const Duration(seconds: 2));
+      }
+      if (_web && _browserActive()) {
+        final until = Stopwatch()..start();
+        while (_browserActive()) {
+          if (until.elapsed >= const Duration(seconds: 2)) {
+            throw StateError('Web 음성 종료를 확인할 수 없습니다');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }
+      _report('TTS_STOP_CONFIRMED');
+    } catch (_) {
+      _report('TTS_STOP_UNCONFIRMED');
+      _unavailable = true; // Unconfirmed cancellation cannot authorize reuse.
+      rethrow;
+    } finally {
+      _stopAck = null;
+    }
+  }
+}
+
+class PriorityLease {
+  PriorityLease._(this._release);
+  final VoidCallback _release;
+  bool active = true;
+  // Retire ownership without running callbacks on a disposed coordinator.
+  void _retire() => active = false;
+  void release() {
+    if (active) {
+      active = false;
+      _release();
+    }
+  }
+}
+
+class _Run {
+  _Run(this.owner, this.priority, this.done);
+  final Object owner;
+  final bool priority;
+  final Future<void> done;
+  final cancel = Completer<void>();
+}
+
+/// All native TTS control commands serialize, but completion never locks stop.
+/// Priority leases cover both TTS and existing generated/script audio playback.
+class SpeechPlaybackTimeout extends TimeoutException {
+  SpeechPlaybackTimeout()
+      : super('Playback completion deadline', const Duration(seconds: 30));
+}
+
+class SpeechPriorityCoordinator extends ChangeNotifier {
+  SpeechPriorityCoordinator(this.engine);
+  final SpeechEngine engine;
+  Future<void> _tail = Future.value();
+  final Set<Object> _leases = {};
+  final Set<PriorityLease> _leaseHandles = {};
+  bool _disposed = false;
+  _Run? _run;
+  bool _engineAvailable = true;
+  final Object _uncertainOutput = Object();
+  // A retired coordinator remains closed, never permission for new output.
+  bool get priorityActive => _disposed || _leases.isNotEmpty;
+  bool get outputUncertain => !_engineAvailable;
+  Future<T> _command<T>(Future<T> Function() action) {
+    final next = _tail.then((_) => action());
+    _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return next;
+  }
+
+  Future<void> _stopRun() async {
+    final run = _run;
+    _run = null;
+    if (run == null) return;
+    if (!run.cancel.isCompleted) run.cancel.complete();
+    try {
+      await engine.stop().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      if (!_disposed) {
+        _engineAvailable = false;
+        // Unknown native output keeps Observation blocked until app reload.
+        _leases.add(_uncertainOutput);
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
+  /// Reserve priority synchronously: independent warning outputs never wait
+  /// for a speech engine that is preparing, stopping or failing.
+  PriorityLease claimPriority() {
+    if (_disposed) throw SpeechCancelled();
+    final token = Object();
+    late final PriorityLease lease;
+    lease = PriorityLease._(() {
+      if (_disposed) return;
+      _leases.remove(token);
+      _leaseHandles.remove(lease);
+      notifyListeners();
+    });
+    _leases.add(token);
+    _leaseHandles.add(lease);
+    notifyListeners();
+    unawaited(_command(() async {
+      if (_run?.priority == false) await _stopRun();
+    }).catchError((Object _) {}));
+    return lease;
+  }
+
+  Future<PriorityLease> acquirePriority() async {
+    final lease = claimPriority();
+    await _command(() async {});
+    return lease;
+  }
+
+  Future<bool> speakObservation(
+          Object owner, String text, bool Function() valid,
+          {bool Function()? admit,
+          VoidCallback? onStarted,
+          VoidCallback? onDeadline}) =>
+      _speak(owner, text, false, valid,
+          admit: admit, onStarted: onStarted, onDeadline: onDeadline);
+  Future<bool> speakPriority(
+          Object owner, String text, bool Function() valid) =>
+      _speak(owner, text, true, valid);
+  Future<bool> _speak(
+      Object owner, String text, bool priority, bool Function() valid,
+      {bool Function()? admit,
+      VoidCallback? onStarted,
+      VoidCallback? onDeadline}) async {
+    final run = await _command<_Run?>(() async {
+      bool allowed() => !_disposed && valid() && (priority || !priorityActive);
+      if (!allowed()) return null;
+      if (!_engineAvailable) throw StateError('음성 엔진 종료를 확인할 수 없습니다');
+      await engine
+          .prepare(requireKoreanVoice: !priority)
+          .timeout(const Duration(seconds: 3));
+      if (!allowed()) return null;
+      await _stopRun();
+      if (!allowed()) return null;
+      if (!(admit?.call() ?? true)) return null;
+      onStarted?.call();
+      if (!allowed()) return null;
+      final next = _Run(owner, priority, engine.speak(text));
+      // Observe errors immediately, even if cancel wins the race.
+      unawaited(
+          next.done.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+      _run = next;
+      return next;
+    });
+    if (run == null) return false;
+    try {
+      await Future.any([run.done, run.cancel.future])
+          .timeout(const Duration(seconds: 30), onTimeout: () {
+        onDeadline?.call();
+        throw SpeechPlaybackTimeout();
+      });
+      return !run.cancel.isCompleted;
+    } finally {
+      await _command(() async {
+        if (identical(_run, run)) await _stopRun();
+      });
+    }
+  }
+
+  Future<void> stopObservation(Object owner) => _command(() async {
+        if (_run?.priority == false && identical(_run?.owner, owner)) {
+          await _stopRun();
+        }
+      });
+  Future<void> stopPriority(Object owner) => _command(() async {
+        if (_run?.priority == true && identical(_run?.owner, owner)) {
+          await _stopRun();
+        }
+      });
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    // Native shutdown is still observed by its owner; retirement is not an ACK.
+    // Cancel completion waits so existing serialized cleanup can continue.
+    final run = _run;
+    if (run != null && !run.cancel.isCompleted) run.cancel.complete();
+    for (final lease in _leaseHandles) {
+      lease._retire();
+    }
+    _leaseHandles.clear();
+    _leases.clear();
+    super.dispose();
+  }
+}
+
+final sharedSpeechPriority = SpeechPriorityCoordinator(
+    createBrowserSpeechEngine() ?? FlutterSpeechEngine());

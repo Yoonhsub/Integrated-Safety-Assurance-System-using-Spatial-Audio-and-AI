@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "visionEventId": {
+      "format": "uuid",
+      "title": "Visioneventid",
+      "type": "string"
+    },
+    "bindingId": {
+      "format": "uuid",
+      "title": "Bindingid",
+      "type": "string"
+    },
+    "receivedAt": {
+      "format": "date-time",
+      "title": "Receivedat",
+      "type": "string"
+    },
+    "accepted": {
+      "const": true,
+      "default": true,
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "stored": {
+      "const": false,
+      "default": false,
+      "title": "Stored",
+      "type": "boolean"
+    },
+    "guidanceEligible": {
+      "const": false,
+      "default": false,
+      "title": "Guidanceeligible",
+      "type": "boolean"
+    },
+    "freshnessVerified": {
+      "const": false,
+      "default": false,
+      "title": "Freshnessverified",
+      "type": "boolean"
+    },
+    "mode": {
+      "const": "local-validation-only",
+      "default": "local-validation-only",
+      "title": "Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "visionEventId",
+    "bindingId",
+    "receivedAt"
+  ],
+  "title": "VisionReceipt",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

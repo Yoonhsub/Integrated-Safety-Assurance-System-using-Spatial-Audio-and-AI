@@ -102,12 +102,8 @@ class SpatialCueService {
   Future<bool> playClip(String url, {double pan = 0, double gain = 1}) async {
     final api = _api;
     if (api == null) return false;
-    try {
-      await api.playClip(url.toJS, pan.toJS, gain.toJS).toDart;
-      return true;
-    } catch (_) {
-      return false;
-    }
+    final result = await api.playClip(url.toJS, pan.toJS, gain.toJS).toDart;
+    return result?.dartify() == true;
   }
 
   Future<void> updateClipSpatial({
@@ -120,9 +116,7 @@ class SpatialCueService {
   }
 
   Future<void> stopClip() async {
-    try {
-      _api?.stopClip();
-    } catch (_) {}
+    _api?.stopClip();
   }
 
   Future<void> dispose() async {

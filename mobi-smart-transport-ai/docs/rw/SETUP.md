@@ -145,8 +145,10 @@ Windows PowerShell:
 의존성 설치:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+`requirements.txt`는 백엔드 실행용이고, `requirements-dev.txt`는 이를 포함해 테스트 도구 `pytest`, Windows `ZoneInfo`용 `tzdata`, AI Vision contract validation용 기본 의존성을 설치한다. 개발/테스트 환경에서는 `requirements-dev.txt`를 사용한다. 실제 YOLO provider를 실행할 환경에는 프로젝트 루트에서 `pip install -r ai_vision/requirements.txt`를 별도로 실행한다. 이 파일에는 Ultralytics와 AI Vision 기본 의존성이 포함된다.
 
 서버 실행 예시:
 
@@ -552,7 +554,7 @@ V3는 FastAPI 백엔드 rule engine을 기준으로 동작한다. Gemini API key
 
 ```bash
 cd backend/api
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 루트에서 백엔드/public_data 테스트 실행:

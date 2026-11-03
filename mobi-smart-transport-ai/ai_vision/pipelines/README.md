@@ -1,24 +1,335 @@
-# AI Vision Pipeline Placeholder
+# AI Vision Inference Pipeline
 
-이 폴더는 2학기 본격 구현 시 AI 비전 추론 파이프라인이 들어갈 예정 위치이다.
-**4월에는 실제 학습/추론 코드를 구현하지 않는다.**
+## 안전 문구와 Streaming 통합 계약 (2026-10-13)
+
+`bus_door_visible`은 **버스 문이 보입니다.**라는 관찰만 안내한다. 문 검출은 목표
+버스 식별이나 승차 허용이 아니다. reason 메시지와 클래스 fallback을 동일하게 수정했다.
+기존 Live Hold 및 DetectionResult 계약은 유지한다.
+
+[Streaming 안전 통합 계약](STREAMING_SAFETY_CONTRACT.md)에 producer 인증, 출처·신선도,
+서버 세션 연결, 멱등성 설계를 기록했다. 해당 계약은 아직 미구현이며 Streaming 브랜치는
+통합하지 않았다. 현재 ingestion은 admin 전용이고 HTTP client 인증 및 승객 안내 연결은
+후속 작업이다.
+
+이 폴더는 DetectionResult contract, mock provider, local single-image YOLO inference,
+deterministic single-frame SafetyInterpreter를 제공한다.
+YOLO provider는 `ultralytics` 패키지를 명시적으로 설치하고 local model weight 경로를 전달해야
+사용할 수 있다.
 
 ---
 
-## 1. 향후 추론 흐름 (2학기)
+## 1. 추론과 안전 이벤트 흐름
 
 ```txt
-Camera Frame
-→ Pre-process (resize/normalize)
-→ Object Detection Model (YOLO계열 또는 EfficientDet-Lite)
-→ Bus / Bus Door / Bus Stop / Roadway / Sidewalk / Obstacle / Tactile Paving 탐지
-→ Risk Interpretation (사용자 위치 + 검출 객체 → 위험도/안내 메시지)
-→ Voice / Vibration / FCM 알림 출력
+VisionInferenceRequest
+→ VisionProvider
+→ DetectionResult
+→ SafetyInterpreter
+→ SafetyInterpretation
+→ HTTP transport client (AI Vision process)
+→ POST /ai-vision/events
+→ backend transport validation and adapter
+→ SafetyEventCreate
+→ existing SafetyEventService
+→ Firebase / mock storage
 ```
 
-위 흐름의 객체 분류 7종은 `../dataset_plan/class_taxonomy.json`에서 정의한다.
+`VisionInferenceRequest`가 입력의 frame ID, 캡처 시각, source, provider-neutral payload를
+묶는다. `image_file`은 `pathlib.Path`를 사용하며 `video_file`과 `webcam`은 검증된 in-memory
+frame payload를 사용한다. request는 UUID frame ID와 timezone이 포함된 ISO 8601 시각을 검증하고,
+연속 frame은 원본 source frame index도 보존한다.
+
+`VisionProvider`가 request를 받아 detector 결과인 `DetectionResult`를 반환한다.
+`SafetyInterpreter`는 `../dataset_plan/class_taxonomy.json`의 클래스 임계값, reason, 위험도,
+안내 문구를 사용해 한 프레임으로 근거를 세울 수 있는 경우에만 별도 `Safety Event`를 만든다.
+event 생성 여부와 추론 결과 상태는 분리한다: 정상 결과에서 조건을 만족하는 규칙이 없으면
+`no_event`, 입력 DetectionResult가 `unavailable` 또는 `error`이면 그 상태를 그대로 전달한다.
+추론 실패는 위험 없음으로 처리되지 않는다.
+
+v1 단일 프레임 규칙은 `bus_stop_recognized`와 `bus_door_visible`이다. `approaching_bus`에는
+버스가 사용자 정류장에 접근한다는 시간/정류장 맥락이 필요하고, `off_sidewalk`에는 사용자의
+위치 관계, `obstacle_ahead`에는 보행 경로와의 관계, `tactile_paving_lost`에는 이전 프레임의
+점자블록 추적이 필요하다. 이 상태 정보가 없는 단일 detection으로 해당 이벤트를 주장하지 않는다.
+특히 bus 검출만으로 접근 또는 위험을 단정하지 않는다. bbox는 정규화된 이미지 위치일 뿐 거리나
+사용자와의 충돌 가능성을 나타내지 않는다.
+
+`frameId`, `capturedAt`, `source`는 request가 소유하며 provider 결과에도 그대로 전달한다.
+mock fixture에 저장된 같은 필드는 입력 metadata로 덮어쓴다. model metadata와 detections는
+provider가 반환하며, 향후 실제 provider도 동일한 metadata 전달 규칙을 따라야 한다.
+
+현재 구현 범위:
+
+- `DetectionResult` Python representation과 shared JSON Schema
+- `VisionInferenceRequest` 입력 representation
+- typed `VisionProvider` interface 및 명시적 mock provider 선택
+- `MockVisionProvider`의 DetectionResult fixture 시나리오 반환
+- `YOLOVisionProvider`의 로컬 이미지 파일 및 in-memory frame inference
+- taxonomy 기반 `SafetyInterpreter` 및 내부 Safety Event representation
+- backend-side AI Vision adapter의 `SafetyEventCreate` 변환과 기존 service 저장
+- 별도 프로세스용 HTTP client와 FastAPI ingestion endpoint
+- event / no_event / unavailable / error의 shared request/response contract
+- `VisionSafetyPipeline` one-shot orchestration과 single-image E2E CLI
+- `VideoFileSource` / `WebcamSource`와 순차 `VisionStreamRunner`
+
+아직 구현되지 않은 범위:
+
+- 프로젝트 custom dataset으로 학습한 모델
+- 지속 실행 daemon 형태의 자동 frame 수집
+- 자동 재시도, 로컬 큐, 오프라인 재전송, 인증/인가
+- passenger app integration
+
+mock provider는 실제 전달된 frame을 분석하지 않고 fixture 시나리오를 반환한다.
+기존 `mock_inference_pipeline.py`와 `mock_safety_events.json`은 Safety Event demo용으로
+별도 유지한다.
+
+MockVisionProvider는 반환 전에 DetectionResult fixture를 shared JSON Schema로 검증하므로
+`jsonschema`가 필요하다. AI Vision 실행 환경은 프로젝트 루트에서
+`python -m pip install -r ai_vision/requirements.txt`로 준비한다. Backend 개발 환경의
+`backend/api/requirements-dev.txt`는 contract test에 필요한 `requirements-base.txt`만
+포함하며, 무거운 Ultralytics/PyTorch runtime은 추가하지 않는다.
+
+### 1.1 YOLO single-image provider
+
+첫 개발 대상 pretrained model은 **YOLO11n**이다. repository model research의 COCO 기준에서
+YOLO11n은 YOLOv8n보다 mAP가 높고(39.5 vs 37.3), parameter도 적다(2.6M vs 3.2M).
+Ultralytics [YOLO11 문서](https://docs.ultralytics.com/models/yolo11)는 이를 권장 모델로 제시하고,
+[YOLOv8 문서](https://docs.ultralytics.com/models/yolov8)도 계속 제공한다.
+두 버전은 동일한 Ultralytics/PyTorch runtime을 사용하므로 YOLOv8n을 택해도 Python/Windows
+설치 경로는 크게 달라지지 않는다. 이 선택은 pretrained 개발 baseline이며, custom dataset
+평가 후 최종 모델 선정은 별도로 해야 한다. COCO CPU ONNX benchmark는 YOLO11n 56.1ms,
+YOLOv8n 80.4ms로 안내되지만, 로컬 PyTorch CPU 시간이나 실시간 보장은 아니다.
+
+AI Vision runtime 의존성 설치:
+
+```powershell
+python -m pip install -r ai_vision/requirements.txt
+```
+
+Ultralytics가 OpenCV Python package를 직접 의존성으로 선언하므로 `opencv-python`을 별도로
+중복 선언하지 않는다. YOLO weight와 입력 이미지는 저장소에 넣지 않는다. 공식 Ultralytics
+공식 [YOLO11 asset release](https://github.com/ultralytics/assets/releases/tag/v8.3.0)에서
+`yolo11n.pt`를 수동으로 준비하고 repository 밖의 경로에 보관한다. provider는
+존재하는 model file path만 받고, 파일이 없으면 다운로드하지 않고 configuration error를 낸다.
+
+실제 inference는 명시적으로 opt-in하여 실행한다. 설치 및 weight 준비 없이 test suite가 모델을
+다운로드하거나 로드하지 않는다.
+
+```powershell
+python scripts/smoke_yolo_inference.py `
+  --model-path "C:\models\yolo11n.pt" `
+  --image "C:\data\bus.jpg"
+```
+
+COCO pretrained model 중 현재 project taxonomy와 안전하게 직접 대응하는 class는 `bus`뿐이다.
+`person`은 개인정보·taxonomy 정책 때문에 버린다. `stop sign`은 bus stop으로 간주하지 않는다.
+YOLO result에서 mapping되지 않은 class는 DetectionResult에 넣지 않는다. 따라서 pretrained
+결과의 빈 detection은 정상 추론 결과이며, project safety coverage를 뜻하지 않는다.
+`bus_door`, `bus_stop`, `roadway`, `sidewalk`, `obstacle`, `tactile_paving`은 정확한 custom
+class mapping 또는 project dataset fine-tuning 전까지 검출된 것으로 주장하지 않는다.
+
+### 1.2 DetectionResult와 Safety Event 책임
+
+- **DetectionResult**는 한 프레임의 detector 결과다. schema 버전, 입력 source, 처리 상태,
+  frame ID/캡처 시각, 모델 식별 정보, detection 목록을 표현한다. 위험도나 사용자 안내를
+  판정하지 않는다.
+- **Safety Event**는 DetectionResult를 SafetyInterpreter가 사용자·상황 맥락과 함께 해석한
+  결과다. 기존 fixture의 `riskLevel`, `reason`, `primaryClass`, `message`는 이 event 계층에
+  속한다. 현재 내부 event는 `eventId`, `frameId`, `capturedAt`, `source`, `riskLevel`, `reason`,
+  `primaryClass`, `confidence`, detection summary, `message`와 가능한 `imageSize`/`modelInfo`를
+  포함한다. 이 표현은 legacy mock fixture 형식을 유지하면서 source와 primary detection confidence를
+  추가한다. 결정적인 ID 생성을 위해 event ID는 frame/reason/class 기준 UUIDv5다.
+- backend `SafetyEventCreate`는 `eventType`, `source`, `timestamp`, 선택적 `confidence`/`metadata`
+  등을 받는 별도의 contract다. backend-side `AiVisionSafetyEventAdapter`가 이 contract에 맞게
+  변환하며, AI Vision interpreter/provider는 backend schema를 알지 않는다. 현재 허용 event type에는
+  `bus_stop_recognized`나 `bus_door_visible`와 의미가 맞는 값이 없으므로 기존 값을 오용하지 않고
+  additive `VISION_INTERPRETATION` type을 사용한다. reason/risk/class는 문자열 metadata로 유지한다.
+- adapter는 `SafetyEventService`에 직접 전달하는 구조다. backend 안에서 loopback HTTP를 거치지 않는다.
+  저장 service integration은 fixture 기반으로 검증했지만 실제 provider를 backend startup에 자동 연결하는
+  자동 orchestration은 아직 구현되지 않았다. 별도 process/HTTP 경로는 §1.3에서 설명한다.
+- `status: "ok"` + 빈 `detections`는 정상 추론 후 검출이 없었다는 뜻이다. `unavailable` 또는
+  `error`는 추론 결과가 없으며 둘 다 `error` 정보를 포함하고 `detections`는 빈 배열이어야
+  한다. 따라서 실패를 “위험 객체 없음”으로 해석할 수 없다.
+- 추론 상태가 아닌 최종 위험 판정은 DetectionResult에 추가하지 않는다. 기존 Safety Event
+  fixture는 유지하며, 향후 adapter가 두 계약 사이를 명시적으로 변환한다. DetectionResult
+  전체를 현재 backend Safety Event endpoint에 그대로 보낼 수는 없다.
+
+JSON Schema는 `packages/shared_contracts/api/vision_detection.response.schema.json`에 있고,
+예제 상태별 데이터는 `fixtures/mock_detection_results.json`에 있다. 이 이름은 detector의
+표준 결과 형식을 나타내며, 현재 운영 중인 HTTP API endpoint가 있다는 뜻은 아니다.
+
+`SafetyInterpreter` 결과에는 `event`, `no_event`, `unavailable`, `error` 상태가 있다.
+taxonomic threshold 미만 detection과 unknown class는 이벤트 근거에서 제외한다. 이벤트 후보가
+여러 개면 reason 위험도(`danger > warn > info`), taxonomy class priority(`high > medium`),
+confidence 내림차순, class ID, bbox 좌표, reason code 순으로 선택해 입력 순서와 무관하게
+결과를 결정한다. Safety Event의 detection summary는 기존 mock event 필드명 `score`를 사용한다.
+
+backend adapter는 `event`만 `SafetyEventCreate`로 변환한다. `no_event`, `unavailable`, `error`는
+payload를 만들지 않으며 저장 service도 호출하지 않는다. backend `source`는 mock provider를
+`ai_vision_mock`, Ultralytics provider를 `ai_vision_live`로 구분하고, `inferenceMode`와 정확한
+`modelProvider`도 metadata에 둔다. unknown provider는 mock으로 대체하지 않고 거부한다.
+DetectionResult의 `capturedAt`은 timezone 검증 후 backend `timestamp`로 전달한다. backend가 생성한
+record `eventId`와 구분하도록 원본 vision event ID는 `visionEventId` metadata에 보존한다.
 
 ---
+
+### 1.3 Cross-process backend transport
+
+AI Vision 프로세스는 `BackendSafetyEventClient`로 해석 결과만 JSON 전송한다. 이미지,
+정규화 bbox 목록, detector raw output은 전송하지 않는다. DTO는
+`packages/shared_contracts/api/ai_vision_safety_interpretation.request.schema.json` 및
+`ai_vision_safety_interpretation.response.schema.json`을 따른다. backend의
+`POST /ai-vision/events`가 Pydantic 계약을 검증하고 backend adapter를 거쳐 기존
+`SafetyEventService`를 호출한다. 기존 `POST /safety-events`와 저장 service는 유지된다.
+
+`event`는 HTTP 201 및 저장된 Safety Event를 반환한다. `no_event`, `unavailable`, `error`는
+HTTP 200으로 처리 결과를 확인시키지만 `stored: false`, `safetyEvent: null`로 응답하며
+저장 service를 호출하지 않는다. status별 field와 reason/class 조합은 schema와 Pydantic에서
+검증한다. client는 backend URL과 timeout을 명시적으로 받고 연결/4xx/5xx/invalid response를
+서로 다른 예외로 전달한다. 자동 retry나 mock fallback은 하지 않는다.
+
+실제 backend 프로세스가 실행 중일 때 다음 opt-in smoke 명령으로 fixture event를 저장할 수
+있다. 실행 시 mock Safety Event가 backend 저장소에 추가된다.
+
+```powershell
+python scripts/smoke_ai_vision_backend.py --backend-url http://127.0.0.1:8000
+```
+
+AI Vision runtime 설치 명령은 `python -m pip install -r ai_vision/requirements.txt`다.
+`httpx`가 transport runtime dependency로 추가되며 backend도 기존 requirements에서 동일한
+버전을 사용한다.
+
+### 1.4 Single-image E2E runner
+
+`VisionSafetyPipeline`은 `VisionProvider.infer()` → `SafetyInterpreter.interpret()` →
+`BackendSafetyEventClient.send()`의 한 번 실행 순서만 조정한다. 각 모듈의 inference,
+위험 판단, transport serialization 로직을 복제하지 않는다. event뿐 아니라 `no_event`,
+`unavailable`, `error` 결과도 transport로 전달한다. non-event status는 backend에서 저장되지
+않으며, backend 통신 실패는 pipeline 호출자에게 예외로 전달된다.
+
+별도 PowerShell 터미널에서 backend를 실행한다.
+
+```powershell
+$env:PYTHONPATH = Join-Path $PWD "backend\api"
+.\backend\api\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+AI Vision 환경에서는 기존 local weight와 image 경로를 지정해 전체 한 장 처리를 실행한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" scripts\run_ai_vision_image.py `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --image "C:\mobi-ai\images\images_bus.jpg" `
+  --backend-url "http://127.0.0.1:8000"
+```
+
+CLI는 탐지 class/confidence, DetectionResult와 SafetyInterpretation 상태, backend 전송/저장
+여부와 backend event ID를 출력한다. 정상 `no_event`는 성공 실행이며 저장되지 않는다. 예를 들어
+pretrained COCO 모델이 bus만 탐지하면 현재 단일 프레임 규칙은 `no_event`가 될 수 있다. bus
+탐지 자체를 접근 위험이나 HIGH event로 바꾸지 않는다. inference unavailable/error는 결과를
+backend에 비저장 상태로 전달하고 CLI는 비정상 종료 코드로 알린다.
+
+pretrained model에서 project taxonomy로 직접 매핑되는 class는 bus뿐이다. 실제 거리(depth),
+시간 변화(temporal context), 사용자 위치 관계를 알 수 없고, bus stop/door 등 project class는
+custom-trained model 없이는 탐지한다고 보장할 수 없다. fixture의 bus_door/bus_stop event 경로는
+YOLO weight 없이 unit/integration test에서 검증하며 실제 bus 이미지의 `no_event` 경로와 구분한다.
+
+### 1.5 Video/webcam frame streaming
+
+```txt
+VideoFileSource 또는 WebcamSource
+→ VisionInferenceRequest (in-memory frame)
+→ 기존 VisionSafetyPipeline
+→ YOLOVisionProvider
+→ SafetyInterpreter
+→ BackendSafetyEventClient
+```
+
+`FrameSource`는 frame 획득과 frame ID, timezone-aware capture timestamp, frame index, source
+metadata 생성 및 capture resource lifecycle만 담당한다. `VideoFileSource`와 `WebcamSource`는
+OpenCV `VideoCapture`를 사용한다. 각 frame은 `FrameImagePayload`로 감싼 BGR ndarray를 그대로
+Ultralytics에 전달하므로 frame마다 임시 이미지 파일을 만들지 않는다. OpenCV/NumPy 타입을
+공유 request contract의 import-time dependency로 노출하지 않는다.
+
+video EOF는 정상 종료다. webcam open/read 실패, malformed frame, backend 통신 실패는 오류로
+전달된다. Streaming CLI는 인증된 v2 Producer Client를 사용하며, 동일 불변 Envelope에만 제한적 재시도를 적용한다. Ctrl+C는 source를 release하고 현재 통계를 출력한다.
+GUI preview는 실행하지 않는다.
+
+`--frame-interval N`은 source frame index가 0부터 시작할 때 index가 N의 배수인 frame만 처리한다.
+기본값 1은 모든 frame을 처리하고, 2는 0, 2, 4번 frame을 처리하며 나머지는 건너뛴다.
+`--max-frames N`은 처리 frame 수가 아니라 **읽은 원본 frame 수**를 제한하므로 skipping을 사용해도
+실행이 정해진 입력량 안에서 끝난다. 요약에는 read/processed/skipped frame, detections, 각
+interpretation status, 저장 event 수, elapsed time과 effective processing FPS가 나온다.
+
+OpenCV Python package는 현재 `ultralytics`의 runtime dependency로 제공되므로 별도로 중복 선언하지
+않는다. `ai_vision/requirements.txt` 설치는 모델 런타임 환경에서 한 번 필요하다. 실제 video와
+webcam 실행은 opt-in이다.
+
+```powershell
+python -B scripts/run_ai_vision_stream.py --help
+```
+
+로컬 Backend와 Emulator는 [로컬 Producer 설정](../../docs/rw/VISION_PRODUCER_LOCAL.md)을 따른다.
+이미 실행 중인 시연 서비스를 재사용하고, 별도 테스트 Backend는 8011 포트를 사용한다.
+일반 app.main 실행만으로 Emulator 전용 환경이 설정되지는 않는다.
+
+AI Vision 환경은 Ultralytics/OpenCV runtime을 설치한 `mobi-yolo` Python을 사용한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -m pip install -r ai_vision\requirements.txt
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -B scripts\run_ai_vision_stream.py `
+  --source video `
+  --video "C:\mobi-ai\videos\bus_stop.mp4" `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --backend-url "http://127.0.0.1:8011" `
+  --binding "C:\mobi-ai\local\server-created-binding.json" `
+  --email "producer@example.test" `
+  --frame-interval 2
+```
+
+webcam은 Ctrl+C로 종료하며, 짧은 검증은 `--max-frames 120`처럼 입력 frame 수를 제한한다.
+
+```powershell
+& "C:\venvs\mobi-yolo\Scripts\python.exe" -B scripts\run_ai_vision_stream.py `
+  --source webcam `
+  --camera 0 `
+  --model "C:\mobi-ai\models\yolo11n.pt" `
+  --backend-url "http://127.0.0.1:8011" `
+  --binding "C:\mobi-ai\local\server-created-binding.json" `
+  --email "producer@example.test" `
+  --frame-interval 2 `
+  --max-frames 120
+```
+
+pretrained taxonomy mapping은 `bus`에 한정된다. depth, temporal risk reasoning, custom model,
+passenger app 및 spatial audio integration은 이 단계에 포함되지 않는다. 따라서 bus detection 후
+`no_event` 결과가 정상일 수 있으며, bus를 approaching_bus나 HIGH risk로 추론하지 않는다.
+
+### 인증된 v2 Streaming 실행 조건
+
+위 예제는 demo-mobi-local Auth/RTDB Emulator와 로컬 전용 Backend가 필요하다.
+관리자가 등록한 카메라와 서버가 생성한 활성 Binding JSON을 사용한다.
+영상 파일에는 replay Binding, 웹캠에는 live Binding을 각각 사용한다.
+로그인 비밀번호는 숨김 입력 또는 프로세스 한정 `MOBI_VISION_PASSWORD` 환경 변수로 전달한다.
+관리자 키나 토큰을 Producer Client에 넣지 않는다. 기존 단일 이미지 legacy endpoint는 admin 보호를 유지한다.
+Producer Client 준비는 [VISION_PRODUCER_CLIENT.md](../../docs/rw/VISION_PRODUCER_CLIENT.md)를 참조한다.
+
+모델 로딩과 검은 640x640 배열 Warm-up은 영상/카메라를 열기 전에 수행한다.
+Warm-up 실패는 실행 실패로 처리한다. Warm-up 결과는 관측 이벤트로 전송하지 않는다.
+Client의 기본 4초 만료 정책은 변경하지 않는다. 확실히 전송되지 않은 `EVENT_EXPIRED`만 폐기하고
+다음 frameIndex로 진행한다. 결과 불확실·권한 오류·순서 오류는 실행을 중단하고 source를 해제한다.
+이전 이벤트의 timestamp, ID 또는 DetectionResult를 바꿔 새로운 관측으로 재전송하지 않는다.
+
+OpenCV `capturedAt`은 host-read 시각이며, `captureClock=host_read`로 명시한다.
+영상 파일에서는 녹화 촬영 시각이 아닌 재생 읽기 시각이다. 원본 녹화 시각은 확인되지 않았다.
+웹캠도 센서 노출 시각이나 드라이버 버퍼 지연을 검증한 것은 아니다.
+성공 응답은 `accepted=true`, `stored=false`, `guidanceEligible=false`, `freshnessVerified=false`다.
+Vision 관찰로 목표 버스 식별 또는 승차 허용을 생성하지 않는다.
+
+`--report <새 JSON 경로> --max-frames N`을 함께 주면 frame별 read/prediction/conversion/HTTP/전체
+시간, 불변 Envelope와 receipt, expired/submitted 집계를 기록한다. 기존 보고서를 덮어쓰지 않는다.
+FPS는 실제 처리량이며 안전성이 검증된 실시간 임계값을 의미하지 않는다.
+카메라별 순차 전송이며 RTSP, 자동 재연결, 버퍼 지연 상한 보장은 아직 구현하지 않았다.
+재시작은 서버에서 새 Binding/epoch를 발급받아야 한다. 기존 epoch를 임의 재생성하지 않는다.
 
 ## 2. 추론 위치 후보 (2학기 결정)
 
@@ -378,3 +689,7 @@ python ai_vision/pipelines/mock_inference_pipeline.py
 - 파이프라인 책임자: 김도성 (담당 영역)
 - 본 placeholder는 2학기 시작 시점에 정식 모듈로 대체된다.
 
+
+## Local v2 Producer Client
+
+`vision_producer_client.py` provides immutable DetectionResult envelopes, local Auth Emulator token renewal, bounded same-body retries and per-camera sequential sending. Legacy SafetyInterpretation transport is retained. See `../../docs/rw/VISION_PRODUCER_CLIENT.md` for restart and failure policies. No Streaming or Live passenger delivery is enabled.

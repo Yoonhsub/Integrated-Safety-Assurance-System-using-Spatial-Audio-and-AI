@@ -117,7 +117,21 @@ application_default_credentials.json
 # =========================
 # AI / ML artifacts
 # =========================
-ai_vision/datasets/
+ai_vision/datasets/*
+!ai_vision/datasets/custom_bus_safety/
+ai_vision/datasets/custom_bus_safety/*
+!ai_vision/datasets/custom_bus_safety/README.md
+!ai_vision/datasets/custom_bus_safety/labels/
+ai_vision/datasets/custom_bus_safety/labels/*
+!ai_vision/datasets/custom_bus_safety/labels/train/
+!ai_vision/datasets/custom_bus_safety/labels/val/
+!ai_vision/datasets/custom_bus_safety/labels/test/
+ai_vision/datasets/custom_bus_safety/labels/train/*
+ai_vision/datasets/custom_bus_safety/labels/val/*
+ai_vision/datasets/custom_bus_safety/labels/test/*
+!ai_vision/datasets/custom_bus_safety/labels/train/*.txt
+!ai_vision/datasets/custom_bus_safety/labels/val/*.txt
+!ai_vision/datasets/custom_bus_safety/labels/test/*.txt
 ai_vision/raw_data/
 ai_vision/processed_data/
 ai_vision/models/*.tflite
@@ -126,6 +140,9 @@ ai_vision/models/*.pt
 ai_vision/models/*.pth
 ai_vision/models/*.weights
 ai_vision/runs/
+ai_vision/training/runs/
+ai_vision/training/weights/
+ai_vision/training/**/*.pt
 *.ckpt
 
 # =========================

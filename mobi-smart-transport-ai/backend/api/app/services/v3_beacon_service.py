@@ -18,6 +18,8 @@ Threshold는 환경변수로 조정 가능하며, #36 @ajh1206 캘리브레이�
 from __future__ import annotations
 
 import os
+import time
+from threading import RLock
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,6 +28,7 @@ from app.schemas.v3 import (
     BeaconIngestRequest,
     BeaconIngestResponse,
     BeaconProximity,
+    BeaconSource,
     CueType,
     GuidanceState,
 )
@@ -46,7 +49,13 @@ UNSTABLE_DELTA = int(os.getenv("BEACON_UNSTABLE_DELTA", "20"))
 # ---------------------------------------------------------------------------
 
 _latest_state: dict[str, BeaconIngestResponse] = {}
-_rssi_history: dict[str, list[tuple[datetime, int]]] = {}
+_rssi_history: dict[tuple[str, str, str], list[tuple[datetime, int]]] = {}
+_observations: dict[str, tuple[datetime, float]] = {}
+_state_lock = RLock()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -74,47 +83,31 @@ def _classify_proximity(rssi: int, distance_meters: float | None) -> BeaconProxi
     return BeaconProximity.FAR
 
 
-def _is_target_beacon(req: BeaconIngestRequest) -> bool:
-    """beaconId가 target인지 판정.
-    
-    초기 규칙: beaconId 또는 busId에 'TARGET' 포함 시 target.
-    실제 운영에서는 세션의 target_bus_id와 매핑 필요 (#35 추후 확장).
+def _demo_identity(req: BeaconIngestRequest) -> bool | None:
+    """Only explicit synthetic fixtures have a known identity here.
+
+    No verified beacon-to-vehicle registry exists. Client busId/routeNo/MAC
+    are assertions, not evidence; REAL_BLE must remain unidentified.
     """
-    if "TARGET" in req.beaconId.upper():
-        return True
-    if req.busId and "TARGET" in req.busId.upper():
-        return True
-    return False
-
-
-def _detect_unstable(session_id: str, current_rssi: int, current_time: datetime) -> bool:
-    """짧은 시간 RSSI 급변 감지.
-    
-    이전 RSSI 대비 UNSTABLE_DELTA 이상 변화 시 unstable로 판정.
-    """
-    history = _rssi_history.get(session_id, [])
-    if not history:
-        return False
-    
-    # 최근 1개 이벤트와 비교
-    _, last_rssi = history[-1]
-    delta = abs(current_rssi - last_rssi)
-    return delta >= UNSTABLE_DELTA
-
-
-def _record_rssi_history(session_id: str, timestamp: datetime, rssi: int) -> None:
-    """RSSI 히스토리 기록 (unstable 판정용)."""
-    history = _rssi_history.setdefault(session_id, [])
-    history.append((timestamp, rssi))
-    # 최근 10개만 유지 (메모리 관리)
-    if len(history) > 10:
-        _rssi_history[session_id] = history[-10:]
-
-
-def _get_previous_phase(session_id: str) -> GuidanceState:
-    """이전 phase 가져오기 (없으면 WAITING_FOR_BUS default)."""
-    prev = _latest_state.get(session_id)
-    return prev.phase if prev else GuidanceState.WAITING_FOR_BUS
+    if os.getenv("USE_MOCK_DATA", "false").lower() != "true":
+        return None
+    if os.getenv("PUBLIC_DATA_USE_MOCK", "true").lower() in ("false", "0", "no", "off"):
+        return None
+    if req.source not in (BeaconSource.MANUAL_TEST, BeaconSource.MOCK_BRIDGE):
+        return None
+    fixtures = {
+        "MOBI_BUS_502_TARGET": (True, "BUS_502_NOW", "502"),
+        "MOBI_BUS_100_WRONG": (False, "BUS_100", "100"),
+    }
+    entry = fixtures.get(req.beaconId)
+    if entry is None:
+        return None
+    target, bus_id, route = entry
+    if (req.busId is not None and req.busId != bus_id) or (
+        req.routeNo is not None and req.routeNo != route
+    ):
+        return None
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +159,9 @@ def _map_decision_to_phase_cue(
             0.3,
         )
     if decision == BeaconDecision.SIGNAL_UNSTABLE:
-        # 기존 phase 유지 (문서 §6)
+        # Unstable observations revoke any previous boarding confirmation.
         return (
-            _get_previous_phase(session_id),
+            GuidanceState.WAITING_FOR_BUS,
             CueType.NONE,
             "signal_lost",
             0.4,
@@ -186,122 +179,120 @@ def _map_decision_to_phase_cue(
 # Public API
 # ---------------------------------------------------------------------------
 
+def _hold(req: BeaconIngestRequest, warning: str, *, lost: bool = False) -> BeaconIngestResponse:
+    return BeaconIngestResponse(
+        sessionId=req.sessionId, lastUpdatedAt=req.timestamp,
+        beaconId=req.beaconId, routeNo=None, rssi=None, distanceMeters=None,
+        proximity=BeaconProximity.LOST if lost else BeaconProximity.UNSTABLE,
+        decision=BeaconDecision.BEACON_LOST if lost else BeaconDecision.NO_BEACON,
+        phase=GuidanceState.WAITING_FOR_BUS, cueType=CueType.NONE,
+        scriptLineId="signal_lost", confidence=0.0, warnings=[warning],
+    )
+
+
 def evaluate_beacon(req: BeaconIngestRequest) -> BeaconIngestResponse:
-    """비컨 이벤트를 받아 판정 결과 반환 + 최신 상태 저장.
-    
-    1. unstable 감지 (이전 RSSI 대비 급변)
-    2. proximity 분류 (NEAR/MID/FAR)
-    3. target/wrong 판정
-    4. decision 결정
-    5. phase/cueType/scriptLineId/confidence 매핑
-    6. _latest_state 갱신
+    """Atomic freshness/order checks and state update within this process.
+
+    timestamp is an untrusted client callback wall-clock time. The server also
+    bounds lifetime with a monotonic deadline; HTTP retries never refresh it.
+    Only fresh, strictly newer observations may replace an accepted state.
     """
-    
-    # 1. unstable 감지
-    is_unstable = _detect_unstable(req.sessionId, req.rssi, req.timestamp)
-    
-    # 2. proximity 분류
-    proximity = _classify_proximity(req.rssi, req.distanceMeters)
-    
-    # 3. target/wrong 판정
-    is_target = _is_target_beacon(req)
-    
-    # 4. decision 결정
-    if is_unstable:
-        decision = BeaconDecision.SIGNAL_UNSTABLE
-        proximity = BeaconProximity.UNSTABLE
-    elif is_target:
-        if proximity == BeaconProximity.NEAR:
-            decision = BeaconDecision.TARGET_BUS_NEAR
-        elif proximity == BeaconProximity.MID:
-            decision = BeaconDecision.TARGET_BUS_MID
-        else:  # FAR
-            decision = BeaconDecision.TARGET_BUS_FAR
-    else:  # wrong beacon
-        if proximity in (BeaconProximity.NEAR, BeaconProximity.MID):
-            decision = BeaconDecision.WRONG_BUS_NEAR
+    with _state_lock:
+        now = _utc_now()
+        stamp = req.timestamp.astimezone(timezone.utc)
+        req = req.model_copy(update={"timestamp": stamp})
+        age = (now - stamp).total_seconds()
+        previous = _observations.get(req.sessionId)
+        reason = None
+        if age < 0:
+            reason = "FUTURE_OBSERVATION: client clock is ahead; observation ignored"
+        elif age >= LOST_TIMEOUT_SEC:
+            reason = "STALE_OBSERVATION: observation ignored"
+        elif previous is not None and stamp <= previous[0]:
+            reason = "DUPLICATE_OR_OUT_OF_ORDER: observation ignored"
+        if reason:
+            current = get_latest_state(req.sessionId)
+            if current is not None:
+                return current.model_copy(update={"warnings": [*current.warnings, reason]})
+            # Rejected input must not create a state or advance a watermark.
+            return _hold(req, reason, lost=age >= LOST_TIMEOUT_SEC)
+
+        identity = _demo_identity(req)
+        key = (req.sessionId, req.deviceId, req.beaconId)
+        history = _rssi_history.get(key, [])
+        unstable = bool(history and 0 < (stamp - history[-1][0]).total_seconds() < LOST_TIMEOUT_SEC
+                        and abs(req.rssi - history[-1][1]) >= UNSTABLE_DELTA)
+        proximity = _classify_proximity(req.rssi, req.distanceMeters)
+        if identity is None:
+            result = _hold(req, "UNVERIFIED_IDENTITY: no trusted vehicle mapping; boarding withheld")
+            # Radio proximity can be measured without knowing the vehicle.
+            result = result.model_copy(update={
+                "rssi": req.rssi, "distanceMeters": req.distanceMeters,
+                "proximity": BeaconProximity.UNSTABLE if unstable else proximity,
+            })
         else:
-            # wrong far는 무시. 기존 phase 유지하지만 decision은 NO_BEACON으로
-            decision = BeaconDecision.NO_BEACON
-    
-    # 5. phase/cueType/scriptLineId/confidence 매핑
-    phase, cue_type, script_line_id, confidence = _map_decision_to_phase_cue(
-        decision, req.sessionId
-    )
-    
-    # 6. 응답 객체 생성
-    result = BeaconIngestResponse(
-        sessionId=req.sessionId,
-        lastUpdatedAt=req.timestamp,
-        beaconId=req.beaconId,
-        routeNo=req.routeNo,
-        rssi=req.rssi,
-        distanceMeters=req.distanceMeters,
-        proximity=proximity,
-        decision=decision,
-        phase=phase,
-        cueType=cue_type,
-        scriptLineId=script_line_id,
-        confidence=confidence,
-        warnings=[],
-    )
-    
-    # 7. 저장 + 히스토리 기록
-    _latest_state[req.sessionId] = result
-    _record_rssi_history(req.sessionId, req.timestamp, req.rssi)
-    
-    return result
+            if unstable:
+                decision = BeaconDecision.SIGNAL_UNSTABLE
+                proximity = BeaconProximity.UNSTABLE
+            elif identity:
+                decision = {
+                    BeaconProximity.NEAR: BeaconDecision.TARGET_BUS_NEAR,
+                    BeaconProximity.MID: BeaconDecision.TARGET_BUS_MID,
+                    BeaconProximity.FAR: BeaconDecision.TARGET_BUS_FAR,
+                }[proximity]
+            else:
+                decision = (BeaconDecision.WRONG_BUS_NEAR if proximity in
+                            (BeaconProximity.NEAR, BeaconProximity.MID) else BeaconDecision.NO_BEACON)
+            phase, cue, script, confidence = _map_decision_to_phase_cue(decision, req.sessionId)
+            result = BeaconIngestResponse(
+                sessionId=req.sessionId, lastUpdatedAt=stamp, beaconId=req.beaconId,
+                routeNo=req.routeNo, rssi=req.rssi, distanceMeters=req.distanceMeters,
+                proximity=proximity, decision=decision, phase=phase, cueType=cue,
+                scriptLineId=script, confidence=confidence,
+                warnings=["SYNTHETIC_DEMO_IDENTITY: not verified vehicle evidence"],
+            )
+        _latest_state[req.sessionId] = result
+        _observations[req.sessionId] = (stamp, time.monotonic() + LOST_TIMEOUT_SEC - age)
+        _rssi_history[key] = [*history[-9:], (stamp, req.rssi)]
+        return result
 
 
 def get_latest_state(session_id: str) -> Optional[BeaconIngestResponse]:
-    """최신 상태 조회 + lost timeout 자동 체크.
-    
-    LOST_TIMEOUT_SEC 이상 신호 없으면 BEACON_LOST로 자동 전환.
-    """
-    prev = _latest_state.get(session_id)
-    if not prev:
-        return None
-    
-    # 이미 LOST 상태면 그대로 반환
-    if prev.decision == BeaconDecision.BEACON_LOST:
+    with _state_lock:
+        prev = _latest_state.get(session_id)
+        observation = _observations.get(session_id)
+        if prev is None:
+            return None
+        if prev.decision == BeaconDecision.BEACON_LOST:
+            return prev
+        now = _utc_now()
+        expired = observation is None or time.monotonic() >= observation[1]
+        if observation is not None:
+            age = (now - observation[0]).total_seconds()
+            expired = expired or age < 0 or age >= LOST_TIMEOUT_SEC
+        if expired:
+            lost = prev.model_copy(update={
+                # Preserve observation time: a poll is not a new detection.
+                "rssi": None, "distanceMeters": None,
+                "proximity": BeaconProximity.LOST, "decision": BeaconDecision.BEACON_LOST,
+                "phase": GuidanceState.WAITING_FOR_BUS, "cueType": CueType.NONE,
+                "scriptLineId": "signal_lost", "confidence": 0.0,
+                "warnings": ["Observation expired or clock discontinuity; boarding withheld"],
+            })
+            _latest_state[session_id] = lost
+            return lost
         return prev
-    
-    # lost timeout 체크
-    now = datetime.now(timezone.utc)
-    elapsed = (now - prev.lastUpdatedAt).total_seconds()
-    
-    if elapsed > LOST_TIMEOUT_SEC:
-        # LOST로 자동 전환
-        phase, cue_type, script_line_id, confidence = _map_decision_to_phase_cue(
-            BeaconDecision.BEACON_LOST, session_id
-        )
-        lost_state = BeaconIngestResponse(
-            sessionId=session_id,
-            lastUpdatedAt=now,
-            beaconId=prev.beaconId,
-            routeNo=prev.routeNo,
-            rssi=None,
-            distanceMeters=None,
-            proximity=BeaconProximity.LOST,
-            decision=BeaconDecision.BEACON_LOST,
-            phase=phase,
-            cueType=cue_type,
-            scriptLineId=script_line_id,
-            confidence=confidence,
-            warnings=[f"No beacon signal for over {LOST_TIMEOUT_SEC} seconds"],
-        )
-        _latest_state[session_id] = lost_state
-        return lost_state
-    
-    return prev
 
 
 def reset_session(session_id: str) -> None:
-    """세션 초기화 (데모용)."""
-    _latest_state.pop(session_id, None)
-    _rssi_history.pop(session_id, None)
+    with _state_lock:
+        _latest_state.pop(session_id, None)
+        _observations.pop(session_id, None)
+        for key in list(_rssi_history):
+            if key[0] == session_id:
+                del _rssi_history[key]
 
 
 def get_active_sessions() -> list[str]:
-    """현재 활성 세션 목록 (디버깅용)."""
-    return list(_latest_state.keys())
+    with _state_lock:
+        return list(_latest_state)

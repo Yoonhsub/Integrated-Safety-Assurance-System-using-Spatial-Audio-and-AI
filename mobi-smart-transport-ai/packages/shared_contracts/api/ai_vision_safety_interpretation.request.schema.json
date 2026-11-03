@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AiVisionSafetyInterpretationIngestRequest",
+  "type": "object",
+  "required": ["schemaVersion", "status", "source"],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0.0" },
+    "status": { "type": "string", "enum": ["event", "no_event", "unavailable", "error"] },
+    "source": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "eventId": { "type": "string", "format": "uuid" },
+    "frameId": { "type": "string", "format": "uuid" },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "riskLevel": { "type": "string", "enum": ["info", "warn", "danger"] },
+    "reason": {
+      "type": "string",
+      "enum": ["bus_stop_recognized", "approaching_bus", "bus_door_visible", "off_sidewalk", "obstacle_ahead", "tactile_paving_lost"]
+    },
+    "primaryClass": {
+      "type": "string",
+      "enum": ["bus", "bus_door", "bus_stop", "roadway", "sidewalk", "obstacle", "tactile_paving"]
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "message": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "modelInfo": {
+      "type": "object",
+      "required": ["provider", "name"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "name": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "version": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "message": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "event" } }, "required": ["status"] },
+      "then": {
+        "required": ["eventId", "frameId", "capturedAt", "riskLevel", "reason", "primaryClass", "confidence", "message", "modelInfo"],
+        "not": { "required": ["error"] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "no_event" } }, "required": ["status"] },
+      "then": {
+        "required": ["frameId", "capturedAt"],
+        "not": { "anyOf": [
+          { "required": ["eventId"] }, { "required": ["riskLevel"] }, { "required": ["reason"] },
+          { "required": ["primaryClass"] }, { "required": ["confidence"] }, { "required": ["message"] },
+          { "required": ["modelInfo"] }, { "required": ["error"] }
+        ] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "unavailable" } }, "required": ["status"] },
+      "then": {
+        "required": ["error"],
+        "not": { "anyOf": [
+          { "required": ["eventId"] }, { "required": ["riskLevel"] }, { "required": ["reason"] },
+          { "required": ["primaryClass"] }, { "required": ["confidence"] }, { "required": ["message"] },
+          { "required": ["modelInfo"] }
+        ] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+      "then": {
+        "required": ["error"],
+        "not": { "anyOf": [
+          { "required": ["eventId"] }, { "required": ["riskLevel"] }, { "required": ["reason"] },
+          { "required": ["primaryClass"] }, { "required": ["confidence"] }, { "required": ["message"] },
+          { "required": ["modelInfo"] }
+        ] }
+      }
+    },
+    { "if": { "properties": { "reason": { "const": "bus_stop_recognized" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "bus_stop" } } } },
+    { "if": { "properties": { "reason": { "const": "approaching_bus" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "bus" } } } },
+    { "if": { "properties": { "reason": { "const": "bus_door_visible" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "bus_door" } } } },
+    { "if": { "properties": { "reason": { "const": "off_sidewalk" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "roadway" } } } },
+    { "if": { "properties": { "reason": { "const": "obstacle_ahead" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "obstacle" } } } },
+    { "if": { "properties": { "reason": { "const": "tactile_paving_lost" } }, "required": ["reason"] }, "then": { "properties": { "primaryClass": { "const": "tactile_paving" } } } }
+  ],
+  "additionalProperties": false
+}

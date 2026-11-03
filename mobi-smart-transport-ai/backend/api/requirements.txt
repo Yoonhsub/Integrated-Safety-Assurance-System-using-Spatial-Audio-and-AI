@@ -5,3 +5,4 @@ firebase-admin==6.6.0
 python-dotenv==1.0.1
 httpx==0.28.1
 websockets==16.0
+jsonschema==4.23.0

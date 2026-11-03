@@ -1,0 +1,6 @@
+# Optional CPU TFLite integration runtime (separate environment recommended).
+tensorflow==2.20.0
+opencv-python>=4.10
+numpy>=1.26
+httpx>=0.27
+jsonschema>=4.22

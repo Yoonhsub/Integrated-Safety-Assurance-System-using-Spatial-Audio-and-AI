@@ -1,0 +1,13 @@
+{
+  "offlineOnly": true,
+  "projectId": "mobi-auth-cloud-test",
+  "authRunId": "auth-20261023-919e07bd",
+  "dataRunId": "rtdb-offline-ui-fixture",
+  "caseId": "ui-e2e-01",
+  "backendUrl": "http://127.0.0.1:8023",
+  "stopId": "ct-rtdb-offline-ui-fixture-stop-502",
+  "routeId": "MOCK-502",
+  "busNo": "502",
+  "idempotencyKey": "cloud-test:rtdb-offline-ui-fixture:ui-e2e-01",
+  "requestId": "ride-i-c4002cf41924da1616e42e03807ab6ea25accb1d6d20364de0fb18148af7f2cb"
+}

@@ -101,6 +101,8 @@ def main() -> int:
             "sessionId": session_id,
             "wakeWord": wake_word,
             "utterance": "자비스, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?",
+            "originLat": 36.6262,
+            "originLng": 127.4312,
         },
         label="3. POST /agent/converse FIND_ROUTE",
     )

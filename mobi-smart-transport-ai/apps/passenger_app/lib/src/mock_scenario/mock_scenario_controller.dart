@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/speech_engine.dart';
+import '../services/audio_shutdown.dart';
+
 import 'mock_scenario_definition.dart';
 import 'mock_scenario_math.dart';
 import 'mock_scenario_phase.dart';
@@ -9,12 +12,11 @@ import 'mock_scenario_state.dart';
 
 typedef MockScenarioCueFrame = FutureOr<void> Function(MockScenarioState state);
 typedef MockScenarioStopCue = FutureOr<void> Function();
-typedef MockScenarioScriptLine =
-    FutureOr<void> Function(
-      String scriptLineId,
-      String fallbackMessage,
-      MockScenarioState state,
-    );
+typedef MockScenarioScriptLine = FutureOr<void> Function(
+  String scriptLineId,
+  String fallbackMessage,
+  MockScenarioState state,
+);
 typedef MockScenarioStopScriptAudio = FutureOr<void> Function();
 
 class MockScenarioController extends ChangeNotifier {
@@ -24,8 +26,8 @@ class MockScenarioController extends ChangeNotifier {
     this.onScriptLine,
     this.onStopScriptAudio,
   }) : _state = MockScenarioState.initial(
-         scenario: mockScenarioDefinitions.first,
-       ) {
+          scenario: mockScenarioDefinitions.first,
+        ) {
     _state = _buildState(isPlaying: false);
   }
 
@@ -191,8 +193,8 @@ class MockScenarioController extends ChangeNotifier {
     final progress = _scenario.duration.inMilliseconds == 0
         ? 1.0
         : (_elapsed.inMilliseconds / _scenario.duration.inMilliseconds)
-              .clamp(0.0, 1.0)
-              .toDouble();
+            .clamp(0.0, 1.0)
+            .toDouble();
 
     // 지오펜스 밖으로 나가면 키프레임 cueType(고정 시각)과 무관하게 즉시 경고를 울린다.
     // (보간 중 사용자가 키프레임보다 먼저 원을 벗어나도 지각 없이 경고)
@@ -300,7 +302,8 @@ class MockScenarioController extends ChangeNotifier {
     final scriptLineId = _state.currentScriptLineId;
     if (scriptLineId != null && scriptLineId != _lastScriptLineId) {
       _lastScriptLineId = scriptLineId;
-      Future<void>.sync(
+      _observeEffect(
+        'script audio',
         () => onScriptLine?.call(
           scriptLineId,
           _state.currentScenarioMessage,
@@ -315,16 +318,16 @@ class MockScenarioController extends ChangeNotifier {
     _lastCueFrameAt = _state.elapsed;
 
     if (_state.shouldStopCue) {
-      Future<void>.sync(() => onCueFrame?.call(_state));
+      _observeEffect('cue frame', () => onCueFrame?.call(_state));
       _emitStopCue();
       return;
     }
 
     if (!_state.shouldPlayCue) {
-      Future<void>.sync(() => onCueFrame?.call(_state));
+      _observeEffect('cue frame', () => onCueFrame?.call(_state));
       return;
     }
-    Future<void>.sync(() => onCueFrame?.call(_state));
+    _observeEffect('cue frame', () => onCueFrame?.call(_state));
   }
 
   Offset _cuePositionForFrame(
@@ -343,12 +346,28 @@ class MockScenarioController extends ChangeNotifier {
     return frame.targetBusPosition;
   }
 
+  // Observe every fire-and-forget effect immediately. Cancellation retires
+  // only that callback; it must not trigger retries or release audio ownership.
+  void _observeEffect(String operation, FutureOr<void> Function() action) {
+    unawaited(Future<void>.sync(action).then<void>((_) {},
+        onError: (Object error, StackTrace stack) {
+      // Unknown shutdown is a failure even though it prevents voice fallback.
+      if (error is SpeechCancelled && error is! AudioShutdownFailure) return;
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'mock scenario audio',
+        context: ErrorDescription('while executing scenario $operation'),
+      ));
+    }));
+  }
+
   void _emitStopCue() {
-    Future<void>.sync(() => onStopCue?.call());
+    _observeEffect('stop cue', () => onStopCue?.call());
   }
 
   void _emitStopScriptAudio() {
-    Future<void>.sync(() => onStopScriptAudio?.call());
+    _observeEffect('stop script audio', () => onStopScriptAudio?.call());
   }
 
   @override

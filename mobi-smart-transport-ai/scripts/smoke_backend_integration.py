@@ -24,7 +24,7 @@ def assert_status(response, expected: int, label: str) -> dict:
     return response.json()
 
 
-def main() -> int:
+def _run() -> int:
     client = TestClient(app)
     firebase = get_firebase_client()
     firebase.clear_mock_store()
@@ -71,6 +71,20 @@ def main() -> int:
 
     print("Backend smoke integration: PASS")
     return 0
+
+
+def main() -> int:
+    # This is an in-process Mock smoke, never a server authentication mode.
+    from app.security import Principal, get_principal
+    if not get_firebase_client().using_mock:
+        raise RuntimeError("Smoke requires Mock storage; refusing live mutations")
+    previous = dict(app.dependency_overrides)
+    app.dependency_overrides[get_principal] = lambda: Principal("smoke-admin", "admin")
+    try:
+        return _run()
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,12 @@ def firebase_status() -> dict[str, Any]:
     # Attempt (re)initialization with current settings so status reflects reality.
     client.initialize()
     status = client.status()
-    probe = client.probe()
+    from app.cloud_test import requested, validate
+    if requested():
+        client.get(validate().path)  # Cloud-test status is a scoped read, not a write probe.
+        probe = {"ok": True, "mode": "firebase-admin", "message": "Read-only cloud-test storage check"}
+    else:
+        probe = client.probe()
     # probe() may have flipped runtime state; refresh.
     status = client.status()
 
@@ -65,6 +70,11 @@ def firebase_initialize(request: FirebaseInitializeRequest) -> dict[str, Any]:
     Falls back to the in-memory mock store when real credentials are missing.
     Never raises a 500 for missing credentials — it reports mock fallback.
     """
+    import os
+    from fastapi import HTTPException
+    from app.cloud_test import requested
+    if requested() or os.getenv('APP_ENV', 'development').lower() in {'staging', 'production'}:
+        raise HTTPException(403, 'Legacy demo seeding is disabled in cloud environments')
     client = get_firebase_client()
     client.initialize(force=True)
 

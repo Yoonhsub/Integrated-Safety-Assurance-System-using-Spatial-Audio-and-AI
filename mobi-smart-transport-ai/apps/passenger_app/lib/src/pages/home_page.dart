@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/api_base_url.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/backend_api_client.dart';
+import '../services/cloud_ride_intent.dart';
+import 'ride_request_panel.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/voice_guide_service.dart';
 
@@ -13,7 +17,47 @@ class HomePage extends StatefulWidget {
     required this.onEditAgentName,
     required this.onReturnToModeSelection,
     required this.dataMode,
-  });
+  })  : _testHarness = false,
+        _testApi = null,
+        _testAuth = null,
+        _cloudBinding = null;
+
+  /// Only standalone loopback test entrypoints may select this constructor.
+  /// Normal app routing always uses HomePage above; no auth bypass is installed.
+  @visibleForTesting
+  const HomePage.testHarness({
+    super.key,
+    required this.agentName,
+    required this.onEditAgentName,
+    required this.onReturnToModeSelection,
+    required this.dataMode,
+    required BackendApiClient api,
+    required AuthSession auth,
+  })  : _testHarness = true,
+        _testApi = api,
+        _testAuth = auth,
+        _cloudBinding = null;
+
+  /// Separate verification entrypoint: real Firebase Auth and protected API.
+  /// Normal app routes do not use this constructor.
+  const HomePage.cloudVerification({
+    super.key,
+    required this.agentName,
+    required this.onEditAgentName,
+    required this.onReturnToModeSelection,
+    required CloudRideBinding binding,
+  })  : dataMode = 'mock',
+        _testHarness = false,
+        _testApi = null,
+        _testAuth = null,
+        _cloudBinding = binding;
+
+  final CloudRideBinding? _cloudBinding;
+  bool get _isolateV3 => _testHarness || _cloudBinding != null;
+
+  final bool _testHarness;
+  final BackendApiClient? _testApi;
+  final AuthSession? _testAuth;
 
   final String agentName;
   final VoidCallback onEditAgentName;
@@ -28,9 +72,6 @@ class _HomePageState extends State<HomePage> {
   static final String _apiBaseUrl = resolveApiBaseUrl();
 
   static const String _defaultBusStopId = 'mock-stop-001';
-  static const String _passengerUserId = 'passenger-demo-001';
-  static const String _defaultTargetDriverId = 'ride-driver-001';
-  static const String _v3VoiceSessionId = 'home-voice-session';
   static const double _webDemoOriginLat = 36.6359;
   static const double _webDemoOriginLng = 127.4596;
 
@@ -39,134 +80,80 @@ class _HomePageState extends State<HomePage> {
   String _selectedStopId = _defaultBusStopId;
   String? _selectedRouteId;
   String? _selectedBusNo;
-  final String _targetDriverId = _defaultTargetDriverId;
+  String? _v3VoiceSessionId;
 
-  final VoiceGuideService _voiceGuideService = VoiceGuideService();
-  final AudioHapticCueService _cueService = AudioHapticCueService();
-
-  final BackendApiClient _backendApiClient = BackendApiClient(
-    baseUrl: _apiBaseUrl,
-    useMockData: false,
-  );
-
-  final V3AgentApiClient _v3AgentApiClient = V3AgentApiClient(
-    baseUrl: _apiBaseUrl,
-  );
+  VoiceGuideService? _voiceGuideService;
+  AudioHapticCueService? _cueService;
+  late final BackendApiClient _backendApiClient;
+  late final V3AgentApiClient? _v3AgentApiClient;
+  late final AuthSession _auth;
 
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
 
-  RideRequestCreateResult? _rideRequestCreateResult;
-  bool _isCreatingRideRequest = false;
-
-  RideRequestStatusResult? _rideRequestStatusResult;
-  bool _isLoadingRideRequestStatus = false;
-
-  FirebaseStatusResult? _firebaseStatus;
-  bool _isLoadingFirebaseStatus = false;
-  bool _isInitializingFirebase = false;
-  bool _firebaseReset = false;
-  FirebaseInitializeResult? _firebaseInitResult;
-
   @override
   void dispose() {
-    _voiceGuideService.cancelListening();
-    _cueService.dispose();
+    _voiceGuideService?.cancelListening();
+    _cueService?.dispose();
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
+    if (widget._testHarness) {
+      final api = Uri.parse(widget._testApi!.baseUrl);
+      const loopback = {'127.0.0.1', 'localhost'};
+      if (widget._testAuth is FirebaseAuthSession ||
+          api.scheme != 'http' ||
+          !loopback.contains(api.host) ||
+          api.userInfo.isNotEmpty ||
+          api.hasQuery ||
+          api.hasFragment ||
+          (kReleaseMode &&
+              (!const bool.fromEnvironment('MOBI_HOME_TEST_HARNESS') ||
+                  !kIsWeb ||
+                  !loopback.contains(Uri.base.host)))) {
+        throw StateError(
+            'HomePage test dependencies require an explicit loopback test build');
+      }
+    }
+    final binding = widget._cloudBinding;
+    binding?.validate();
+    _auth =
+        binding?.session ?? widget._testAuth ?? FirebaseAuthSession.instance;
+    _backendApiClient = binding != null
+        ? BackendApiClient(
+            baseUrl: binding.plan.backendUrl,
+            useMockData: false,
+            publicClient: binding.publicClient,
+            authClient: binding.authClient)
+        : widget._testApi ??
+            BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
+    _v3AgentApiClient =
+        widget._isolateV3 ? null : V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _voiceGuideService = widget._isolateV3 ? null : VoiceGuideService();
+    _cueService = widget._isolateV3 ? null : AudioHapticCueService();
+    if (widget._isolateV3) {
+      _voiceStatusMessage = binding == null
+          ? '오프라인 업무 검증 · 음성 비활성'
+          : 'Firebase 업무 검증 · V3/음성 비활성';
+    }
     _loadBackendHealthStatus();
     _loadPassengerHomeSnapshot();
     _loadBusArrivalSummary();
-    _loadFirebaseStatus();
+    if (_v3AgentApiClient != null) _createVoiceSession();
   }
 
-  Future<void> _loadFirebaseStatus() async {
-    setState(() {
-      _isLoadingFirebaseStatus = true;
-    });
-
-    final status = await _backendApiClient.fetchFirebaseStatus();
-
-    if (!mounted) return;
-
-    setState(() {
-      _firebaseStatus = status;
-      _isLoadingFirebaseStatus = false;
-    });
-  }
-
-  Future<void> _initializeFirebaseDemo() async {
-    setState(() {
-      _isInitializingFirebase = true;
-    });
-
-    final result =
-        await _backendApiClient.initializeFirebaseDemo(reset: _firebaseReset);
-
-    if (!mounted) return;
-
-    setState(() {
-      _firebaseInitResult = result;
-      _isInitializingFirebase = false;
-    });
-
-    final snackMessage = !result.ok
-        ? result.message
-        : result.isRealFirebase
-            ? 'Firebase 데모 DB 초기화 완료'
-            : '서비스 계정이 없어 mock DB에 초기화됨';
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(snackMessage)),
-    );
-
-    if (result.ok && result.seededPaths.isNotEmpty) {
-      await _showSeededPathsDialog(result);
+  Future<void> _createVoiceSession() async {
+    try {
+      final session = await _v3AgentApiClient!.createSession(
+        wakeWord: widget.agentName,
+      );
+      if (mounted) setState(() => _v3VoiceSessionId = session.sessionId);
+    } on V3ApiException {
+      // V3 화면에서도 오류를 표시한다. 클라이언트가 임의 session ID로 우회하지 않는다.
     }
-
-    // 초기화 후 상태/건강/도착 정보를 다시 로드한다.
-    await _loadFirebaseStatus();
-    if (!mounted) return;
-    await _loadBackendHealthStatus();
-    if (!mounted) return;
-    await _loadBusArrivalSummary();
-  }
-
-  Future<void> _showSeededPathsDialog(FirebaseInitializeResult result) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(
-            result.isRealFirebase ? 'Firebase 초기화 완료' : 'mock DB 초기화 완료',
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('mode: ${result.mode}${result.reset ? ' (reset)' : ''}'),
-                const SizedBox(height: 8),
-                const Text('seed된 경로:'),
-                const SizedBox(height: 4),
-                ...result.seededPaths.map((path) => Text('• $path')),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('확인'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Future<void> _loadBusArrivalSummary() async {
@@ -178,7 +165,10 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       _busArrivalSummary = busArrivalSummary;
-      _selectedStopId = busArrivalSummary.stopId;
+      // The fixed local bus fixture maps the normal startup alias to the
+      // reviewed data-run stop. Normal BackendApiClient semantics are unchanged.
+      _selectedStopId =
+          widget._cloudBinding?.plan.stopId ?? busArrivalSummary.stopId;
       _selectedRouteId = busArrivalSummary.selectedRouteId;
       _selectedBusNo = busArrivalSummary.selectedBusNo;
       _isLoadingBusArrivals = false;
@@ -207,52 +197,26 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> _createRideRequest() async {
-    final draft = _buildRideRequestDraft();
-
-    if (draft == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('탑승 요청에 필요한 노선 또는 버스 선택 정보가 없습니다.'),
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isCreatingRideRequest = true;
-    });
-
-    final result = await _backendApiClient.createRideRequest(draft: draft);
-
-    if (!mounted) return;
-
-    setState(() {
-      _rideRequestCreateResult = result;
-      _isCreatingRideRequest = false;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result.description),
-      ),
-    );
-  }
-
   RideRequestDraft? _buildRideRequestDraft() {
     final routeId = _selectedRouteId;
     final busNo = _selectedBusNo;
+    final uid = _auth.currentAccount?.uid;
 
-    if (routeId == null || routeId.isEmpty || busNo == null || busNo.isEmpty) {
+    if (uid == null ||
+        uid.isEmpty ||
+        routeId == null ||
+        routeId.isEmpty ||
+        busNo == null ||
+        busNo.isEmpty) {
       return null;
     }
 
     return RideRequestDraft(
-      userId: _passengerUserId,
+      userId: uid,
       stopId: _selectedStopId,
       routeId: routeId,
       busNo: busNo,
-      targetDriverId: _targetDriverId,
+      targetDriverId: null,
     );
   }
 
@@ -265,8 +229,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleVoiceInput() async {
     if (_isListening) {
-      final recognizedWords = _voiceGuideService.lastRecognizedWords.trim();
-      final message = await _voiceGuideService.stopListening();
+      final recognizedWords = _voiceGuideService!.lastRecognizedWords.trim();
+      final message = await _voiceGuideService!.stopListening();
 
       if (!mounted) return;
 
@@ -275,7 +239,9 @@ class _HomePageState extends State<HomePage> {
         _voiceStatusMessage = message;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
 
       if (recognizedWords.isNotEmpty) {
         await _submitRecognizedDestination(recognizedWords);
@@ -284,8 +250,8 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    await _cueService.playDing();
-    final message = await _voiceGuideService.startListening(
+    await _cueService!.playDing();
+    final message = await _voiceGuideService!.startListening(
       onResult: (recognizedWords) {
         if (!mounted) return;
 
@@ -304,13 +270,22 @@ class _HomePageState extends State<HomePage> {
       _voiceStatusMessage = message;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('띠링. 목적지를 말씀해 주세요.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('띠링. 목적지를 말씀해 주세요.')));
   }
 
   Future<void> _submitRecognizedDestination(String recognizedWords) async {
     if (_isSubmittingVoiceDestination) return;
+    final sessionId = _v3VoiceSessionId;
+    if (sessionId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('인증된 안내 세션을 준비하지 못했습니다. 다시 로그인하거나 연결을 확인해 주세요.'),
+        ),
+      );
+      return;
+    }
 
     setState(() {
       _isSubmittingVoiceDestination = true;
@@ -321,8 +296,8 @@ class _HomePageState extends State<HomePage> {
       final utterance = recognizedWords.contains(widget.agentName)
           ? recognizedWords
           : '${widget.agentName}, $recognizedWords';
-      final response = await _v3AgentApiClient.converse(
-        sessionId: _v3VoiceSessionId,
+      final response = await _v3AgentApiClient!.converse(
+        sessionId: sessionId,
         wakeWord: widget.agentName,
         utterance: utterance,
         mode: widget.dataMode,
@@ -338,16 +313,20 @@ class _HomePageState extends State<HomePage> {
 
       await _speakWithGeminiOrDing(response.message);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(response.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(response.message)));
     } on V3ApiException catch (error) {
       if (!mounted) return;
       final message = '음성 목적지 처리 실패: $error';
       setState(() {
         _voiceStatusMessage = message;
       });
-      await _cueService.playDing();
+      await _cueService!.playDing();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) {
         setState(() {
@@ -367,61 +346,33 @@ class _HomePageState extends State<HomePage> {
     await _speakWithGeminiOrDing(message);
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _speakWithGeminiOrDing(String message) async {
     try {
-      final audioBytes = await _v3AgentApiClient.synthesizeSpeech(text: message);
-      await _cueService.playGeneratedSpeech(audioBytes);
-    } on V3ApiException {
-      await _cueService.playDing();
-    }
-  }
-
-  Future<void> _loadRideRequestStatus() async {
-    final requestId = _rideRequestCreateResult?.requestId;
-
-    if (requestId == null || requestId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('조회할 탑승 요청 식별자가 없습니다.'),
-        ),
+      final audioBytes = await _v3AgentApiClient!.synthesizeSpeech(
+        text: message,
       );
-      return;
+      await _cueService!.playGeneratedSpeech(audioBytes);
+    } on V3ApiException {
+      await _cueService!.playDing();
     }
-
-    setState(() {
-      _isLoadingRideRequestStatus = true;
-    });
-
-    final result = await _backendApiClient.fetchRideRequestStatus(
-      requestId: requestId,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _rideRequestStatusResult = result;
-      _isLoadingRideRequestStatus = false;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result.description),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     final voiceButtonLabel = _isListening ? '음성 입력 종료' : '음성으로 목적지 입력';
     final safetyStatus = _homeSnapshot?.safetyStatus;
-    final rideRequestStatus = _homeSnapshot?.rideRequestStatus;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MOBI 탑승객 데모', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'MOBI 탑승객 데모',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
             tooltip: '초기 화면으로',
@@ -432,6 +383,11 @@ class _HomePageState extends State<HomePage> {
             tooltip: '에이전트 이름 변경',
             onPressed: widget.onEditAgentName,
             icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            tooltip: '로그아웃',
+            onPressed: _auth.signOut,
+            icon: const Icon(Icons.logout),
           ),
         ],
       ),
@@ -444,17 +400,26 @@ class _HomePageState extends State<HomePage> {
               const _HeaderSection(),
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: widget.dataMode == 'live'
-                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
-                      : Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.1),
+                      ? Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.1)
+                      : Theme.of(
+                          context,
+                        ).colorScheme.tertiary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      widget.dataMode == 'live' ? Icons.cloud_done : Icons.science,
+                      widget.dataMode == 'live'
+                          ? Icons.cloud_done
+                          : Icons.science,
                       size: 18,
                       color: widget.dataMode == 'live'
                           ? Theme.of(context).colorScheme.primary
@@ -462,19 +427,26 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      widget.dataMode == 'live' ? '실제 API 데이터 모드' : 'Mock 데이터 모드',
+                      widget.dataMode == 'live'
+                          ? '실제 API 데이터 모드'
+                          : 'Mock 데이터 모드',
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: widget.dataMode == 'live'
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.tertiary,
-                      ),
+                            fontWeight: FontWeight.w600,
+                            color: widget.dataMode == 'live'
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.tertiary,
+                          ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 24),
-              Text('시연 시나리오 선택', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+              Text(
+                '시연 시나리오 선택',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 16),
               _StatusCard(
                 title: '에이전트 호출 이름',
@@ -497,34 +469,24 @@ class _HomePageState extends State<HomePage> {
                 semanticHint: '실제 /health API 연결 성공 또는 실패 상태를 표시하는 영역입니다.',
               ),
               const SizedBox(height: 16),
-              _FirebaseDemoCard(
-                status: _firebaseStatus,
-                isLoadingStatus: _isLoadingFirebaseStatus,
-                isInitializing: _isInitializingFirebase,
-                reset: _firebaseReset,
-                lastInitResult: _firebaseInitResult,
-                onResetChanged: (value) {
-                  setState(() {
-                    _firebaseReset = value;
-                  });
-                },
-                onCheckStatus: _isLoadingFirebaseStatus ? null : _loadFirebaseStatus,
-                onInitialize:
-                    _isInitializingFirebase ? null : _initializeFirebaseDemo,
-              ),
-              const SizedBox(height: 16),
               Semantics(
                 button: true,
                 label: 'V3 버스 탑승 보조 화면 열기',
+                enabled: !widget._isolateV3,
                 hint: '두 번 탭하면 V3 음성 기반 버스 탑승 보조 화면으로 이동합니다.',
                 child: SizedBox(
                   height: 64,
                   child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pushNamed('/v3-guidance'),
+                    onPressed: widget._isolateV3
+                        ? null
+                        : () => Navigator.of(context).pushNamed('/v3-guidance'),
                     icon: const Icon(Icons.assistant_navigation),
                     label: Text(
                       '${widget.agentName} 버스 탑승 보조 열기',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -533,17 +495,19 @@ class _HomePageState extends State<HomePage> {
               _VoiceActionButton(
                 label: voiceButtonLabel,
                 isListening: _isListening,
-                onPressed: _toggleVoiceInput,
+                onPressed: widget._isolateV3 ? null : _toggleVoiceInput,
               ),
               const SizedBox(height: 12),
               Semantics(
                 button: true,
                 label: '현재 상태 음성 안내',
+                enabled: !widget._isolateV3,
                 hint: '두 번 탭하면 백엔드 연결 상태, 버스 도착 정보, 탑승 요청 상태를 음성으로 안내합니다.',
                 child: SizedBox(
                   height: 64,
                   child: OutlinedButton.icon(
-                    onPressed: _speakCurrentStatusGuide,
+                    onPressed:
+                        widget._isolateV3 ? null : _speakCurrentStatusGuide,
                     icon: const Icon(Icons.record_voice_over_outlined),
                     label: const Text(
                       '현재 상태 음성 안내',
@@ -596,83 +560,33 @@ class _HomePageState extends State<HomePage> {
                     '버스 도착 정보 API 또는 mock 도착 정보를 불러오는 중입니다.',
               ),
               const SizedBox(height: 16),
-              _StatusCard(
-                title: '탑승 요청 상태',
-                statusLabel: _isCreatingRideRequest
-                    ? '요청 중'
-                    : _isLoadingRideRequestStatus
-                        ? '조회 중'
-                        : _rideRequestStatusResult?.statusLabel ??
-                            _rideRequestCreateResult?.statusLabel ??
-                            rideRequestStatus?.statusLabel ??
-                            '요청 전',
-                description: _isCreatingRideRequest
-                    ? '탑승 요청을 생성하는 중입니다.'
-                    : _isLoadingRideRequestStatus
-                        ? '탑승 요청 상태를 조회하는 중입니다.'
-                        : _rideRequestStatusResult?.description ??
-                            _rideRequestCreateResult?.description ??
-                            rideRequestStatus?.description ??
-                            '탑승 요청 상태를 불러오는 중입니다.',
-                icon: Icons.accessible_forward_outlined,
-                semanticHint: _rideRequestStatusResult?.semanticHint ??
-                    _rideRequestCreateResult?.semanticHint ??
-                    rideRequestStatus?.semanticHint ??
-                    '탑승 요청 생성 전 상태를 표시하는 영역입니다.',
-              ),
+              if (_busArrivalSummary?.options.isNotEmpty ?? false)
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedRouteId,
+                  decoration: const InputDecoration(labelText: '요청할 버스 선택'),
+                  items: _busArrivalSummary!.options
+                      .map((option) => DropdownMenuItem(
+                            value: option.routeId,
+                            child: Text('${option.busNo}번 (${option.routeId})'),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    final option = _busArrivalSummary!.options
+                        .firstWhere((item) => item.routeId == value);
+                    setState(() {
+                      _selectedRouteId = option.routeId;
+                      _selectedBusNo = option.busNo;
+                    });
+                  },
+                ),
               const SizedBox(height: 12),
-              Semantics(
-                button: true,
-                label: _isCreatingRideRequest ? '탑승 요청 생성 중' : '탑승 요청 생성',
-                hint: '두 번 탭하면 기사에게 전달할 탑승 요청 생성을 시도합니다.',
-                child: SizedBox(
-                  height: 64,
-                  child: ElevatedButton.icon(
-                    onPressed:
-                        _isCreatingRideRequest ? null : _createRideRequest,
-                    icon: Icon(
-                      _isCreatingRideRequest
-                          ? Icons.hourglass_empty
-                          : Icons.accessible_forward_outlined,
-                    ),
-                    label: Text(
-                      _isCreatingRideRequest ? '탑승 요청 중...' : '탑승 요청하기',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Semantics(
-                button: true,
-                label: _isLoadingRideRequestStatus
-                    ? '탑승 요청 상태 조회 중'
-                    : '탑승 요청 상태 조회',
-                hint: '두 번 탭하면 생성된 탑승 요청의 현재 상태를 조회합니다.',
-                child: SizedBox(
-                  height: 56,
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoadingRideRequestStatus
-                        ? null
-                        : _loadRideRequestStatus,
-                    icon: Icon(
-                      _isLoadingRideRequestStatus
-                          ? Icons.hourglass_empty
-                          : Icons.refresh_outlined,
-                    ),
-                    label: Text(
-                      _isLoadingRideRequestStatus ? '상태 조회 중...' : '상태 조회',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              RideRequestPanel(
+                  api: _backendApiClient,
+                  session: _auth,
+                  store: widget._cloudBinding == null
+                      ? null
+                      : CloudRideIntentStore(widget._cloudBinding!.plan),
+                  draft: _buildRideRequestDraft()),
               const SizedBox(height: 16),
               const _MvpNoticeCard(),
             ],
@@ -720,13 +634,14 @@ class _VoiceActionButton extends StatelessWidget {
 
   final String label;
   final bool isListening;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
       label: label,
+      enabled: onPressed != null,
       hint: isListening ? '두 번 탭하면 음성 입력을 종료합니다.' : '두 번 탭하면 음성 입력을 시작합니다.',
       child: SizedBox(
         height: 120,
@@ -804,154 +719,6 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-class _FirebaseDemoCard extends StatelessWidget {
-  const _FirebaseDemoCard({
-    required this.status,
-    required this.isLoadingStatus,
-    required this.isInitializing,
-    required this.reset,
-    required this.lastInitResult,
-    required this.onResetChanged,
-    required this.onCheckStatus,
-    required this.onInitialize,
-  });
-
-  final FirebaseStatusResult? status;
-  final bool isLoadingStatus;
-  final bool isInitializing;
-  final bool reset;
-  final FirebaseInitializeResult? lastInitResult;
-  final ValueChanged<bool> onResetChanged;
-  final Future<void> Function()? onCheckStatus;
-  final Future<void> Function()? onInitialize;
-
-  String get _modeLabel {
-    if (isLoadingStatus && status == null) return 'unknown';
-    return status?.mode ?? 'unknown';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = status;
-    final theme = Theme.of(context);
-
-    return Semantics(
-      container: true,
-      label: 'Firebase 데모 DB 관리, 현재 mode $_modeLabel',
-      hint: 'Firebase 상태를 확인하고 백엔드 Admin SDK를 통해 데모 데이터를 초기화할 수 있는 영역입니다.',
-      child: Card(
-        elevation: 1,
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.local_fire_department_outlined, size: 32),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: _StatusHeader(
-                      title: 'Firebase 데모 DB',
-                      statusLabel: isLoadingStatus && s == null
-                          ? '확인 중'
-                          : _modeLabel,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (s == null && isLoadingStatus)
-                const Text('Firebase 상태를 불러오는 중입니다.')
-              else if (s == null)
-                const Text('Firebase 상태를 아직 확인하지 못했습니다. "Firebase 상태 확인"을 눌러주세요.')
-              else ...[
-                _kv('mode', s.mode),
-                _kv('initialized', s.initialized ? 'true' : 'false'),
-                _kv('credentialsReady', s.credentialsReady ? 'true' : 'false'),
-                _kv('serviceAccountExists',
-                    s.serviceAccountExists ? 'true' : 'false'),
-                _kv('Realtime Database URL', s.databaseUrl ?? '(미설정)'),
-                if (s.lastError != null && s.lastError!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      'lastError: ${s.lastError}',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.error),
-                    ),
-                  ),
-                const SizedBox(height: 6),
-                Text(s.message, style: theme.textTheme.bodyMedium),
-              ],
-              const SizedBox(height: 12),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('기존 데모 데이터 덮어쓰기(reset)'),
-                subtitle: const Text('demo 관련 경로만 삭제 후 다시 seed 합니다.'),
-                value: reset,
-                onChanged: isInitializing ? null : onResetChanged,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: onCheckStatus == null
-                          ? null
-                          : () {
-                              onCheckStatus!();
-                            },
-                      icon: Icon(isLoadingStatus
-                          ? Icons.hourglass_empty
-                          : Icons.refresh_outlined),
-                      label: Text(isLoadingStatus ? '확인 중...' : 'Firebase 상태 확인'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: onInitialize == null
-                          ? null
-                          : () {
-                              onInitialize!();
-                            },
-                      icon: Icon(isInitializing
-                          ? Icons.hourglass_empty
-                          : Icons.cloud_sync_outlined),
-                      label: Text(
-                        isInitializing ? '초기화 중...' : 'Firebase 데모 DB 초기화',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (lastInitResult != null &&
-                  lastInitResult!.seededPaths.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  '최근 seed (${lastInitResult!.mode}'
-                  '${lastInitResult!.reset ? ', reset' : ''}): '
-                  '${lastInitResult!.seededPaths.length}개 경로',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _kv(String key, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Text('$key: $value'),
-    );
-  }
-}
-
 class _StatusHeader extends StatelessWidget {
   const _StatusHeader({required this.title, required this.statusLabel});
 
@@ -1002,7 +769,7 @@ class _MvpNoticeCard extends StatelessWidget {
     return Semantics(
       container: true,
       label: 'MVP 안내, 현재 화면은 승객 앱 핵심 흐름을 확인하기 위한 초안입니다.',
-      hint: '실제 버스 도착 정보, 안전 상태, 탑승 요청 데이터는 담당 모듈 계약 확정 후 연결됩니다.',
+      hint: '탑승 요청은 서버와 연결됩니다. 안전 상태는 mock 표시입니다.',
       child: Card(
         elevation: 0,
         child: Padding(
@@ -1014,8 +781,8 @@ class _MvpNoticeCard extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
-                  '현재 화면은 4월 MVP 기준의 승객 앱 UI 초안입니다. '
-                  '버스 도착 정보, 안전 상태, 탑승 요청 데이터는 담당 모듈 계약 확정 후 연결됩니다.',
+                  '탑승 요청·상태 조회·취소는 백엔드와 연결됩니다. '
+                  '안전 상태는 mock 표시이며 실제 승차 허용을 뜻하지 않습니다. 기사 수락 후 상태 조회를 눌러 주세요.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),

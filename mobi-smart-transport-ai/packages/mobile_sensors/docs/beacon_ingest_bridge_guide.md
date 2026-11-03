@@ -25,7 +25,7 @@ target candidate : C3:00:00:5C:B9:47
 wrong candidate  : C3:00:00:5C:B9:48
 ```
 
-On Android, first confirm what `flutter_blue_plus` exposes as `result.device.remoteId.str`. If the advertised local name is non-empty, the package default resolver may prefer the name as `beaconId`. For the real A/B validation, inject a resolver that keeps the remote id:
+On Android, first confirm what `flutter_blue_plus` exposes as `result.device.remoteId.str`. The default resolver now keeps remoteId because advertising names may be shared. A remoteId is a collector identity, not proof of a specific bus. The A/B report does not establish vehicle registration. An explicit equivalent resolver is:
 
 ```dart
 final scanner = FlutterBlueBeaconScanner(
@@ -50,12 +50,9 @@ final bridge = BeaconIngestBridge(
   sessionId: 'demo-session',
   deviceId: 'android-collector-01',
   identityResolver: (signal) => BeaconIngestIdentity(
-    beaconId: 'same-uuid-major-minor',
+    beaconId: signal.beaconId,
     macAddress: signal.beaconId,
-    routeNo: '502',
-    busId: signal.beaconId == 'C3:00:00:5C:B9:47'
-        ? 'BUS_502_TARGET'
-        : 'BUS_502_OTHER',
+    // No verified vehicle registry: leave busId and routeNo unset.
   ),
 );
 
@@ -87,3 +84,53 @@ The fixture `fixtures/real_beacon_ab_ingest_samples.json` contains target/wrong 
 ## Backend dependency
 
 The bridge sends `macAddress` when it can resolve a MAC-like identifier. The backend must accept that field and use it for target/wrong matching. Until the backend MAC mapping patch is applied, strict backend schemas may reject `macAddress`.
+
+
+## Observation time and safety policy (2026-10)
+
+- Installed/tested flutter_blue_plus 1.36.8 accumulates scan results. Each
+  `ScanResult.timeStamp` is assigned in the Dart platform callback, not at RF
+  reception. Preserve this time as `lastDetectedAt` and serialize UTC as ingest
+  `timestamp`. Never replace it with list emission, HTTP send, or server time.
+- Continuous updates are enabled. A remoteId/timestamp watermark suppresses
+  cached, duplicate and reversed callbacks before RSSI smoothing. Callbacks from
+  before this scan, future callbacks and callbacks at least 5 seconds old are
+  discarded. A fresh callback after a loss resets smoothing. Scan timeout and
+  explicit stop close the stream even without another packet.
+- Backend requires a timezone offset. Age must satisfy `0 <= age <
+  BEACON_LOST_TIMEOUT` (default 5 seconds); timestamps must be strictly newer
+  than the session's last accepted observation. Equal timestamps from multiple
+  collectors are conservatively ignored. Rejected observations do not refresh
+  deadlines or replace stored state. With no accepted state, ingest returns a
+  hold response and `/latest` remains 404.
+- Server observation age and monotonic deadline both bound validity. `/latest`
+  reports BEACON_LOST at expiry or a backward wall-clock jump; `lastUpdatedAt`
+  remains the last observation time. RSSI history is scoped by session, device
+  and beacon. A gap or unstable signal cannot preserve boarding confirmation.
+- `REAL_BLE` always yields NO_BEACON / WAITING_FOR_BUS / confidence 0 with
+  UNVERIFIED_IDENTITY, even for IDs containing TARGET or client-provided busId.
+  NO_BEACON here means no confirmed target; warnings distinguish unknown identity
+  from absent radio reception. No new enum was introduced.
+- Exact synthetic MOBI_BUS_502_TARGET/BUS_502_NOW/502 and
+  MOBI_BUS_100_WRONG/BUS_100/100 fixtures work only for MANUAL_TEST/MOCK_BRIDGE,
+  USE_MOCK_DATA=true and non-live PUBLIC_DATA_USE_MOCK. They are not a registry.
+- Optional macAddress is accepted as collector metadata, never identity proof.
+  Server and collector clocks must be synchronized; no future skew allowance is
+  applied. Client timestamps are assertions, not authenticated evidence.
+- This ingest store is not the guidance session's target-bus registry. Live
+  ASK_CAN_BOARD_CURRENT_BUS remains on the existing hold path. Before enabling
+  live permission: provision trusted vehicle/beacon bindings, verify selected
+  vehicle/session ownership, authenticate collectors, test clock/transport
+  latency, MAC/platform stability, Bluetooth loss and reacquisition on hardware.
+- Memory/lock/deadlines are process-local. Multi-worker persistence and cross-
+  process ordering require a shared store before deployment. Passive BLE IDs
+  can be spoofed and proximity alone does not prove boarding is safe.
+
+Hardware-free tests inject scan callbacks and clocks. They do not demonstrate
+RF delivery timing, permissions, OS background behavior, or bus identity.
+
+## 2026-10-23 UTC 전송 및 독립 하드웨어 앱
+
+BeaconIngestPayload는 timestamp.toUtc().toIso8601String()으로 동일 시점의 UTC 값을 전송한다. 로컬 DateTime과 기존 UTC 값에 관한 회귀 테스트를 포함하여 패키지 테스트 33개가 통과했다.
+실제 비콘·WT901·골전도 독립 테스트는 저장소 루트 temporary_test_app에서 수행한다. 앱 기능/실행 안내와 최신 검사 결과는 해당 README.md 및 실행방법.md를 따른다.
+안준환의 현재 담당은 개발자 C(Head Tracking / Spatial Audio / 골전도)이며 기존 패키지는 BLE 공통 입력으로 사용한다.

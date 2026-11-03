@@ -3,25 +3,38 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../local_vision/local_vision_page.dart';
 import '../features/voice_live/live_caption_controller.dart';
 import '../features/voice_live/live_voice_controller.dart';
 import '../features/voice_live/live_voice_page.dart';
 import '../mock_scenario/mock_script_lines.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
+import '../services/local_guidance_runtime.dart';
+import '../services/local_demo_beacon_mapping.dart';
+import '../services/native_directional_cue_output.dart';
+import '../services/spatial_verification_engine.dart';
+import '../services/session_guidance_audio.dart';
+import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
 import '../services/mock_script_audio_service.dart';
 import '../services/spatial_cue_service.dart';
+import '../services/speech_request_scope.dart';
+import '../services/audio_shutdown.dart';
 import '../services/v3_agent_api_client.dart';
 import '../services/web_geolocation.dart';
 import '../services/voice_guide_service.dart';
 import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
+import '../widgets/vision_observation_panel.dart';
+import '../widgets/session_safety_panel.dart';
+import '../widgets/guidance_beacon_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
 import '../mock_scenario/mock_scenario_control_panel.dart';
@@ -36,17 +49,20 @@ class V3GuidancePage extends StatefulWidget {
     required this.agentName,
     required this.onReturnToModeSelection,
     required this.dataMode,
+    this.localRuntime,
   });
 
   final String agentName;
   final VoidCallback onReturnToModeSelection;
   final String dataMode;
+  final LocalGuidanceRuntime? localRuntime;
 
   @override
   State<V3GuidancePage> createState() => _V3GuidancePageState();
 }
 
-class _V3GuidancePageState extends State<V3GuidancePage> {
+class _V3GuidancePageState extends State<V3GuidancePage>
+    with WidgetsBindingObserver {
   static const String _routePlanningMessage =
       '요청하신 내용을 응답하기 위해 경로를 계산 중입니다. 잠시만 기다려 주세요.';
   static const String _navStartPrompt =
@@ -56,8 +72,46 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       '알겠습니다. 안내는 시작하지 않겠습니다. 다른 목적지를 말씀해 주세요.';
 
   static final String _apiBaseUrl = resolveApiBaseUrl();
+  static final _demoBeaconMapping = LocalDemoBeaconMapping.fromEnvironment();
 
-  static const String _sessionId = 'demo-session';
+  AuthSession get _auth =>
+      widget.localRuntime?.auth ?? FirebaseAuthSession.instance;
+  bool Function() _captureAuthGuard() =>
+      widget.localRuntime?.captureGuard() ??
+      FirebaseAuthSession.instance.captureRequestGuard();
+  bool get _androidAudio =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  SpatialVerificationEngine? _nativeAudio;
+  SpeechPriorityCoordinator? _nativePriority;
+  PriorityLease? _guidanceHold;
+  bool _audioForeground = true;
+  SpeechPriorityCoordinator get _priority =>
+      widget.localRuntime?.priority ?? _nativePriority ?? sharedSpeechPriority;
+
+  String _sessionId = '';
+  bool _cameraOpen = false;
+  bool Function()? _safetySessionGuard;
+  String? _safetySessionUid;
+  final _safetyLifecycle = SessionSafetyLifecycle();
+  int _visionSpeechGeneration = 0;
+  final _speechScope = SpeechRequestScope();
+  final _routeRequestScope = SpeechRequestScope();
+  StreamSubscription<dynamic>? _speechAuthSubscription;
+  bool _speechAuthValid = true;
+  SpeechRequest _speechRequest() {
+    final uid = _auth.currentAccount?.uid;
+    final authGuard = _captureAuthGuard();
+    final session = _sessionId;
+    return _speechScope.capture(() =>
+        mounted &&
+        _speechAuthValid &&
+        _audioForeground &&
+        !_cameraOpen &&
+        _guidanceHold == null &&
+        authGuard() &&
+        _sessionId == session &&
+        _auth.currentAccount?.uid == uid);
+  }
 
   late final V3AgentApiClient _client;
   late final AudioHapticCueService _cueService;
@@ -132,10 +186,30 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void initState() {
     super.initState();
-    _client = V3AgentApiClient(baseUrl: _apiBaseUrl);
-    _cueService = AudioHapticCueService();
+    WidgetsBinding.instance.addObserver(this);
+    if (_androidAudio && widget.localRuntime == null) {
+      final output = NativeDirectionalCueOutput();
+      _nativeAudio = SpatialVerificationEngine(
+          output,
+          FlutterSpeechEngine.platform(
+              requireOfflineKoreanVoice: true,
+              requestNativeFocus: true,
+              diagnostic: output.recordTtsEvent),
+          allowDirectTestCommands: false);
+      // One existing coordinator arbitrates every output owned by this page.
+      // No wire event can supply a test direction or reserved engine command.
+      _nativePriority = SpeechPriorityCoordinator(_nativeAudio!);
+    }
+    _client =
+        widget.localRuntime?.client ?? V3AgentApiClient(baseUrl: _apiBaseUrl);
+    _cueService = AudioHapticCueService(
+        speechPriority: _priority,
+        onAudioError: (message) {
+          if (mounted) setState(() => _errorMessage = message);
+        });
     _spatialCueService = SpatialCueService();
     _mockScriptAudioService = MockScriptAudioService(
+      speechPriority: _priority,
       webClipPlayer: (assetPath, pan, gain) => _spatialCueService.playClip(
         _mockVoiceAssetUrl(assetPath),
         pan: pan,
@@ -143,6 +217,17 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       ),
       webClipStop: _spatialCueService.stopClip,
     );
+    final authGuard = _captureAuthGuard();
+    _speechAuthSubscription = _auth.authStateChanges.listen((account) {
+      if (!authGuard()) {
+        _speechAuthValid = false;
+        _client.invalidateVisionSession(_sessionId);
+        unawaited(_stopAllCueAudio().catchError((Object _) {}));
+      }
+    }, onError: (Object _) {
+      _speechAuthValid = false;
+      unawaited(_stopAllCueAudio().catchError((Object _) {}));
+    });
     _voiceGuideService = VoiceGuideService();
     _utteranceController = TextEditingController(
       text: '$_wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
@@ -157,36 +242,153 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _bootstrap();
     // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
     // 캐시한다(일회성 실패로 좌표가 비는 '들쭉날쭉' 방지).
-    if (kIsWeb) startWebGeoWatch();
+    if (widget.localRuntime == null && kIsWeb) startWebGeoWatch();
     // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
-    _ensureLocation(forceRequest: true);
+    if (widget.localRuntime == null) _ensureLocation(forceRequest: true);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_androidAudio) return;
+    _audioForeground = state == AppLifecycleState.resumed;
+    if (!_audioForeground) {
+      unawaited(observeAudioCleanup(_stopAllCueAudio,
+          channel: 'Guidance background', report: debugPrint));
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _audioForeground = false;
+    _safetyLifecycle.dispose();
+    _client.invalidateVisionSession(_sessionId);
+    _speechScope.dispose();
+    _routeRequestScope.dispose();
+    _speechAuthSubscription?.cancel();
     _liveRouteTimer?.cancel();
     _betterRouteTimer?.cancel();
     _voiceGuideService.cancelListening();
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _mockScenarioController.dispose();
-    _cueService.dispose();
-    _spatialCueService.dispose();
-    _mockScriptAudioService.dispose();
+    if (_nativeAudio == null) {
+      unawaited(_cueService.dispose().catchError((Object _) {}));
+    } else {
+      unawaited(observeAudioCleanup(() async {
+        try {
+          await _cueService.dispose();
+        } finally {
+          try {
+            await _nativeAudio!.dispose();
+          } finally {
+            _guidanceHold?.release();
+            _nativePriority!.dispose();
+          }
+        }
+      }, channel: 'Guidance audio', report: debugPrint));
+    }
+    unawaited(observeAudioCleanup(_spatialCueService.dispose,
+        channel: 'Clip', report: debugPrint));
+    unawaited(_mockScriptAudioService.dispose().catchError((Object _) {}));
     super.dispose();
+  }
+
+  Future<void> _openPassengerCamera() async {
+    if (_cameraOpen || _sessionId.isEmpty || _isBusy) return;
+    final sessionId = _sessionId;
+    final uid = _auth.currentAccount?.uid;
+    final guard = _captureAuthGuard();
+    final generation = _visionSpeechGeneration;
+    bool current() =>
+        mounted &&
+        guard() &&
+        _speechAuthValid &&
+        _sessionId == sessionId &&
+        generation == _visionSpeechGeneration;
+    Map<String, dynamic>? binding;
+    var frameIndex = 0;
+    setState(() => _cameraOpen = true);
+    try {
+      await _stopAllCueAudio();
+      if (!mounted || !current()) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => LocalVisionPage(
+                ownerUid: uid,
+                remoteApi: _client,
+                remoteSessionId: sessionId,
+                bundledModel: true,
+                previewPriority: _priority.engine is SpatialVerificationEngine
+                    ? _priority
+                    : null,
+                previewEngine: _priority.engine is SpatialVerificationEngine
+                    ? _priority.engine as SpatialVerificationEngine
+                    : null,
+                previewScope: '$sessionId:$generation:camera',
+                sessionCurrent: current,
+                authChanges: _auth.authStateChanges.map((a) => a?.uid),
+                beforeStart: () async {
+                  if (!current()) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  final result = await _client.startPassengerCamera(sessionId);
+                  if (!current()) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  binding = result;
+                  frameIndex = result['nextFrameIndex'] as int;
+                },
+                onResult: (observation) async {
+                  final active = binding;
+                  if (!current() || active == null) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  try {
+                    await _client.sendPassengerCamera(
+                        active, observation.toDetectionResult(), frameIndex++);
+                  } on VisionLeaseException catch (error) {
+                    // A polling request already owns the shared transport slot: drop
+                    // this frame instead of accumulating/retrying stale camera work.
+                    if (!error.blocked || error.terminal) rethrow;
+                  }
+                },
+                onStop: () async {
+                  final active = binding;
+                  binding = null;
+                  _client.invalidateVisionSession(sessionId);
+                  if (active != null && current()) {
+                    await _client.stopPassengerCamera(active);
+                  }
+                },
+              )));
+    } finally {
+      if (mounted) setState(() => _cameraOpen = false);
+    }
   }
 
   Future<void> _bootstrap() async {
     await _runGuarded(() async {
+      final guard = _captureAuthGuard();
+      final uid = _auth.currentAccount?.uid;
       final health = await _client.fetchHealth();
-      final session = await _client.createSession(
-        sessionId: _sessionId,
-        wakeWord: _wakeWord,
-      );
+      if (!mounted || !guard()) return;
+      final session = await _client.createSession(wakeWord: _wakeWord);
+      if (!mounted || !guard()) return;
+      _safetySessionGuard = guard;
+      _safetySessionUid = uid;
+      _sessionId = session.sessionId;
       setState(() {
         _healthStatus = health;
         _sessionState = session;
       });
+      if (_androidAudio) {
+        // Bootstrap happens once per successfully created session, never build().
+        unawaited(_speakAgentMessage('안내가 시작되었습니다. 목적지를 말씀하거나 입력해 주세요.')
+            .catchError((Object error) {
+          if (mounted) setState(() => _errorMessage = '한국어 음성을 준비하지 못했습니다.');
+          debugPrint('Guidance start speech failure: ${error.runtimeType}');
+        }));
+      }
     });
   }
 
@@ -296,7 +498,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   /// 전체 화면 Live 음성 대화 페이지를 연다(실제 API 모드 전용).
   Future<void> _openLiveVoice() async {
-    unawaited(_cueService.prepareLiveGeneratedSpeech());
+    if (!_androidAudio) unawaited(_cueService.prepareLiveGeneratedSpeech());
     // 공간음향 AudioContext는 첫 사용자 제스처(웹 JS unlock)에서 생성·resume한다.
     // iOS는 제스처 이전에 만든 컨텍스트를 못 쓰게 하므로 사전 prepare()를 호출하지 않는다.
     _activatePendingNavAfterLiveExit = false;
@@ -510,9 +712,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     }
 
     final shouldPlanRoute = _looksLikeRouteRequest(text);
-    final planningPreparation = shouldPlanRoute
-        ? await _beginRoutePlanning()
-        : null;
+    final planningPreparation =
+        shouldPlanRoute ? await _beginRoutePlanning() : null;
     // 경로요청 휴리스틱이 빗나가도 캐시된 좌표를 항상 함께 보낸다. 백엔드가 경로요청으로
     // 판단했는데 좌표가 없으면 "위치 권한을 확인해줘"가 떠서 안내가 막힌다.
     _absorbWatchedPosition();
@@ -779,66 +980,80 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// Live 음성 대화 전용 발화: Gemini Live 스트리밍만 사용하고 실패/중단(barge-in) 시
   /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
   Future<void> _speakLiveOnly(String message, {VoidCallback? onStart}) async {
-    if (message.trim().isEmpty) return;
-    final scriptLineId = _nextLiveScriptLineId;
-    _nextLiveScriptLineId = null;
-    if (scriptLineId != null) {
-      onStart?.call();
-      await _mockScriptAudioService.playScript(
-        scriptLineId,
-        fallbackText: message,
-      );
+    if (message.trim().isEmpty || message.startsWith('@')) return;
+    if (_androidAudio) {
+      final request = _speechRequest();
+      await request.run(() async {
+        request.check();
+        onStart?.call();
+        await _cueService.speakLocal(message);
+      });
       return;
     }
-    try {
+    final request = _speechRequest();
+    final scriptLineId = _nextLiveScriptLineId;
+    _nextLiveScriptLineId = null;
+    await request.run(() async {
+      if (scriptLineId != null) {
+        request.check();
+        onStart?.call();
+        await _mockScriptAudioService.playScript(scriptLineId,
+            fallbackText: message);
+        return;
+      }
       await _cueService.playLiveGeneratedSpeech(
-        baseUrl: _apiBaseUrl,
-        text: message,
-        onFirstAudio: onStart,
-      );
-    } catch (_) {
-      onStart?.call();
-      await _mockScriptAudioService.speakText(message);
-    }
-  }
-
-  Future<void> _speakAgentMessage(
-    String message, {
-    bool forceLocal = false,
-  }) async {
-    if (_isLiveMode) {
-      try {
-        await _cueService.playLiveGeneratedSpeech(
           baseUrl: _apiBaseUrl,
           text: message,
-        );
+          onFirstAudio: () {
+            if (request.valid) onStart?.call();
+          });
+    }, fallback: () async {
+      request.check();
+      onStart?.call();
+      await _mockScriptAudioService.speakText(message);
+    });
+  }
+
+  Future<void> _speakAgentMessage(String message,
+      {bool forceLocal = false, SpeechRequest? originatingRequest}) async {
+    final request = originatingRequest ?? _speechRequest();
+    if (_androidAudio) {
+      // Native Korean TTS is the normal Android output, not a cloud fallback.
+      // Directionless information must never acquire invented directional cues.
+      if (message.trim().isEmpty || message.startsWith('@')) return;
+      await request.run(() => _cueService.speakLocal(message));
+      return;
+    }
+    Future<void> fallback() async {
+      request.check();
+      if (forceLocal) {
+        await _cueService.speakLocal(message);
         return;
-      } catch (_) {
-        // Fall back to the existing WAV endpoint if streaming is unavailable.
+      }
+      try {
+        final voiceProvider = _voiceChoice == 'gemini' ? 'gemini' : 'openai';
+        final voiceModel = switch (_voiceChoice) {
+          'realtime' => 'gpt-realtime-2',
+          'mini' => 'gpt-4o-mini-tts',
+          _ => null,
+        };
+        final audioBytes = await _client.synthesizeSpeech(
+            text: message, provider: voiceProvider, model: voiceModel);
+        request.check();
+        await _cueService.playGeneratedSpeech(audioBytes);
+      } on V3ApiException {
+        request.check();
+        await _cueService.playDing();
       }
     }
 
-    if (forceLocal) {
-      await _cueService.speakLocal(message);
-      return;
-    }
-
-    try {
-      final voiceProvider = _voiceChoice == 'gemini' ? 'gemini' : 'openai';
-      final voiceModel = switch (_voiceChoice) {
-        'realtime' => 'gpt-realtime-2',
-        'mini' => 'gpt-4o-mini-tts',
-        _ => null,
-      };
-      final audioBytes = await _client.synthesizeSpeech(
-        text: message,
-        provider: voiceProvider,
-        model: voiceModel,
-      );
-      await _cueService.playGeneratedSpeech(audioBytes);
-      return;
-    } on V3ApiException {
-      await _cueService.playDing();
+    if (_isLiveMode) {
+      await request.run(
+          () => _cueService.playLiveGeneratedSpeech(
+              baseUrl: _apiBaseUrl, text: message),
+          fallback: fallback);
+    } else {
+      await request.run(fallback);
     }
   }
 
@@ -881,8 +1096,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         } else {
           _stopLiveRoutePolling(clearStatus: true);
         }
-        final spokenGuidance =
-            routePlan.agentMessage ??
+        final spokenGuidance = routePlan.agentMessage ??
             routePlan.recommendedPlan?.boardingInstruction ??
             routePlan.question;
         if (spokenGuidance != null && spokenGuidance.isNotEmpty) {
@@ -961,6 +1175,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<_RoutePlanningPreparation> _beginRoutePlanning() async {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     setState(() {
@@ -1004,6 +1219,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     V3RoutePlanResponse routePlan,
     Position? position,
   ) async {
+    _routeRequestScope.invalidate();
     final plan = routePlan.recommendedPlan;
     if (plan == null || plan.segments.isEmpty) {
       _stopLiveRoutePolling(clearStatus: true);
@@ -1065,32 +1281,44 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         current?.destination?.topCandidate?.name ?? curPlan.destinationName;
     if (destination.trim().isEmpty) return;
     final pos = _cachedPosition ?? _lastRoutePosition;
+    // Capture UID/session/speech cancellation before issuing HTTP. Never wrap
+    // a retired response in a fresh speech request after it arrives.
+    final speechRequest = _speechRequest();
+    final request = _routeRequestScope.captureLatest(() =>
+        speechRequest.valid &&
+        !_navStopped &&
+        _liveRoutePanelVisible &&
+        identical(_lastRoutePlan, current));
     try {
-      final fresh = await _client.routePlan(
-        q: destination,
-        originLat: pos?.latitude,
-        originLng: pos?.longitude,
-        mode: widget.dataMode,
+      await request.receive(
+        () => _client.routePlan(
+          q: destination,
+          originLat: pos?.latitude,
+          originLng: pos?.longitude,
+          mode: widget.dataMode,
+        ),
+        (fresh) async {
+          final cand = fresh.recommendedPlan;
+          if (cand == null || cand.segments.isEmpty) return;
+          final candKey = _segmentKey(cand.segments.first);
+          final curKey = _segmentKey(curPlan.segments.first);
+          if (candKey == curKey || candKey == _declinedRouteKey) return;
+          final candEta = _planEtaMinutes(fresh);
+          final curEta = _planEtaMinutes(current);
+          if (candEta == null || curEta == null) return;
+          if (candEta <= curEta - 3) {
+            request.check();
+            setState(() => _betterRoutePlan = fresh);
+            request.check();
+            await _speakAgentMessage(
+              '더 빠른 ${cand.segments.first.routeNo}번 경로를 찾았어. 약 $candEta분이야. 바꿀까?',
+              originatingRequest: request,
+            );
+          }
+        },
       );
-      final cand = fresh.recommendedPlan;
-      if (cand == null || cand.segments.isEmpty) return;
-      final candKey = _segmentKey(cand.segments.first);
-      final curKey = _segmentKey(curPlan.segments.first);
-      if (candKey == curKey || candKey == _declinedRouteKey) return;
-      final candEta = _planEtaMinutes(fresh);
-      final curEta = _planEtaMinutes(current);
-      if (candEta == null || curEta == null) return;
-      // 최소 3분 이상 빨라질 때만 권유(잦은 제안 방지).
-      if (candEta <= curEta - 3 && mounted) {
-        setState(() => _betterRoutePlan = fresh);
-        unawaited(
-          _speakAgentMessage(
-            '더 빠른 ${cand.segments.first.routeNo}번 경로를 찾았어. 약 $candEta분이야. 바꿀까?',
-          ),
-        );
-      }
     } catch (_) {
-      // 실패는 조용히 무시하고 다음 주기에 다시 시도한다.
+      // A current transport/audio error does not mutate route or safety state.
     }
   }
 
@@ -1179,6 +1407,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// '길찾기 중지': 지도/실시간 패널을 끄고 30초 폴링을 멈춘다.
   /// 새 목적지를 말하면 _activateLiveRoutePanel에서 다시 시작된다.
   void _stopNavigation() {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     _betterRouteTimer?.cancel();
@@ -1195,10 +1424,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       _lastRoutePlan = null;
       _lastArrivals = null;
     });
-    unawaited(_cueService.stopCue());
+    unawaited(observeAudioCleanup(_cueService.stopCue,
+        channel: '길찾기 음성', report: debugPrint));
   }
 
   void _stopLiveRoutePolling({bool clearStatus = false}) {
+    _routeRequestScope.invalidate();
     _liveRouteTimer?.cancel();
     _liveRouteTimer = null;
     _betterRouteTimer?.cancel();
@@ -1224,9 +1455,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
     }
     final plan = routePlan.recommendedPlan!;
-    final locationLabel = preparation.position == null
-        ? '현재 위치 없이'
-        : '현재 위치 기준으로';
+    final locationLabel =
+        preparation.position == null ? '현재 위치 없이' : '현재 위치 기준으로';
     final typeLabel = plan.type == 'DIRECT' ? '직통' : '1회 환승';
     return '$locationLabel $typeLabel 경로 ${routePlan.plans.length}개를 계산했습니다. 추천 점수 ${plan.score.toStringAsFixed(1)}점.';
   }
@@ -1336,9 +1566,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     await _runGuarded(() async {
       final state = _sessionState;
       final segments = _lastRoutePlan?.recommendedPlan?.segments;
-      final firstSegment = segments == null || segments.isEmpty
-          ? null
-          : segments.first;
+      final firstSegment =
+          segments == null || segments.isEmpty ? null : segments.first;
       final stopId = firstSegment?.boardStop.stopId ?? state?.selectedStopId;
       final routeNo = firstSegment?.routeNo ?? state?.selectedRouteNo;
       if (stopId == null || routeNo == null) {
@@ -1369,9 +1598,44 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _stopAllCueAudio() async {
-    await _cueService.stopCue();
-    await _spatialCueService.stopCue();
-    await _mockScriptAudioService.stop();
+    _speechScope.invalidate();
+    _routeRequestScope.invalidate();
+    _safetyLifecycle.silence();
+    // Cleanup of one output must not prevent cancellation of the others.
+    final lease = _priority.claimPriority();
+    try {
+      await Future.wait([
+        _cueService.stopCue(),
+        _spatialCueService.stopCue(),
+        _mockScriptAudioService.stop(),
+      ]);
+    } finally {
+      lease.release();
+    }
+  }
+
+  Future<void> _audioAction(Future<void> Function() action) async {
+    // STOP is available even while a Backend request is in progress.
+    try {
+      await action();
+    } catch (error) {
+      debugPrint('Guidance audio control failure: ${error.runtimeType}');
+      if (mounted) {
+        setState(() => _errorMessage = '음성 중단을 확인하지 못했습니다. 앱을 다시 열어 주세요.');
+      }
+    }
+  }
+
+  Future<void> _toggleGuidanceHold() async {
+    if (_guidanceHold != null) {
+      setState(() {
+        _guidanceHold!.release();
+        _guidanceHold = null;
+      });
+      return; // A release never replays the interrupted event.
+    }
+    setState(() => _guidanceHold = _priority.claimPriority());
+    await _stopAllCueAudio();
   }
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
@@ -1432,9 +1696,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   String _mockVoiceAssetUrl(String assetPath) {
-    final normalized = assetPath.startsWith('assets/')
-        ? assetPath
-        : 'assets/$assetPath';
+    final normalized =
+        assetPath.startsWith('assets/') ? assetPath : 'assets/$assetPath';
     return 'assets/$normalized';
   }
 
@@ -1480,11 +1743,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     final decision = beaconDecision?.decision;
     final nearest = beaconDecision?.nearestBeacon;
     final distance = _beaconDistanceMeters(nearest);
-    final isWrong =
-        cueType.contains('WRONG') ||
+    final isWrong = cueType.contains('WRONG') ||
         (decision != null && decision.contains('WRONG'));
-    final isTarget =
-        cueType.contains('TARGET') ||
+    final isTarget = cueType.contains('TARGET') ||
         (decision != null && decision.contains('TARGET'));
 
     if (cueType == 'DANGER' || cueType == 'GEOFENCE_WARNING') {
@@ -1738,27 +1999,42 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   Future<void> _resetSession() async {
+    if (_isBusy || _safetyLifecycle.resetting) return;
+    final guard = _safetySessionGuard;
+    bool current() => mounted && guard != null && guard();
+    if (!current()) return;
     await _runGuarded(() async {
-      await _stopAllCueAudio();
-      final state = await _client.resetSession(sessionId: _sessionId);
-      _liveRouteTimer?.cancel();
-      _liveRouteTimer = null;
-      setState(() {
-        _sessionState = state;
-        _lastAgentResponse = null;
-        _lastRouteRecommendation = null;
-        _lastRoutePlan = null;
-        _lastArrivals = null;
-        _lastBeaconDecision = null;
-        _latestGeofenceMessage = null;
-        _routePlanningStatus = null;
-        _liveRoutePanelVisible = false;
-        _navStopped = false;
-        _liveStatus = null;
-        _liveRouteError = null;
-        _lastRoutePosition = null;
-        _isAgentTraceExpanded = false;
-      });
+      await _safetyLifecycle.reset(
+          isCurrent: current,
+          request: () async {
+            _client.invalidateVisionSession(_sessionId);
+            setState(() => _visionSpeechGeneration++);
+            await _stopAllCueAudio();
+            if (!current()) throw const StaleAuthRequestException();
+            final state = await _client.resetSession(sessionId: _sessionId);
+            if (!current()) throw const StaleAuthRequestException();
+            if (state.sessionId != _sessionId) {
+              throw StateError('Reset session mismatch');
+            }
+            _liveRouteTimer?.cancel();
+            _liveRouteTimer = null;
+            setState(() {
+              _sessionState = state;
+              _lastAgentResponse = null;
+              _lastRouteRecommendation = null;
+              _lastRoutePlan = null;
+              _lastArrivals = null;
+              _lastBeaconDecision = null;
+              _latestGeofenceMessage = null;
+              _routePlanningStatus = null;
+              _liveRoutePanelVisible = false;
+              _navStopped = false;
+              _liveStatus = null;
+              _liveRouteError = null;
+              _lastRoutePosition = null;
+              _isAgentTraceExpanded = false;
+            });
+          });
     });
   }
 
@@ -1774,8 +2050,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   Widget build(BuildContext context) {
     final state = _sessionState;
-    final lastMessage =
-        _lastAgentResponse?.message ??
+    final lastMessage = _lastAgentResponse?.message ??
         _latestGeofenceMessage ??
         _lastBeaconDecision?.message ??
         'V3 버스 탑승 보조 에이전트가 대기 중이에요.';
@@ -1793,14 +2068,42 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             icon: const Icon(Icons.home_outlined),
           ),
           IconButton(
-            tooltip: '상태 새로고침',
-            onPressed: _isBusy ? null : () => _runGuarded(_refreshState),
+            tooltip: _sessionId.isEmpty ? '서버 다시 연결' : '상태 새로고침',
+            onPressed: _isBusy
+                ? null
+                : _sessionId.isEmpty
+                    ? _bootstrap
+                    : () => _runGuarded(_refreshState),
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
             tooltip: '세션 초기화',
             onPressed: _isBusy ? null : _resetSession,
             icon: const Icon(Icons.restart_alt),
+          ),
+          IconButton(
+            tooltip: '로그아웃',
+            onPressed: () async {
+              final logoutGuard = _captureAuthGuard();
+              _client.invalidateVisionSession(_sessionId);
+              _safetyLifecycle.dispose();
+              _speechAuthValid = false;
+              try {
+                await _stopAllCueAudio();
+              } catch (_) {
+                // Logout still invalidates all pending voice requests.
+              } finally {
+                try {
+                  if (logoutGuard()) await _client.revokeVisionLease();
+                } on VisionLeaseException {
+                  // Local admission is closed even when remote cleanup failed;
+                  // the server lease expiry remains authoritative.
+                } finally {
+                  if (logoutGuard()) await _auth.signOut();
+                }
+              }
+            },
+            icon: const Icon(Icons.logout),
           ),
         ],
       ),
@@ -1822,6 +2125,93 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!kIsWeb &&
+                      defaultTargetPlatform == TargetPlatform.android)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: FilledButton.icon(
+                        onPressed: _sessionId.isEmpty || _isBusy || _cameraOpen
+                            ? null
+                            : _openPassengerCamera,
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('버스 카메라 시작'),
+                      ),
+                    ),
+                  if (_androidAudio)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Wrap(spacing: 8, runSpacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: () => _audioAction(_stopAllCueAudio),
+                            icon: const Icon(Icons.stop_circle_outlined),
+                            label: const Text('음성 중지 (STOP)')),
+                        OutlinedButton.icon(
+                            onPressed: () => _audioAction(_toggleGuidanceHold),
+                            icon: Icon(_guidanceHold == null
+                                ? Icons.pause_circle_outline
+                                : Icons.play_circle_outline),
+                            label: Text(_guidanceHold == null
+                                ? '안내 일시 정지 (Live Hold)'
+                                : '새 안내 허용')),
+                      ]),
+                    ),
+                  if (_androidAudio && _sessionId.isNotEmpty && !_cameraOpen)
+                    GuidanceBeaconPanel(
+                      sessionId: _sessionId,
+                      scopeVersion: _visionSpeechGeneration,
+                      ownerUid: _safetySessionUid ?? '',
+                      targetBusId: state?.targetBusId,
+                      routeNo: state?.selectedRouteNo,
+                      priority: _priority,
+                      captureGuard: () => _safetySessionGuard ?? () => false,
+                      captureAudioGuard: () {
+                        final request = _speechRequest();
+                        return () => request.valid;
+                      },
+                      authChanges: _auth.authStateChanges,
+                      scanner: widget.localRuntime?.beaconScanner,
+                      mockInput: widget.localRuntime != null,
+                      demoMapping: _demoBeaconMapping,
+                      identities:
+                          widget.localRuntime?.beaconIdentities ?? const [],
+                    ),
+                  if (widget.localRuntime != null && _sessionId.isNotEmpty)
+                    widget.localRuntime!.controls(_sessionId,
+                        () => _cueService.speakLocal('검증용 Live Hold 안내입니다.'),
+                        () async {
+                      _safetyLifecycle.silence();
+                      await _stopAllCueAudio();
+                    }),
+                  if (_sessionId.isNotEmpty &&
+                      !_cameraOpen &&
+                      _client.visionSessionReady(_sessionId))
+                    ScenarioObservationBuilder(
+                      controller: _mockScenarioController,
+                      builder: (context, isPlaying) => VisionObservationPanel(
+                          sessionId: _sessionId,
+                          scopeVersion: _visionSpeechGeneration,
+                          speechPriority: _priority,
+                          priorityBlocked: isPlaying,
+                          ownerUid: _auth.currentAccount?.uid,
+                          captureAuthGuard: _captureAuthGuard,
+                          authChanges: _auth.authStateChanges
+                              .map((account) => account?.uid),
+                          fetch: _client.fetchVisionObservations),
+                    ),
+                  if (_sessionId.isNotEmpty && _safetySessionUid != null)
+                    SessionSafetyHost(
+                      lifecycle: _safetyLifecycle,
+                      priority: _priority,
+                      audio: widget.localRuntime?.audio ??
+                          SessionGuidanceAudio(priority: _priority),
+                      allowSynthetic: widget.localRuntime != null,
+                      openTransport: _client.openSafetyPolling,
+                      sessionId: _sessionId,
+                      ownerUid: _safetySessionUid!,
+                      captureGuard: () => _safetySessionGuard ?? () => false,
+                      authChanges: _auth.authStateChanges,
+                      fetch: _client.fetchSafetyEvents,
+                    ),
                   _HeroStatusCard(
                     isBusy: _isBusy,
                     stateLabel: state?.state ?? 'LOADING',
@@ -1955,13 +2345,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       ]),
                       onTargetBusNear: () =>
                           _mockBeacons(const <V3BeaconSignal>[
-                            V3BeaconSignal(
-                              busId: 'BUS_2',
-                              routeNo: '502',
-                              rssi: -52,
-                              distanceMeters: 1.4,
-                            ),
-                          ]),
+                        V3BeaconSignal(
+                          busId: 'BUS_2',
+                          routeNo: '502',
+                          rssi: -52,
+                          distanceMeters: 1.4,
+                        ),
+                      ]),
                       onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
                       onBusPassed: _mockBusPassed,
                       onBoardingPrompt: _mockBoardingPrompt,
@@ -2037,8 +2427,8 @@ class _AgentTraceCard extends StatelessWidget {
                   child: Text(
                     '모비가 실제 데이터를 확인했습니다',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
                 ),
                 TextButton.icon(
@@ -2237,6 +2627,24 @@ class _HeroStatusCard extends StatelessWidget {
   }
 }
 
+/// The same controller drives the scenario card and Observation's own lease.
+/// Audio shutdown leases remain independently owned by their services.
+class ScenarioObservationBuilder extends StatelessWidget {
+  const ScenarioObservationBuilder({
+    super.key,
+    required this.controller,
+    required this.builder,
+  });
+  final MockScenarioController controller;
+  final Widget Function(BuildContext context, bool isPlaying) builder;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => builder(context, controller.state.isPlaying),
+      );
+}
+
 class _MockScenarioSimulationCard extends StatelessWidget {
   const _MockScenarioSimulationCard({required this.controller});
 
@@ -2371,16 +2779,13 @@ class _ConversationLogCard extends StatelessWidget {
                   );
                 }
                 final isUser = m.isUser;
-                final sourceIcon = m.source == 'voice'
-                    ? Icons.mic
-                    : Icons.chat_bubble_outline;
-                final who = isUser
-                    ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)')
-                    : '모비';
+                final sourceIcon =
+                    m.source == 'voice' ? Icons.mic : Icons.chat_bubble_outline;
+                final who =
+                    isUser ? (m.source == 'voice' ? '나 (음성)' : '나 (채팅)') : '모비';
                 return Align(
-                  alignment: isUser
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
+                  alignment:
+                      isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 320),
                     padding: const EdgeInsets.symmetric(
@@ -2531,9 +2936,8 @@ class _BetterRouteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final plan = candidate.recommendedPlan;
-    final seg = (plan != null && plan.segments.isNotEmpty)
-        ? plan.segments.first
-        : null;
+    final seg =
+        (plan != null && plan.segments.isNotEmpty) ? plan.segments.first : null;
     final routeNo = seg?.routeNo ?? '새 경로';
     final etaText = etaMinutes == null ? '' : ' · 약 $etaMinutes분';
     return Card(
@@ -2621,18 +3025,15 @@ class _RealtimeNavCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final plan = routePlan?.recommendedPlan;
-    final segment = plan?.segments.isNotEmpty == true
-        ? plan!.segments.first
-        : null;
+    final segment =
+        plan?.segments.isNotEmpty == true ? plan!.segments.first : null;
     final s = status;
     final statusArrivals = s?.arrivals ?? const <V3BusArrival>[];
     final planArrivals = segment?.arrivals ?? const <V3BusArrival>[];
-    final displayedArrivals = statusArrivals.isNotEmpty
-        ? statusArrivals
-        : planArrivals;
-    final firstArrival = displayedArrivals.isNotEmpty
-        ? displayedArrivals.first
-        : null;
+    final displayedArrivals =
+        statusArrivals.isNotEmpty ? statusArrivals : planArrivals;
+    final firstArrival =
+        displayedArrivals.isNotEmpty ? displayedArrivals.first : null;
     final serviceStatus = s?.serviceStatus ?? segment?.serviceStatus;
     final walking = s?.walkingRouteToBoardStop;
     final egressWalking = s?.walkingRouteFromAlightStop;
@@ -2647,25 +3048,24 @@ class _RealtimeNavCard extends StatelessWidget {
     final routeNo = segment?.routeNo ?? s?.routeNo ?? '미확인';
     final boardName =
         s?.selectedBoardStop?.stopName ?? segment?.boardStop.stopName ?? '미확인';
-    final alightName =
-        s?.selectedAlightStop?.stopName ??
+    final alightName = s?.selectedAlightStop?.stopName ??
         segment?.alightStop.stopName ??
         '미확인';
     final congestion = _congestionLabel(s?.congestion);
     final lowFloor = firstArrival?.lowFloor == null
         ? '미확인'
         : firstArrival!.lowFloor!
-        ? '저상버스'
-        : '일반버스';
+            ? '저상버스'
+            : '일반버스';
     final walkingProvider = walking == null
         ? '확인 중'
         : walking.provider == 'TMAP'
-        ? 'TMAP 보행자 경로 API'
-        : '${walking.provider} 보조 경로';
+            ? 'TMAP 보행자 경로 API'
+            : '${walking.provider} 보조 경로';
     final walkText = (walking == null || walking.totalDistanceMeters == null)
         ? '미확인'
         : '약 ${walking.totalDistanceMeters!.round()}m · 약 ${(((walking.totalDurationSeconds ?? 0) / 60).ceil()).clamp(1, 999)}분'
-              '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
+            '${walking.fallbackUsed ? ' (직선거리 기준)' : ''}';
     final busMsg = (s == null || s.busPositions.isEmpty)
         ? '현재 버스 위치는 아직 조회되지 않았습니다.'
         : '현재 ${s.busPositions.length}대의 버스 위치를 조회했습니다.';
@@ -2695,8 +3095,8 @@ class _RealtimeNavCard extends StatelessWidget {
                     child: Text(
                       '정류장까지 보행 내비게이션',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                   if (isLoading)
@@ -2769,13 +3169,13 @@ class _RealtimeNavCard extends StatelessWidget {
                   final multiLeg = (plan?.segments.length ?? 0) > 1;
                   final totalMinutes =
                       (multiLeg ? plan?.totalEstimatedMinutes : null) ??
-                      _journeyTotalMinutes(
-                        walkToBoardMinutes: walkToBoardMinutes,
-                        busEtaMinutes: busEtaMinutes,
-                        rideMinutes: rideMinutes,
-                        walkFromAlightMinutes: walkFromAlightMinutes,
-                        fallback: plan?.totalEstimatedMinutes,
-                      );
+                          _journeyTotalMinutes(
+                            walkToBoardMinutes: walkToBoardMinutes,
+                            busEtaMinutes: busEtaMinutes,
+                            rideMinutes: rideMinutes,
+                            walkFromAlightMinutes: walkFromAlightMinutes,
+                            fallback: plan?.totalEstimatedMinutes,
+                          );
                   final clockEnd = totalMinutes == null
                       ? null
                       : clockStart.add(Duration(minutes: totalMinutes));
@@ -2958,8 +3358,8 @@ class _RealtimeNavCard extends StatelessWidget {
             final radius = m.type == 'BUS'
                 ? 10.0
                 : m.type == 'NEARBY'
-                ? 6.0
-                : 8.0;
+                    ? 6.0
+                    : 8.0;
             return Marker(
               point: LatLng(m.latitude, m.longitude),
               width: radius * 2,
@@ -3064,9 +3464,8 @@ String _arrivalDisplayLabel(
   final bus = arrival.busId == null || arrival.busId!.isEmpty
       ? ''
       : ' · ${arrival.busId}';
-  final stops = arrival.remainingStops == null
-      ? ''
-      : ' · ${arrival.remainingStops}정류장 전';
+  final stops =
+      arrival.remainingStops == null ? '' : ' · ${arrival.remainingStops}정류장 전';
   return '${arrival.routeNo}번 ${_arrivalEtaText(etaSeconds: etaSeconds, etaMinutes: etaMinutes, emptyLabel: '도착정보 없음')}$stops$bus';
 }
 
@@ -3344,8 +3743,7 @@ class _CompactJourneyCard extends StatelessWidget {
                       etaSeconds: i == 0 ? busEtaSeconds : null,
                       emptyEtaLabel: i == 0 ? arrivalEmptyLabel : '도착정보 없음',
                       remainingStops: i == 0 ? remainingStops : null,
-                      rideMinutes:
-                          segments[i].estimatedMinutes ??
+                      rideMinutes: segments[i].estimatedMinutes ??
                           (i == 0 ? rideMinutes : null),
                       stopCount: segments[i].stopCount,
                       congestion: i == 0 ? congestion : null,
@@ -3952,8 +4350,10 @@ class _CombinedChatControlCard extends StatelessWidget {
               children: [
                 const SizedBox(
                   width: 64,
-                  child: Text('보이스',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    '보이스',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
                 Expanded(
                   child: SingleChildScrollView(
@@ -3961,11 +4361,17 @@ class _CombinedChatControlCard extends StatelessWidget {
                     child: SegmentedButton<String>(
                       segments: const [
                         ButtonSegment<String>(
-                            value: 'realtime', label: Text('Realtime')),
+                          value: 'realtime',
+                          label: Text('Realtime'),
+                        ),
                         ButtonSegment<String>(
-                            value: 'mini', label: Text('Mini-TTS')),
+                          value: 'mini',
+                          label: Text('Mini-TTS'),
+                        ),
                         ButtonSegment<String>(
-                            value: 'gemini', label: Text('Gemini')),
+                          value: 'gemini',
+                          label: Text('Gemini'),
+                        ),
                       ],
                       selected: <String>{voiceChoice},
                       showSelectedIcon: false,
@@ -3983,8 +4389,10 @@ class _CombinedChatControlCard extends StatelessWidget {
               children: [
                 const SizedBox(
                   width: 64,
-                  child:
-                      Text('NLU', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    'NLU',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
                 Expanded(
                   child: SegmentedButton<String>(
@@ -4004,8 +4412,7 @@ class _CombinedChatControlCard extends StatelessWidget {
                     showSelectedIcon: false,
                     onSelectionChanged: isBusy
                         ? null
-                        : (selection) =>
-                            onNluProviderChanged(selection.first),
+                        : (selection) => onNluProviderChanged(selection.first),
                   ),
                 ),
               ],
@@ -4048,8 +4455,8 @@ class _CombinedChatControlCard extends StatelessWidget {
                     onPressed: isBusy
                         ? null
                         : () => onQuickAction(
-                            '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
-                          ),
+                              '$wakeWord, 나 사창사거리 가야 하는데 몇 번 버스 타야 돼?',
+                            ),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
@@ -4075,9 +4482,8 @@ class _CombinedChatControlCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   ActionChip(
                     label: const Text('목적지 변경 (충북대병원)'),
-                    onPressed: isBusy
-                        ? null
-                        : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
+                    onPressed:
+                        isBusy ? null : () => onQuickAction('목적지 충북대병원으로 바꿔줘'),
                   ),
                 ],
               ),
@@ -4261,8 +4667,8 @@ class _ArrivalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final firstRecommendation =
         routeRecommendation?.recommendations.isNotEmpty == true
-        ? routeRecommendation!.recommendations.first
-        : null;
+            ? routeRecommendation!.recommendations.first
+            : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -4412,9 +4818,8 @@ class _RoutePlanCard extends StatelessWidget {
     final typeLabel = plan.type == 'DIRECT' ? '직통 추천' : '1회 환승 추천';
     final firstSegment = plan.segments.isEmpty ? null : plan.segments.first;
     final arrivals = firstSegment?.arrivals;
-    final firstArrival = arrivals == null || arrivals.isEmpty
-        ? null
-        : arrivals.first;
+    final firstArrival =
+        arrivals == null || arrivals.isEmpty ? null : arrivals.first;
     return Semantics(
       container: true,
       label: '구조화된 버스 경로 계획, $typeLabel',
@@ -4568,8 +4973,8 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
                     child: Text(
                       '실제 공공 API 정류소 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -4578,9 +4983,9 @@ class _PublicStopCatalogEvidenceCard extends StatelessWidget {
               Text(
                 '청주시 승인 API · PUBLIC_API',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · 서비스ID ${evidence.serviceId}'),
@@ -4631,8 +5036,8 @@ class _MapsEvidenceCard extends StatelessWidget {
                     child: Text(
                       'Google Maps 위치 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -4660,9 +5065,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPublicData = evidence.isPublicData;
     final colorScheme = Theme.of(context).colorScheme;
-    final accentColor = isPublicData
-        ? colorScheme.primary
-        : colorScheme.tertiary;
+    final accentColor =
+        isPublicData ? colorScheme.primary : colorScheme.tertiary;
     final sourceLabel = switch (evidence.source) {
       'PUBLIC_API' => '실시간 공공 API',
       'CACHE' => '공공 API 정규화 캐시',
@@ -4692,8 +5096,8 @@ class _PublicDataEvidenceCard extends StatelessWidget {
                     child: Text(
                       '버스 도착 정보 증빙',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
                 ],
@@ -4702,9 +5106,9 @@ class _PublicDataEvidenceCard extends StatelessWidget {
               Text(
                 sourceLabel,
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: accentColor,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: accentColor,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               Text('${evidence.stopName} · ${evidence.routeNo}번'),
@@ -4759,8 +5163,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                     Text(
                       '${arrival.routeNo}번 버스',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -4777,8 +5181,8 @@ class _EvidenceArrivalRow extends StatelessWidget {
                   emptyLabel: '도착정보 없음',
                 ),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
             ],
           ),
@@ -4835,8 +5239,8 @@ class _RoutePlanningOverlayState extends State<_RoutePlanningOverlay> {
                 Text(
                   '생각 중... ${_seconds > 0 ? '($_seconds초)' : ''}',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),

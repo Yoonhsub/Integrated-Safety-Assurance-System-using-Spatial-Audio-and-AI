@@ -31,7 +31,7 @@ V2에서는 각자 만든 mock-first 모듈을 앱-백엔드 중심으로 연결
 | `CHEONGJU_BUS_STOPS_PATH` | current | 승인된 정류소 카탈로그 dataset path | 현석 |
 | `FIREBASE_USE_MOCK` | current | Firebase Admin SDK 대신 mock Firebase client를 강제할 때 사용 | 현석 |
 | `FCM_USE_MOCK` | current | 실제 FCM 전송 대신 mock message id 반환을 강제할 때 사용 | 현석 |
-| `API_BASE_URL` | current dart-define | Flutter 앱이 호출할 FastAPI base URL | 윤현섭 |
+| `MOBI_API_BASE_URL` | current dart-define | Flutter 앱이 호출할 FastAPI base URL | 윤현섭 |
 | `USE_MOCK_DATA` | current dart-define | Flutter 앱 내부 mock data 사용 여부 | 윤현섭 |
 
 주의:
@@ -362,16 +362,16 @@ Flutter 앱 테스트 방식에 따라 변경 가능.
 
 Flutter에서는 `.env` 대신 `--dart-define`을 사용할 수 있다.
 
-### API_BASE_URL
+### MOBI_API_BASE_URL
 
 ```txt
-API_BASE_URL=http://127.0.0.1:8000
+MOBI_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 Flutter 실행 예시:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
+flutter run --dart-define=MOBI_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 설명:
@@ -523,7 +523,7 @@ BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
 BACKEND_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 
-API_BASE_URL=http://127.0.0.1:8000
+MOBI_API_BASE_URL=http://127.0.0.1:8000
 USE_MOCK_DATA=true
 
 DEFAULT_BEACON_TX_POWER=-59

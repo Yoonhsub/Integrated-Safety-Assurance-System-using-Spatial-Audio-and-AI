@@ -7,18 +7,42 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": false,
         "currentLocation": {
-          ".write": "auth != null && auth.uid === $uid",
-          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()"
+          ".write": "auth != null && auth.token.mobi_role === 'passenger' && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()",
+          "lat": {
+            ".validate": true
+          },
+          "lng": {
+            ".validate": true
+          },
+          "updatedAt": {
+            ".validate": true
+          },
+          "$other": {
+            ".validate": false
+          }
         }
       }
     },
     "drivers": {
       "$driverId": {
-        ".read": "auth != null",
+        ".read": false,
         ".write": false,
         "currentLocation": {
-          ".write": "auth != null && auth.uid === $driverId",
-          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()"
+          ".write": "auth != null && auth.token.mobi_role === 'driver' && auth.token.mobi_driver_id === $driverId",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('updatedAt').isString()",
+          "lat": {
+            ".validate": true
+          },
+          "lng": {
+            ".validate": true
+          },
+          "updatedAt": {
+            ".validate": true
+          },
+          "$other": {
+            ".validate": false
+          }
         }
       }
     },
@@ -35,15 +59,27 @@
       ".write": false
     },
     "rideRequests": {
-      ".read": "auth != null",
+      ".read": false,
       ".write": false
     },
     "fcmTokens": {
       "$ownerType": {
         "$ownerId": {
-          ".read": "auth != null && auth.uid === $ownerId && ($ownerType === 'users' || $ownerType === 'drivers')",
-          ".write": "auth != null && auth.uid === $ownerId && ($ownerType === 'users' || $ownerType === 'drivers')",
-          ".validate": "newData.hasChildren(['token', 'platform', 'updatedAt']) && newData.childrenCount() === 3 && newData.child('token').isString() && newData.child('platform').isString() && (newData.child('platform').val() === 'android' || newData.child('platform').val() === 'ios' || newData.child('platform').val() === 'web' || newData.child('platform').val() === 'unknown') && newData.child('updatedAt').isString()"
+          ".read": "auth != null && (($ownerType === 'users' && auth.token.mobi_role === 'passenger' && auth.uid === $ownerId) || ($ownerType === 'drivers' && auth.token.mobi_role === 'driver' && auth.token.mobi_driver_id === $ownerId))",
+          ".write": "auth != null && (($ownerType === 'users' && auth.token.mobi_role === 'passenger' && auth.uid === $ownerId) || ($ownerType === 'drivers' && auth.token.mobi_role === 'driver' && auth.token.mobi_driver_id === $ownerId))",
+          ".validate": "newData.hasChildren(['token', 'platform', 'updatedAt']) && newData.child('token').isString() && newData.child('platform').isString() && (newData.child('platform').val() === 'android' || newData.child('platform').val() === 'ios' || newData.child('platform').val() === 'web' || newData.child('platform').val() === 'unknown') && newData.child('updatedAt').isString()",
+          "token": {
+            ".validate": true
+          },
+          "platform": {
+            ".validate": true
+          },
+          "updatedAt": {
+            ".validate": true
+          },
+          "$other": {
+            ".validate": false
+          }
         }
       }
     },
@@ -57,7 +93,7 @@
     },
     "v3GuidanceSessions": {
       "$sessionId": {
-        ".read": "auth != null",
+        ".read": false,
         ".write": false
       }
     }

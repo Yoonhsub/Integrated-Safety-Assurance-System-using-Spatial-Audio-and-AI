@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/backend_api_client.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.apiClient, this.session});
+  final BackendApiClient? apiClient;
+  final AuthSession? session;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -15,12 +19,41 @@ class _HomePageState extends State<HomePage> {
     defaultValue: 'http://localhost:8000',
   );
 
-  static const String _driverId = 'ride-driver-001';
+  late final BackendApiClient _backendApiClient;
+  late final AuthSession _auth;
+  StreamSubscription<AuthAccount?>? _subscription;
+  String? _uid;
+  int _epoch = 0;
 
-  final BackendApiClient _backendApiClient = const BackendApiClient(
-    baseUrl: _apiBaseUrl,
-    useMockData: false,
-  );
+  bool _current(int epoch, String? uid) =>
+      mounted &&
+      epoch == _epoch &&
+      uid == _uid &&
+      uid == _auth.currentAccount?.uid;
+
+  @override
+  void dispose() {
+    _epoch++;
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _signOut() async {
+    _epoch++;
+    setState(() {
+      _rideRequestsResult = null;
+      _statusUpdateResult = null;
+      _isLoadingRideRequests = true;
+    });
+    try {
+      await _auth.signOut();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('로그아웃하지 못했습니다. 다시 시도해 주세요.')));
+      }
+    }
+  }
 
   BackendHealthStatus? _backendHealthStatus;
   bool _isLoadingBackendHealth = true;
@@ -34,6 +67,23 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _auth = widget.session ?? FirebaseAuthSession.instance;
+    _backendApiClient = widget.apiClient ??
+        BackendApiClient(baseUrl: _apiBaseUrl, useMockData: false);
+    _uid = _auth.currentAccount?.uid;
+    _subscription = _auth.authStateChanges.listen((account) {
+      if (account?.uid != _auth.currentAccount?.uid) return;
+      if (account?.uid == _uid) return;
+      setState(() {
+        _epoch++;
+        _uid = account?.uid;
+        _rideRequestsResult = null;
+        _statusUpdateResult = null;
+        _isUpdatingRideRequestStatus = false;
+        _isLoadingRideRequests = true;
+      });
+      _loadDriverRideRequests();
+    });
     _loadBackendHealthStatus();
     _loadDriverRideRequests();
   }
@@ -50,19 +100,57 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadDriverRideRequests() async {
-    final result = await _backendApiClient.fetchDriverRideRequests(
-      driverId: _driverId,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _rideRequestsResult = result;
-      _isLoadingRideRequests = false;
-    });
+    final epoch = _epoch;
+    final uid = _uid;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoadingRideRequests = false);
+      return;
+    }
+    try {
+      final driverId = await _auth.getCustomClaim(
+        'mobi_driver_id',
+        forceRefresh: true,
+      );
+      if (!_current(epoch, uid)) return;
+      if (driverId is! String || driverId.isEmpty) {
+        if (!_current(epoch, uid)) return;
+        setState(() {
+          _rideRequestsResult = const DriverRideRequestsResult(
+            statusLabel: '기사 계정 배정 필요',
+            description: '서버 관리자가 이 Firebase 계정에 기사 역할과 기사 ID를 등록해야 합니다.',
+            requests: [],
+          );
+          _isLoadingRideRequests = false;
+        });
+        return;
+      }
+      final result = await _backendApiClient.fetchDriverRideRequests(
+        driverId: driverId,
+      );
+      if (!_current(epoch, uid)) return;
+      setState(() {
+        _rideRequestsResult = result;
+        _isLoadingRideRequests = false;
+      });
+    } catch (_) {
+      if (!_current(epoch, uid)) return;
+      setState(() {
+        _rideRequestsResult = const DriverRideRequestsResult(
+          statusLabel: '기사 계정 확인 실패',
+          description: '인증 정보 또는 네트워크를 확인할 수 없습니다. 다시 로그인해 주세요.',
+          requests: [],
+        );
+        _isLoadingRideRequests = false;
+      });
+    }
   }
 
   Future<void> _refreshDriverRideRequests() async {
+    if (_isLoadingRideRequests ||
+        _isUpdatingRideRequestStatus ||
+        _uid == null) {
+      return;
+    }
     // HTTP polling path used by the refresh button and future FCM callbacks.
     setState(() {
       _isLoadingRideRequests = true;
@@ -72,12 +160,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _acceptRideRequest(String? requestId) async {
+    if (_isUpdatingRideRequestStatus ||
+        _isLoadingRideRequests ||
+        _uid == null) {
+      return;
+    }
+    final epoch = _epoch;
+    final uid = _uid;
     if (requestId == null || requestId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('상태를 변경할 탑승 요청 식별자가 없습니다.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('상태를 변경할 탑승 요청 식별자가 없습니다.')));
       return;
     }
 
@@ -90,20 +183,18 @@ class _HomePageState extends State<HomePage> {
       status: 'ACCEPTED',
     );
 
-    if (!mounted) return;
+    if (!_current(epoch, uid)) return;
 
     setState(() {
       _statusUpdateResult = result;
       _isUpdatingRideRequestStatus = false;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result.description),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.description)));
 
-    if (result.isSuccess) {
+    if (result.isSuccess || result.httpStatus == 409) {
       await _refreshDriverRideRequests();
     }
   }
@@ -113,7 +204,17 @@ class _HomePageState extends State<HomePage> {
     final rideRequests = _rideRequestsResult?.requests ?? const [];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('MOBI 기사 앱'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('MOBI 기사 앱'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: '로그아웃',
+            onPressed: _signOut,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _refreshDriverRideRequests,
@@ -177,7 +278,9 @@ class _HomePageState extends State<HomePage> {
                 child: SizedBox(
                   height: 56,
                   child: OutlinedButton.icon(
-                    onPressed: _isLoadingRideRequests
+                    onPressed: _isLoadingRideRequests ||
+                            _isUpdatingRideRequestStatus ||
+                            _uid == null
                         ? null
                         : _refreshDriverRideRequests,
                     icon: Icon(
@@ -234,7 +337,9 @@ class _HomePageState extends State<HomePage> {
                           child: SizedBox(
                             height: 52,
                             child: ElevatedButton.icon(
-                              onPressed: _isUpdatingRideRequestStatus
+                              onPressed: _isUpdatingRideRequestStatus ||
+                                      !{'WAITING', 'NOTIFIED'}
+                                          .contains(request.statusLabel)
                                   ? null
                                   : () => _acceptRideRequest(request.requestId),
                               icon: Icon(
@@ -397,7 +502,7 @@ class _MvpNoticeCard extends StatelessWidget {
     return Semantics(
       container: true,
       label: 'MVP 안내, 현재 화면은 기사 앱 핵심 흐름을 확인하기 위한 초안입니다.',
-      hint: '실제 탑승 요청 목록과 상태 변경 흐름은 담당 모듈 계약 확정 후 연결됩니다.',
+      hint: '요청 목록은 서버에서 조회합니다. 운행 상태와 안전 판단은 별도입니다.',
       child: Card(
         elevation: 0,
         child: Padding(
@@ -409,8 +514,8 @@ class _MvpNoticeCard extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
-                  '현재 화면은 V2 기준의 기사 앱 요청 목록 연동 초안입니다. '
-                  '탑승 요청 상태 변경, 기사 수락 흐름, FCM 알림은 후속 섹션에서 검증합니다.',
+                  '요청 목록과 수락은 백엔드에 연결되어 있습니다. 새로고침으로 상태를 확인하세요. '
+                  '운행 상태는 시연용이며, 요청 수락은 승차 안전 허가가 아닙니다. FCM 실기기 알림은 별도 검증이 필요합니다.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),

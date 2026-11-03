@@ -6,9 +6,8 @@ import 'package:http/http.dart' as http;
 import 'beacon_scanner.dart';
 import 'beacon_signal.dart';
 
-typedef BeaconIngestIdentityResolver = BeaconIngestIdentity Function(
-  BeaconSignal signal,
-);
+typedef BeaconIngestIdentityResolver =
+    BeaconIngestIdentity Function(BeaconSignal signal);
 
 class BeaconIngestIdentity {
   const BeaconIngestIdentity({
@@ -43,15 +42,15 @@ class BeaconIngestPayload {
     this.busId,
     this.routeNo,
     this.distanceMeters,
-  })  : assert(sessionId.length > 0, 'sessionId must not be empty'),
-        assert(deviceId.length > 0, 'deviceId must not be empty'),
-        assert(beaconId.length > 0, 'beaconId must not be empty'),
-        assert(rssi >= -120 && rssi <= 0, 'rssi must be between -120 and 0'),
-        assert(source.length > 0, 'source must not be empty'),
-        assert(
-          distanceMeters == null || distanceMeters >= 0,
-          'distanceMeters must be non-negative or null',
-        );
+  }) : assert(sessionId.length > 0, 'sessionId must not be empty'),
+       assert(deviceId.length > 0, 'deviceId must not be empty'),
+       assert(beaconId.length > 0, 'beaconId must not be empty'),
+       assert(rssi >= -120 && rssi <= 0, 'rssi must be between -120 and 0'),
+       assert(source.length > 0, 'source must not be empty'),
+       assert(
+         distanceMeters == null || distanceMeters >= 0,
+         'distanceMeters must be non-negative or null',
+       );
 
   final String sessionId;
   final String deviceId;
@@ -71,7 +70,8 @@ class BeaconIngestPayload {
     String source = 'REAL_BLE',
     BeaconIngestIdentityResolver? identityResolver,
   }) {
-    final identity = identityResolver?.call(signal) ??
+    final identity =
+        identityResolver?.call(signal) ??
         BeaconIngestIdentity.fromSignal(signal);
     return BeaconIngestPayload(
       sessionId: sessionId,
@@ -98,7 +98,8 @@ class BeaconIngestPayload {
       'rssi': rssi,
       'distanceMeters': distanceMeters,
       'source': source,
-      'timestamp': timestamp.toIso8601String(),
+      // Both PRs send an explicit UTC instant, never a timezone-less local time.
+      'timestamp': timestamp.toUtc().toIso8601String(),
     };
     json.removeWhere((_, value) => value == null);
     return json;
@@ -119,10 +120,7 @@ class BeaconIngestPayload {
 }
 
 class BeaconIngestResult {
-  const BeaconIngestResult({
-    required this.statusCode,
-    required this.body,
-  });
+  const BeaconIngestResult({required this.statusCode, required this.body});
 
   final int statusCode;
   final Map<String, Object?> body;
@@ -147,9 +145,9 @@ class BeaconIngestClient {
     required Uri baseUri,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 5),
-  })  : endpoint = baseUri.resolve('/api/v3/beacon/ingest'),
-        _client = httpClient ?? http.Client(),
-        _ownsClient = httpClient == null;
+  }) : endpoint = baseUri.resolve('/api/v3/beacon/ingest'),
+       _client = httpClient ?? http.Client(),
+       _ownsClient = httpClient == null;
 
   final Uri endpoint;
   final Duration timeout;
@@ -192,7 +190,8 @@ class BeaconIngestClient {
       return Map<String, Object?>.from(decoded);
     }
     throw const BeaconIngestException(
-        'Beacon ingest response was not a JSON object.');
+      'Beacon ingest response was not a JSON object.',
+    );
   }
 }
 
@@ -205,9 +204,9 @@ class BeaconIngestBridge {
     this.source = 'REAL_BLE',
     this.identityResolver,
     this.targetBeaconId,
-  })  : assert(sessionId.length > 0, 'sessionId must not be empty'),
-        assert(deviceId.length > 0, 'deviceId must not be empty'),
-        assert(source.length > 0, 'source must not be empty');
+  }) : assert(sessionId.length > 0, 'sessionId must not be empty'),
+       assert(deviceId.length > 0, 'deviceId must not be empty'),
+       assert(source.length > 0, 'source must not be empty');
 
   final BeaconScanner scanner;
   final BeaconIngestClient client;

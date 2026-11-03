@@ -1,0 +1,2 @@
+-r requirements-base.txt
+ultralytics==8.4.173

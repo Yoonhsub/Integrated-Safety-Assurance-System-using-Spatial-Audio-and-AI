@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VisionDetectionResult",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "source",
+    "status",
+    "detections"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Producer/input identifier, for example mock, camera, or video."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "unavailable",
+        "error"
+      ]
+    },
+    "frameId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "capturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "imageSize": {
+      "type": "object",
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "modelInfo": {
+      "type": "object",
+      "required": [
+        "provider",
+        "name"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "identifier": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false
+    },
+    "detections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "classId",
+          "className",
+          "confidence",
+          "bbox"
+        ],
+        "properties": {
+          "classId": {
+            "type": "string",
+            "enum": [
+              "bus",
+              "bus_door",
+              "bus_stop",
+              "roadway",
+              "sidewalk",
+              "obstacle",
+              "tactile_paving"
+            ]
+          },
+          "className": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "bbox": {
+            "type": "object",
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "w": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              },
+              "h": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "bus"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "버스"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "bus_door"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "버스 문"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "bus_stop"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "버스 정류장"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "roadway"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "차도"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "sidewalk"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "보도"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "obstacle"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "장애물"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "tactile_paving"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "점자블록"
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "frameId",
+          "capturedAt",
+          "modelInfo"
+        ],
+        "not": {
+          "required": [
+            "error"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "unavailable",
+              "error"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "detections": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

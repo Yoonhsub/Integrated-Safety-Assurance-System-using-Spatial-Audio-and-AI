@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+DEPENDENCY_DIR_NAMES = {".venv", "venv", "site-packages"}
 
 
 def repo_path(path: str) -> Path:
@@ -268,6 +270,8 @@ def _is_packaged_source_file(path: Path) -> bool:
         return False
     if rel.startswith(".git/"):
         return False
+    if any(part.lower() in DEPENDENCY_DIR_NAMES for part in path.relative_to(ROOT).parts):
+        return False
     forbidden_parts = {
         "__pycache__",
         ".pytest_cache",
@@ -296,11 +300,19 @@ def validate_manifest() -> None:
     if not final_file_list.exists():
         raise AssertionError("Missing docs/read/FINAL_FILE_LIST.txt")
     listed_raw = {line.strip() for line in final_file_list.read_text(encoding="utf-8").splitlines() if line.strip()}
-    actual_raw = {
-        path.relative_to(ROOT).as_posix()
-        for path in ROOT.rglob("*")
-        if _is_packaged_source_file(path)
-    }
+    actual_raw = set()
+    for current_root, dirs, files in os.walk(ROOT):
+        dirs[:] = [
+            name
+            for name in dirs
+            if name.lower() not in DEPENDENCY_DIR_NAMES and name != ".git"
+        ]
+        current_path = Path(current_root)
+        actual_raw.update(
+            (current_path / name).relative_to(ROOT).as_posix()
+            for name in files
+            if _is_packaged_source_file(current_path / name)
+        )
     listed = {unicodedata.normalize("NFC", path): path for path in listed_raw}
     actual = {unicodedata.normalize("NFC", path): path for path in actual_raw}
     missing = [listed[key] for key in sorted(set(listed) - set(actual))]
@@ -325,14 +337,22 @@ def validate_no_generated_ignored_files() -> None:
     }
     forbidden_file_names = {".DS_Store", ".env"}
     forbidden_suffixes = {".pyc", ".log", ".zip", ".tar", ".tgz", ".7z", ".rar"}
-    for path in ROOT.rglob("*"):
-        rel = path.relative_to(ROOT).as_posix()
-        if rel.startswith(".git/"):
-            continue
-        parts = path.relative_to(ROOT).parts
-        if path.is_dir() and path.name in forbidden_dirs:
-            forbidden.append(rel + "/")
-        elif path.is_file():
+    for current_root, dirs, files in os.walk(ROOT):
+        dirs[:] = [
+            name
+            for name in dirs
+            if name.lower() not in DEPENDENCY_DIR_NAMES and name != ".git"
+        ]
+        current_path = Path(current_root)
+        for name in dirs:
+            path = current_path / name
+            rel = path.relative_to(ROOT).as_posix()
+            if name in forbidden_dirs:
+                forbidden.append(rel + "/")
+        for name in files:
+            path = current_path / name
+            rel = path.relative_to(ROOT).as_posix()
+            parts = path.relative_to(ROOT).parts
             if any(part in forbidden_dirs for part in parts):
                 forbidden.append(rel)
             elif path.name in forbidden_file_names:
@@ -489,10 +509,14 @@ def validate_runtime_constraints() -> None:
 
 
 
-def _assert_strict_current_location_rule(rule: str, label: str) -> None:
+def _assert_strict_current_location_rule(node: dict, label: str) -> None:
+    rule = node.get(".validate", "")
+    if node.get("$other", {}).get(".validate") is not False:
+        raise AssertionError(f"{label} must reject unknown location fields")
+    if {key for key in node if not key.startswith(".")} != {"lat", "lng", "updatedAt", "$other"}:
+        raise AssertionError(f"{label} must permit exactly the three location fields")
     required_fragments = [
         "newData.hasChildren(['lat', 'lng', 'updatedAt'])",
-        "newData.childrenCount() === 3",
         "newData.child('lat').isNumber()",
         "newData.child('lat').val() >= -90",
         "newData.child('lat').val() <= 90",
@@ -515,8 +539,8 @@ def validate_fcm_and_firebase_policy() -> None:
     if rtdb["users"]["$userId"].get("userType") != "visually_impaired | elderly | general | unknown":
         raise AssertionError("userType enum mismatch")
     rules_json = load_json("infrastructure/firebase/database.rules.json")
-    user_location_rule = rules_json["rules"]["users"]["$uid"]["currentLocation"].get(".validate", "")
-    driver_location_rule = rules_json["rules"]["drivers"]["$driverId"]["currentLocation"].get(".validate", "")
+    user_location_rule = rules_json["rules"]["users"]["$uid"]["currentLocation"]
+    driver_location_rule = rules_json["rules"]["drivers"]["$driverId"]["currentLocation"]
     _assert_strict_current_location_rule(user_location_rule, "users/{uid}")
     _assert_strict_current_location_rule(driver_location_rule, "drivers/{driverId}")
     ride_rules = rules_json["rules"].get("rideRequests", {})
@@ -1064,11 +1088,11 @@ def validate_section20_final_patch() -> None:
 
     rules = load_json("infrastructure/firebase/database.rules.json")
     _assert_strict_current_location_rule(
-        rules["rules"]["users"]["$uid"]["currentLocation"].get(".validate", ""),
+        rules["rules"]["users"]["$uid"]["currentLocation"],
         "users/{uid}",
     )
     _assert_strict_current_location_rule(
-        rules["rules"]["drivers"]["$driverId"]["currentLocation"].get(".validate", ""),
+        rules["rules"]["drivers"]["$driverId"]["currentLocation"],
         "drivers/{driverId}",
     )
 

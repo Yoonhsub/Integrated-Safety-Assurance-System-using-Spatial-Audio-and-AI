@@ -64,7 +64,6 @@ class BeaconProximitySnapshot {
       };
 }
 
-
 /// Passenger App이 소비할 수 있는 비콘 근접 이벤트 종류이다.
 ///
 /// 이 enum은 실제 BLE 스캔이나 앱 UI 동작을 수행하지 않고, 센서 패키지가
@@ -212,7 +211,8 @@ class ProximityEvent {
       throw ArgumentError('ProximityEvent.signalLevel must be a string.');
     }
     if (direction != null && direction is! Map) {
-      throw ArgumentError('ProximityEvent.direction must be an object or null.');
+      throw ArgumentError(
+          'ProximityEvent.direction must be an object or null.');
     }
     if (metadata != null && metadata is! Map) {
       throw ArgumentError('ProximityEvent.metadata must be an object or null.');
@@ -235,7 +235,8 @@ class ProximityEvent {
       signalLevel: BeaconSignalLevelJson.fromJsonValue(signalLevel),
       direction: direction == null
           ? null
-          : DirectionReading.fromJson(Map<String, Object?>.from(direction as Map)),
+          : DirectionReading.fromJson(
+              Map<String, Object?>.from(direction as Map)),
       timestamp: SensorModelValidation.requireIsoTimestamp(
         timestamp,
         fieldName: 'ProximityEvent.timestamp',
@@ -298,7 +299,8 @@ class BeaconProximityTracker {
           distanceStableThresholdMeters >= 0,
           'distanceStableThresholdMeters must be zero or greater',
         ),
-        assert(rssiStableThreshold >= 0, 'rssiStableThreshold must be zero or greater');
+        assert(rssiStableThreshold >= 0,
+            'rssiStableThreshold must be zero or greater');
 
   /// 비콘별로 보관할 최근 signal 개수이다.
   final int historySize;
@@ -334,14 +336,32 @@ class BeaconProximityTracker {
       signal.beaconId,
       () => Queue<BeaconSignal>(),
     );
-    final previous = history.isEmpty ? null : history.last;
+    var previous = history.isEmpty ? null : history.last;
+    final isStale =
+        !signal.wasDetectedWithin(maxSignalAge, now: referenceTime) ||
+            (previous != null &&
+                !signal.lastDetectedAt.isAfter(previous.lastDetectedAt));
+    if (isStale) {
+      return BeaconProximitySnapshot(
+        beaconId: signal.beaconId,
+        trend: BeaconProximityTrend.unknown,
+        currentSignal: signal,
+        previousSignal: previous,
+        isStale: true,
+        updatedAt: referenceTime,
+      );
+    }
+    if (previous != null &&
+        !previous.wasDetectedWithin(maxSignalAge, now: referenceTime)) {
+      history.clear();
+      previous = null;
+    }
 
     history.addLast(signal);
     while (history.length > historySize) {
       history.removeFirst();
     }
 
-    final isStale = !signal.wasDetectedWithin(maxSignalAge, now: referenceTime);
     final trend = isStale || signal.isLost
         ? BeaconProximityTrend.unknown
         : _calculateTrend(previous, signal);
