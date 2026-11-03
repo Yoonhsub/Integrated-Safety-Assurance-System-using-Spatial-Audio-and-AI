@@ -5,7 +5,7 @@ enum GuidancePriority { observation }
 
 enum TestDirection { left, center, right }
 
-enum DirectionEvidence { explicitLocalFixture, unverified }
+enum DirectionEvidence { explicitLocalFixture, cameraScreenBbox, unverified }
 
 class DirectionalGuidance {
   const DirectionalGuidance(
@@ -18,17 +18,23 @@ class DirectionalGuidance {
       this.testDirection,
       this.directionEvidence = DirectionEvidence.unverified});
   static const syntheticProvenance = 'SYNTHETIC_DIRECTIONAL_GUIDANCE';
+  static const screenProvenance = 'CAMERA_SCREEN_INFORMATIONAL_PREVIEW';
   final String guidanceId, sessionGeneration, text, provenance;
   final int authEpoch;
   final GuidancePriority priority;
   final TestDirection? testDirection;
   final DirectionEvidence directionEvidence;
+  // A screen projection is reviewed only as a screen cue, never a safe route,
+  // head-relative/world-relative direction or a verified physical obstacle.
   bool get hasReviewedDirection =>
-      provenance == syntheticProvenance &&
-      directionEvidence == DirectionEvidence.explicitLocalFixture &&
-      testDirection != null;
+      testDirection != null &&
+      ((provenance == syntheticProvenance &&
+              directionEvidence == DirectionEvidence.explicitLocalFixture) ||
+          (provenance == screenProvenance &&
+              directionEvidence == DirectionEvidence.cameraScreenBbox));
   String get scopeKey => jsonEncode([authEpoch, sessionGeneration, guidanceId]);
-  String get spokenText => '검증용 합성 안내입니다. $text';
+  String get spokenText =>
+      provenance == screenProvenance ? text : '검증용 합성 안내입니다. $text';
   void validate() {
     if (guidanceId.isEmpty ||
         guidanceId.length > 128 ||

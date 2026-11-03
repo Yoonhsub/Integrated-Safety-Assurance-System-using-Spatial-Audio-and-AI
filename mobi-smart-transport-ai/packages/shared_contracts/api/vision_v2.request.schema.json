@@ -42,7 +42,8 @@
     "sourceType": {
       "enum": [
         "live",
-        "replay"
+        "replay",
+        "android_camera"
       ],
       "title": "Sourcetype",
       "type": "string"
@@ -87,5 +88,41 @@
   "title": "VisionEnvelope",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Local-only envelope. Camera captureClock is a declaration, not verified sensor time. Server applies binding/order/time-window validation, never Live eligibility."
+  "description": "Local-only envelope. Camera captureClock is a declaration, not verified sensor time. Server applies binding/order/time-window validation, never Live eligibility.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "sourceType": {
+            "const": "android_camera"
+          }
+        },
+        "required": [
+          "sourceType"
+        ]
+      },
+      "then": {
+        "required": [
+          "captureClock"
+        ],
+        "properties": {
+          "captureClock": {
+            "const": "host_read"
+          },
+          "detectionResult": {
+            "required": [
+              "frameId",
+              "capturedAt",
+              "imageSize"
+            ],
+            "properties": {
+              "source": {
+                "const": "android_camera"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

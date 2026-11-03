@@ -42,7 +42,8 @@
     "sourceType": {
       "enum": [
         "live",
-        "replay"
+        "replay",
+        "android_camera"
       ],
       "title": "Sourcetype",
       "type": "string"

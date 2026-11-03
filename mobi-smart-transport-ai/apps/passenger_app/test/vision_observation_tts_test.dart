@@ -93,6 +93,25 @@ Map<String, dynamic> observation(
       'receivedAt': 'test',
     };
 void main() {
+  testWidgets(
+      'Android preview stays silent even with legacy observation speech ON',
+      (t) async {
+    final engine = FakeTts();
+    final priority = SpeechPriorityCoordinator(engine);
+    final speech = VisionObservationSpeech(priority, nowMicros: () => 0)
+      ..setScope('alice', 's', 0)
+      ..setEnabled(true);
+    final value = observation()..['sourceType'] = 'android_camera';
+    speech.update([value], Duration.zero);
+    await t.pump();
+    await t.pump(const Duration(seconds: 1));
+    expect(engine.spoken, isEmpty);
+    expect(speech.speaking, isFalse);
+    speech.dispose();
+    await t.pump();
+    priority.dispose();
+  });
+
   syntheticSafetyGuidanceTests();
   setUp(fixtureFrames.clear);
   testWidgets('V3 scenario boundary updates without parent rebuild and repeats',

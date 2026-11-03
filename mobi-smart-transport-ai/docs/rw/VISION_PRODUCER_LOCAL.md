@@ -350,3 +350,204 @@ validForSeconds로 로컬 만료를 처리한다. 조회 실패/세션 변경은
 `stored=false`는 기존 안전 이벤트 저장 비활성을 의미하며 변경하지 않는다.
 `guidanceEligible=false`, `freshnessVerified=false`, 기존 Live Hold도 유지한다.
 관찰 카드는 guidance 상태/LLM/TTS/Spatial Audio/승차 허용 API를 호출하지 않는다.
+
+
+## Android camera DetectionResult contract (local validation only)
+
+`android_camera` is a separate administrator-registered `sourceType`, paired
+only with `DetectionResult.source=android_camera`. It is not `live/webcam` and
+is never an authentication claim. Existing live/webcam and replay/video_file
+contracts remain unchanged. The existing local-only environment gate,
+producer authentication, server binding, Camera Epoch, Passenger Lease and
+Guidance generation checks apply unchanged. No image/video upload is added.
+
+Android envelopes require UUID frameId, matching timezone-aware capturedAt,
+imageSize and explicit `captureClock=host_read`. The timestamp is the mobile
+host callback time, not a sensor exposure or synchronized server time. Existing
+local bounds remain: max age 5s (reject age >=5), future skew 1s, observation
+TTL 3s, connection timeout 5s. These are uncalibrated demo bounds; mismatched
+phone clocks are rejected rather than corrected or trusted.
+
+The Flutter codec rotates/mirrors pixels BEFORE preprocessing/inference and
+reports the resulting upright image size. Bboxes are normalized xywh in that
+upright image: origin top-left, x right, y down. Width/height are positive;
+x+w and y+h must remain <=1 (existing floating tolerance). The server never
+rotates again and cannot attest image alignment or physical rotation without
+actual device evidence. Raw rotation/mirror belong to local test metadata,
+not invented fields in the frozen DetectionResult schema. Images are limited
+to the existing local preprocessing area of 4096*4096 pixels.
+
+Repeated identical visionEventId/payload returns the original receipt without
+refreshing TTL. A changed payload under the same event ID is rejected. New
+Android events cannot reuse a frame UUID within the same binding/epoch,
+including nonconsecutive or case-varied UUID reuse: frame-ID fences are committed
+atomically with receipt/watermark. Their retention follows the existing
+no-automatic-deletion ledger policy. This is a local contract, not an unbounded
+production video storage or deduplication scalability claim.
+
+`guidanceEligible=false`, `freshnessVerified=false`, preview/no_event only.
+Producer-declared model metadata is not model/capture attestation; bus is never
+mapped to bus_door. No actual Safety Event or risk audio is generated here.
+Python VisionInferenceRequest retains its image_file/video_file/webcam
+inference inputs: accepting Android RESULT JSON does not add a Python Android
+camera capture/provider implementation.
+
+
+## Binding revision and late-response fencing
+
+The existing observation GET supports `?proofOnly=true`. Both forms acquire
+Binding lock then Session lock, validate authenticated owner/current Lease and
+Generation, and return authority UUID, monotonic session viewRevision,
+leaseVersion, current active Binding snapshots and (data mode only) observations.
+Each Binding has a server-assigned bindingRevision; every observation identifies
+its bindingId, bindingRevision, cameraEpoch and Generation. Caller-supplied
+revision/identity fields in binding creation are rejected, not used as authority.
+
+Birth revisions use a process-scoped integer sequence (maximum JS safe integer).
+Register/revoke/rebind advances the affected session view revision; replacing a
+camera across sessions advances both old and new session views. GUIDANCE
+Generation is not rotated just to signal an unrelated camera update. Natural
+expiry is checked when the proof snapshots active bindings. Old identity UUIDs
+and per-session revision tombstones are retained until this service authority is
+destroyed. Repeated UUID collisions fail closed before replacing a binding.
+Authority UUID changes on a new service instance; counters/tombstones are not
+claimed durable or multi-worker safe.
+
+The Flutter client fetches data then a fresh authoritative proof. Owner,
+Lease version, Session/Generation, authority, viewRevision and exact active
+binding revision/epoch membership must agree. It also checks auth epoch,
+local reset/cancellation and latest-request sequence. Genuine remote mutation
+clears the stale result but allows a fresh rebind poll; malformed proofs fail
+closed. No new Lease/Operation is generated to recover a revision mismatch.
+
+Guarantee boundary: a mutation committed BEFORE the final proof snapshot is
+detected, even if the first data body arrives after its admin ACK. A mutation
+committed AFTER that proof snapshot cannot be known immediately by a polling
+client. In particular, delaying delivery of an already-built proof does not
+magically reveal a later revoke. Cached UI is cleared on the next observed
+failure/change or existing expiry/lifecycle invalidation, not synchronously at
+a remote admin ACK. This is NOT instant remote revocation or linearizability
+at UI paint time. Stronger ACK semantics require an ordered change notification
+and client invalidation ACK (or a server-coordinated receiver fence with bounded
+failure handling); do not claim that repeating GET indefinitely solves it.
+
+No source, class, audio, Safety Event or eligibility policy is expanded here.
+
+
+## Dart functional Preview transport (local only)
+
+`FramePump.onResult` can await `DartVisionProducerClient.submit` after the existing
+frame/DetectionResult checks. One inference + HTTP operation remains in flight,
+with at most one replaceable pending frame. Network failure halts the source;
+explicit recovery retries the identical pending event before admitting new frames.
+Confirmed expired rejection is discarded without changing its timestamp.
+
+The client accepts only an explicitly configured loopback HTTP Backend and an
+admin-issued `android_camera` binding, using an injected authenticated Producer
+client. It does not create credentials, negotiate Passenger leases or bind itself.
+`LocalVisionPage(producer: ...)` is an optional camera hook; its default remains
+offline. The existing `.offlinevision` APK still has no INTERNET permission and
+is not a network camera build.
+
+`VisionPreviewPage` connects a caller-owned frame source/FramePump to the existing
+Passenger API and `VisionObservationPanel`. The panel displays Backend-projected
+frameId, capturedAt, imageSize, className, confidence and upright normalized bbox.
+It clears on Stop/error/session end, never displays the local result as a remote
+receipt, and hides speech controls. Session ownership/Lease/Generation/Revision
+checks remain in the existing API client. Stop does not revoke the server binding;
+a subsequent read without this UI can still see a previously accepted observation
+until its existing TTL expires. No TTL or safety-eligibility policy is changed.
+
+The external local Web run uses explicit synthetic pixels and a synthetic output
+tensor through the real Dart codec/pump/client and actual FastAPI HTTP. Its mock
+model metadata and visible Fixture label distinguish it from native TFLite or
+Python YOLO inference. Fake authentication/bootstrap remains outside this source
+and is not added to a normal Passenger build. Physical Android camera inference,
+a network-enabled camera bootstrap with approved Producer credentials, and real
+Firebase are not validated by this local run. The existing remote-change-after-
+final-Revision-proof limitation remains; no new ACK protocol is introduced.
+
+
+## Android Camera + local Backend debug configuration
+
+The separate entry is `lib/local_android_camera_backend_main.dart`, application
+ID `com.example.mobi_passenger_app.localvision`. It requires exactly
+`MOBI_ANDROID_CAMERA_BACKEND=true`, debug mode and
+`MOBI_API_BASE_URL=http://127.0.0.1:8000`. Profile/release or mixed isolation defines
+are rejected. No change was made to the offlinevision INTERNET prohibition or
+existing localbackend/localaudio behavior. Shared Gradle/manifest-inventory changes
+only register this new entry. Camera frames stay local; only DetectionResult JSON
+is transmitted. No Safety Event, TTS or directional cue is requested.
+
+PC preparation (repo root, with existing Backend dependency Python):
+
+```powershell
+$cameraRun = Join-Path $env:TEMP ('mobi-camera-' + (Get-Date -Format yyyyMMdd-HHmmss))
+New-Item -ItemType Directory -Path $cameraRun
+python -B scripts/run_android_local_backend.py --enable-local-test-auth --camera-vision --trace "$cameraRun/http.jsonl" --connection-file "$cameraRun/connection.json" --control-dir "$cameraRun/control"
+```
+
+This invokes the existing FastAPI app, real authentication dependency with a
+local Fake verifier, and explicit in-memory stores. It registers the local
+Producer/camera by the existing administrator API. It generates 30-minute
+Passenger and Producer test credentials in the external connection file; the
+administrator credential stays only in the PC process. Do not commit, log or
+redistribute this file. A new run requires new paths. No Firebase/ADC is accessed.
+
+In another terminal, build/install and transfer the runtime configuration:
+
+```powershell
+cd apps/passenger_app
+flutter build apk --debug --no-pub --target lib/local_android_camera_backend_main.dart --dart-define=MOBI_ANDROID_CAMERA_BACKEND=true --dart-define=MOBI_API_BASE_URL=http://127.0.0.1:8000
+adb devices -l
+adb reverse tcp:8000 tcp:8000
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+adb push "$cameraRun/connection.json" /sdcard/Download/mobi-camera-connection.json
+```
+
+Use the actual `$cameraRun` path from the PC terminal. Transfer the previously
+approved TFLite model separately, without changing weights. The existing picker
+verifies SHA256 `7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85`,
+input Float32 `[1,640,640,3]`, output Float32 `[1,6,8400]`.
+
+1. Launch `.localvision`; select `mobi-camera-connection.json`. The app first
+   checks the dedicated server marker, then negotiates the existing Start Ticket
+   and Lease and creates its Passenger session. No credentials precede this check.
+2. Copy the displayed sessionId. On the PC, authorize the binding via the local
+   operator control file (substitute the displayed ID):
+
+```powershell
+@{sessionId='DISPLAYED_SESSION_ID'} | ConvertTo-Json | Set-Content -Encoding utf8 "$cameraRun/control/bind.json"
+Get-Content "$cameraRun/control/binding-result.json"
+```
+
+3. After status 201, tap **PC 승인 Binding 확인 · 카메라 열기**. The app reads the
+   active binding from its existing authenticated Passenger observation API.
+   It never receives an admin token or calls a registration/binding write API.
+4. Select the approved `.tflite` file, start the camera and grant permission.
+   The existing native worker performs preprocessing/inference/NMS; the original
+   frame metadata and normalized upright bbox form DetectionResult. FramePump
+   serializes inference plus HTTP, retaining at most one newer pending frame.
+5. Observe local inference frame/bbox plus the separate Backend-fetched Passenger
+   observation panel. Frame UUID/capture timestamp correlate the two. A raw live
+   preview and inference image are different instants; bbox overlay is on the
+   inference image. Do not treat it as bus-door direction/distance or boarding.
+6. Stop, restart, background/return, network failure/recovery and session end must
+   be verified on a physical phone. Source failures halt the camera, hide remote
+   results and permit explicit recovery of the identical pending JSON. No image
+   upload, background autoplay or automatic dangerous guidance is enabled.
+7. End the session. The app stops the camera/worker/HTTP before attempting Lease
+   revocation. On failure it closes local credentials and reports that server
+   expiry remains the fallback. Root dispose immediately invalidates local access;
+   it cannot promise a successful remote logout after a lost connection.
+
+After testing, create `$cameraRun/control/stop` to stop only this PC host, remove
+only the ADB reverse rule added for the test, and remove the temporary connection
+file from the phone/PC. An expired file must be reissued in a new PC run; no
+credential extension is performed. No live phone Runtime/latency/FPS or Shokz
+listening success is implied by an APK build or a Fixture HTTP result.
+
+The existing post-final-Revision-proof remote-change detection window and
+single-worker in-memory limitation remain. No ACK protocol was added. A revoked
+binding/expired credential requires explicit setup and administrator re-binding;
+the app does not assign itself a new camera epoch or privileged session.

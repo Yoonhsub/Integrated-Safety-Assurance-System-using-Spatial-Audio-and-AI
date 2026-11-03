@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from app.schemas.v3 import GuidanceEventRequest, GuidanceSessionCreateRequest, GuidanceSessionState, GuidanceState
 from app.services.v3_guidance_store import V3SessionRecord, v3_guidance_store
+
+from app.schemas.vision_v2 import VisionLeaseStart, VisionLeaseResponse, VisionOperationStart, VisionStartTicket, VisionLeaseIssue
 
 router = APIRouter()
 
@@ -108,3 +110,43 @@ def apply_event(payload: GuidanceEventRequest) -> GuidanceSessionState:
 def safety_events(sessionId: str, after: int | None = None, generation: str | None = None):
     from app.services.session_safety_delivery import poll
     return poll(sessionId, after, generation)
+
+
+@router.post("/vision-lease", status_code=201)
+def begin_vision_lease(payload: "VisionLeaseIssue", response: Response) -> "VisionLeaseResponse":
+    from app.services.vision_binding_service import require_passenger_preview
+    require_passenger_preview()
+    response.headers["Cache-Control"] = "no-store"
+    return v3_guidance_store.begin_vision_lease(payload)
+
+
+@router.get("/vision-lease")
+def current_vision_lease(response: Response) -> "VisionLeaseResponse":
+    from app.services.vision_binding_service import require_passenger_preview
+    require_passenger_preview()
+    response.headers["Cache-Control"] = "no-store"
+    return v3_guidance_store.current_vision_lease()
+
+
+@router.delete("/vision-lease", status_code=204)
+def revoke_vision_lease():
+    from app.services.vision_binding_service import require_passenger_preview
+    require_passenger_preview()
+    v3_guidance_store.revoke_vision_lease()
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@router.put("/vision-lease")
+def renew_vision_lease(payload: "VisionLeaseStart", response: Response) -> "VisionLeaseResponse":
+    from app.services.vision_binding_service import require_passenger_preview
+    require_passenger_preview()
+    response.headers["Cache-Control"] = "no-store"
+    return v3_guidance_store.renew_vision_lease()
+
+
+@router.post("/vision-lease/operations", status_code=201)
+def register_vision_operation(payload: "VisionOperationStart", response: Response) -> "VisionStartTicket":
+    from app.services.vision_binding_service import require_passenger_preview
+    require_passenger_preview()
+    response.headers["Cache-Control"] = "no-store"
+    return v3_guidance_store.register_vision_operation(payload)

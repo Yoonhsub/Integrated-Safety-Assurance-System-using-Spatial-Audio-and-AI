@@ -1,3 +1,4 @@
+import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
@@ -14,7 +15,9 @@ class LocalGuidanceRuntime {
       required this.captureGuard,
       required this.priority,
       required this.audio,
-      required this.controls}) {
+      required this.controls,
+      this.beaconScanner,
+      this.beaconIdentities = const []}) {
     final uri = Uri.parse(client.baseUrl);
     if (!kDebugMode ||
         uri.scheme != 'http' ||
@@ -27,6 +30,8 @@ class LocalGuidanceRuntime {
       throw StateError('Explicit loopback debug Guidance runtime required');
     }
   }
+  final BeaconScanner? beaconScanner;
+  final List<BeaconIngestIdentity> beaconIdentities;
   final V3AgentApiClient client;
   final AuthSession auth;
   final bool Function() Function() captureGuard;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 
@@ -116,10 +117,22 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                 ),
                 const SizedBox(height: 20),
                 OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).pushNamed('/local-vision'),
+                  onPressed: () =>
+                      Navigator.of(context).pushNamed('/local-vision'),
                   icon: const Icon(Icons.camera_alt_outlined),
                   label: const Text('휴대폰 로컬 카메라 관찰'),
                 ),
+                if (kDebugMode &&
+                    !kIsWeb &&
+                    defaultTargetPlatform == TargetPlatform.android)
+                  OutlinedButton.icon(
+                    onPressed: _isSwitching
+                        ? null
+                        : () =>
+                            Navigator.of(context).pushNamed('/native-audio'),
+                    icon: const Icon(Icons.volume_up_outlined),
+                    label: const Text('음성·방향 확인 (Android)'),
+                  ),
                 // 전환 중 로딩 표시
                 if (_isSwitching) ...[
                   const SizedBox(height: 24),

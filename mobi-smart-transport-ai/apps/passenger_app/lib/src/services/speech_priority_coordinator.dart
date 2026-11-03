@@ -13,15 +13,20 @@ class FlutterSpeechEngine implements SpeechEngine {
   FlutterSpeechEngine.platform({
     FlutterTts? tts,
     bool? webPlatform,
+    this.requireOfflineKoreanVoice = false,
+    this.requestNativeFocus = false,
+    this.diagnostic,
     bool Function()? browserActive,
     void Function()? browserCancel,
   })  : _tts = tts ?? FlutterTts(),
         _web = webPlatform ?? kIsWeb,
         _browserActive = browserActive ?? browserSpeechStillActive,
         _browserCancel = browserCancel ?? cancelBrowserSpeech {
+    _tts.setStartHandler(() => _report('TTS_STARTED'));
     _tts.setCancelHandler(_cancelled);
     _tts.setCompletionHandler(_finished);
     _tts.setErrorHandler((_) {
+      _report('TTS_ERROR');
       if (_acknowledgeStop()) return;
       if (_web && _browserActive()) {
         return; // Ignore a prior Web cancel while the current voice is active.
@@ -34,6 +39,16 @@ class FlutterSpeechEngine implements SpeechEngine {
     });
   }
   final FlutterTts _tts;
+  final bool requireOfflineKoreanVoice, requestNativeFocus;
+  final void Function(String)? diagnostic;
+  void _report(String event) {
+    try {
+      diagnostic?.call(event);
+    } catch (error) {
+      debugPrint('TTS diagnostic failure: ${error.runtimeType}');
+    }
+  }
+
   final bool _web;
   final bool Function() _browserActive;
   final void Function() _browserCancel;
@@ -47,6 +62,7 @@ class FlutterSpeechEngine implements SpeechEngine {
   }
 
   void _cancelled() {
+    _report('TTS_CANCELLED');
     if (_acknowledgeStop()) return;
     if (_web && _browserActive()) return;
     final pending = _completion;
@@ -59,6 +75,7 @@ class FlutterSpeechEngine implements SpeechEngine {
   Completer<void>? _completion;
   Timer? _completionTimer;
   void _finished() {
+    _report('TTS_COMPLETED_CALLBACK');
     if (_acknowledgeStop()) return;
     _completionTimer?.cancel();
     // A delayed prior cancel/end must not release a new Web safety voice.
@@ -76,32 +93,69 @@ class FlutterSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> prepare({required bool requireKoreanVoice}) async {
-    if (_unavailable) throw StateError('TTS 종료 확인 실패: 앱을 다시 열어 주세요');
-    if (requireKoreanVoice) {
-      final voices = await _tts.getVoices;
-      final korean = voices is List
-          ? voices.where((v) =>
-              v is Map &&
-              (v['locale']?.toString().toLowerCase().startsWith('ko') ?? false))
-          : const [];
-      if (korean.isEmpty) throw StateError('한국어 TTS 음성이 없습니다');
-      final voice = korean.first as Map;
-      await _tts.setVoice({
-        'name': voice['name'].toString(),
-        'locale': voice['locale'].toString()
-      });
+    _report('TTS_INITIALIZING');
+    try {
+      if (_unavailable) throw StateError('TTS 종료 확인 실패: 앱을 다시 열어 주세요');
+      Map<String, String>? pinnedVoice;
+      if (requireKoreanVoice || requireOfflineKoreanVoice) {
+        final voices = await _tts.getVoices;
+        final korean = voices is List
+            ? voices.where((v) =>
+                v is Map &&
+                (v['locale']?.toString().toLowerCase().startsWith('ko') ??
+                    false) &&
+                (!requireOfflineKoreanVoice ||
+                    (RegExp(r'^ko(?:[-_]|$)')
+                            .hasMatch(v['locale'].toString().toLowerCase()) &&
+                        {'0', 'false'}
+                            .contains(v['network_required']?.toString()))))
+            : const [];
+        if (korean.isEmpty) {
+          _report('KOREAN_LOCAL_VOICE_UNAVAILABLE');
+          throw StateError('사용 가능한 한국어 로컬 TTS 음성이 없습니다');
+        }
+        final voice = korean.first as Map;
+        if (requireOfflineKoreanVoice &&
+            (voice['name'] is! String || (voice['name'] as String).isEmpty)) {
+          throw StateError('Local voice identity missing');
+        }
+        pinnedVoice = {
+          'name': voice['name'].toString(),
+          'locale': voice['locale'].toString()
+        };
+        if (!requireOfflineKoreanVoice) await _tts.setVoice(pinnedVoice);
+      }
+      final language = await _tts.setLanguage('ko-KR');
+      if (requireOfflineKoreanVoice && language != 1) {
+        _report('TTS_KOREAN_LANGUAGE_UNAVAILABLE');
+        throw StateError('Korean language initialization failed');
+      }
+      // Android setLanguage may replace the selected voice. Pin the verified
+      // offline voice last, including for high-priority local speech.
+      if (requireOfflineKoreanVoice) {
+        final selected = await _tts.setVoice(pinnedVoice!);
+        if (selected != 1) {
+          _report('TTS_VOICE_SELECTION_FAILED');
+          throw StateError('Local Korean voice selection failed');
+        }
+        _report('KOREAN_VOICE_SELECTED');
+        _report('KOREAN_OFFLINE_PINNED_LAST');
+      }
+      _report('TTS_READY');
+      await _tts.setSpeechRate(0.5);
+      await _tts.setPitch(1.0);
+      // Own completion/cancellation handles Web's unresolved cancel Future.
+      await _tts.awaitSpeakCompletion(false);
+    } catch (error) {
+      _report('TTS_INITIALIZATION_FAILED_${error.runtimeType}');
+      rethrow;
     }
-    await _tts.setLanguage('ko-KR');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setPitch(1.0);
-    // Own completion/cancellation handles Web's unresolved cancel Future.
-    await _tts.awaitSpeakCompletion(false);
   }
 
   @override
   Future<void> speak(String text) {
     final pending = _completion = Completer<void>();
-    unawaited(_tts.speak(text).then((result) {
+    unawaited(_tts.speak(text, focus: requestNativeFocus).then((result) {
       if (result == 0 || (!_web && result == null)) {
         if (!pending.isCompleted) {
           pending.completeError(StateError('TTS 실행 불가'));
@@ -115,6 +169,7 @@ class FlutterSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> stop() async {
+    _report('TTS_STOP_REQUEST');
     _completionTimer?.cancel();
     final pending = _completion;
     _completion = null; // A retiring callback must never finish a new run.
@@ -139,7 +194,9 @@ class FlutterSpeechEngine implements SpeechEngine {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
       }
+      _report('TTS_STOP_CONFIRMED');
     } catch (_) {
+      _report('TTS_STOP_UNCONFIRMED');
       _unavailable = true; // Unconfirmed cancellation cannot authorize reuse.
       rethrow;
     } finally {

@@ -224,7 +224,7 @@ class _AuthGateState extends State<AuthGate> {
     if (!widget.configurationReady) {
       return const _AuthMessagePage(
         title: 'Firebase 설정 필요',
-        message: '이 Web 앱의 Firebase 설정이 없습니다. 실행 설정을 확인해 주세요.',
+        message: '이 앱의 로그인 연결을 준비하지 못했습니다. 앱 설정과 네트워크 상태를 확인해 주세요.',
       );
     }
     if (!widget.authOnly.isValid) {

@@ -1,3 +1,6 @@
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'package:mobi_passenger_app/local_vision_main.dart' as camera_app;
 import 'dart:convert';
 import 'dart:io';
@@ -46,6 +49,154 @@ LocalObservation observation(VisionFrame f) =>
 Future<void> flush() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  Map<String, dynamic> binding() => {
+        'producerId': 'local-producer',
+        'sourceType': 'android_camera',
+        'bindingId': 'binding',
+        'cameraEpoch': 'epoch',
+        'cameraId': 'camera',
+        'sessionId': 'session'
+      };
+  test(
+      'Dart producer sends immutable retry body and restores Preview after 503',
+      () async {
+    final bodies = <String>[];
+    var fail = true;
+    final sender = DartVisionProducerClient(
+        baseUrl: 'http://127.0.0.1:8000',
+        producerUid: 'local-producer',
+        binding: binding(),
+        authClient: AuthenticatedApiClient(
+            tokenLoader: ({bool forceRefresh = false}) async => 'test-only',
+            client: MockClient((request) async {
+              bodies.add(request.body);
+              if (fail) return http.Response('{}', 503);
+              final body = jsonDecode(request.body);
+              return http.Response(
+                  jsonEncode({
+                    'visionEventId': body['visionEventId'],
+                    'bindingId': 'binding',
+                    'stored': false,
+                    'guidanceEligible': false
+                  }),
+                  202);
+            })));
+    await expectLater(
+        sender.submit(observation(frame(1))),
+        throwsA(isA<VisionProducerException>().having(
+            (e) => e.message, 'server failure', contains('Backend 연결 실패'))));
+    expect(sender.hasPending, true);
+    fail = false;
+    await sender.retryPending();
+    expect(bodies.length, 2);
+    expect(bodies[0], bodies[1]);
+    expect(sender.submitted, 1);
+    expect(sender.hasPending, false);
+    sender.close();
+    await expectLater(sender.submit(observation(frame(2))),
+        throwsA(isA<VisionProducerException>()));
+  });
+  test(
+      'FramePump stop during HTTP completion discards late display and pending frame',
+      () async {
+    final sent = Completer<void>();
+    var calls = 0;
+    final pump =
+        FramePump((f) async => observation(f), () => 100, onResult: (_) {
+      calls++;
+      return sent.future;
+    });
+    pump.start();
+    pump.submit(frame(1));
+    await flush();
+    pump.submit(frame(2));
+    final stopped = pump.stop();
+    sent.complete();
+    await stopped;
+    expect(calls, 1);
+    expect(pump.observation, isNull);
+    expect(pump.active, false);
+    pump.dispose();
+  });
+  test(
+      'FramePump network failure stops without retrying or accumulating frames',
+      () async {
+    var calls = 0;
+    final pump =
+        FramePump((f) async => observation(f), () => 100, onResult: (_) async {
+      calls++;
+      throw const VisionProducerException('연결 실패');
+    });
+    pump.start();
+    pump.submit(frame(1));
+    await flush();
+    pump.submit(frame(2));
+    await flush();
+    expect(calls, 1);
+    expect(pump.active, false);
+    expect(pump.error, '연결 실패');
+    expect(pump.observation, isNull);
+    pump.dispose();
+  });
+
+  test(
+      'Android wire fixtures use upright non-square geometry after rotation and mirror',
+      () {
+    final entries = <Map<String, Object?>>[];
+    for (final rotation in [0, 90, 180, 270]) {
+      for (final mirror in [false, true]) {
+        final f = VisionFrame(
+            width: 4,
+            height: 2,
+            format: 'bgra8888',
+            planes: [
+              FramePlane(
+                  Uint8List.fromList(
+                      List.generate(32, (i) => i % 4 == 3 ? 255 : 100)),
+                  16,
+                  4)
+            ],
+            rotation: rotation,
+            mirror: mirror,
+            receivedAt: DateTime.now().toUtc(),
+            receivedMicros: 0);
+        final prepared = prepareFrame(f);
+        expect(prepared.image.width, rotation == 90 || rotation == 270 ? 2 : 4);
+        expect(
+            prepared.image.height, rotation == 90 || rotation == 270 ? 4 : 2);
+        // Explicit SYNTHETIC tensor/box fixture; no camera or model inference.
+        final tensor = Float32List.fromList([.5, .5, .25, .25, .9, 0]);
+        final boxes = decodeBoxes(tensor, prepared, candidates: 1);
+        final result = LocalObservation(f.metadata(), Uint8List(0), boxes,
+                prepared.image.width, prepared.image.height, 1, 1)
+            .toDetectionResult();
+        expect(result['source'], 'android_camera');
+        for (final b in boxes) {
+          final vertical = rotation == 90 || rotation == 270;
+          expect(b.x, closeTo(vertical ? .25 : .375, 1e-6));
+          expect(b.y, closeTo(vertical ? .375 : .25, 1e-6));
+          expect(b.w, closeTo(vertical ? .5 : .25, 1e-6));
+          expect(b.h, closeTo(vertical ? .25 : .5, 1e-6));
+          expect(b.x + b.w, lessThanOrEqualTo(1));
+          expect(b.y + b.h, lessThanOrEqualTo(1));
+        }
+        entries.add({
+          'rotation': rotation,
+          'mirror': mirror,
+          'rawSize': {'width': 4, 'height': 2},
+          'detectionResult': result
+        });
+      }
+    }
+    final path = Platform.environment['MOBI_ANDROID_SOURCE_FIXTURES'];
+    if (path != null) {
+      File(path).writeAsStringSync(jsonEncode({
+        'provenance':
+            'SYNTHETIC_PIXELS_AND_TENSOR_ACTUAL_DART_CODEC_NO_DEVICE_NO_INFERENCE',
+        'frames': entries
+      }));
+    }
+  });
   test('local camera entry rejects a build without explicit isolation', () {
     expect(camera_app.main, throwsStateError);
   });

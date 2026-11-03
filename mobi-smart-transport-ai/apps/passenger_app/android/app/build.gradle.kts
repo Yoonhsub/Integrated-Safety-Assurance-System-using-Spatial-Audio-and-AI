@@ -21,11 +21,13 @@ val targetFile = File(explicitTarget).let {
 val mainTarget = sourceRoot.resolve("lib/main.dart").canonicalFile
 val cameraTarget = sourceRoot.resolve("lib/local_vision_main.dart").canonicalFile
 val backendTarget = sourceRoot.resolve("lib/local_android_backend_main.dart").canonicalFile
-if (!targetFile.isFile || targetFile !in setOf(mainTarget, cameraTarget, backendTarget)) {
+val audioTarget = sourceRoot.resolve("lib/local_android_audio_main.dart").canonicalFile
+val cameraBackendTarget = sourceRoot.resolve("lib/local_android_camera_backend_main.dart").canonicalFile
+if (!targetFile.isFile || targetFile !in setOf(mainTarget, cameraTarget, backendTarget, audioTarget, cameraBackendTarget)) {
     isolationFailure("Unknown or outside-project Flutter target")
 }
 val defines = mutableMapOf<String, String>()
-val isolationKeys = setOf("MOBI_OFFLINE_CAMERA", "MOBI_ANDROID_LOCAL_BACKEND")
+val isolationKeys = setOf("MOBI_OFFLINE_CAMERA", "MOBI_ANDROID_LOCAL_BACKEND", "MOBI_ANDROID_LOCAL_AUDIO", "MOBI_ANDROID_CAMERA_BACKEND")
 val encodedDefines = (project.findProperty("dart-defines") as? String).orEmpty()
 if (encodedDefines.isNotEmpty()) {
     encodedDefines.split(',').forEach { encoded ->
@@ -45,6 +47,8 @@ if (encodedDefines.isNotEmpty()) {
 }
 val offlineCamera = targetFile == cameraTarget
 val localBackend = targetFile == backendTarget
+val localAudio = targetFile == audioTarget
+val localCameraBackend = targetFile == cameraBackendTarget
 val presentIsolationKeys = defines.keys.intersect(isolationKeys)
 when {
     offlineCamera && (presentIsolationKeys != setOf("MOBI_OFFLINE_CAMERA") ||
@@ -53,10 +57,16 @@ when {
     localBackend && (presentIsolationKeys != setOf("MOBI_ANDROID_LOCAL_BACKEND") ||
         defines["MOBI_ANDROID_LOCAL_BACKEND"] != "true") ->
         isolationFailure("Backend entry requires exactly its true isolation define")
+    localAudio && (presentIsolationKeys != setOf("MOBI_ANDROID_LOCAL_AUDIO") ||
+        defines["MOBI_ANDROID_LOCAL_AUDIO"] != "true") ->
+        isolationFailure("Audio entry requires exactly its true isolation define")
+    localCameraBackend && (presentIsolationKeys != setOf("MOBI_ANDROID_CAMERA_BACKEND") ||
+        defines["MOBI_ANDROID_CAMERA_BACKEND"] != "true") ->
+        isolationFailure("Camera Backend entry requires exactly its true isolation define")
     targetFile == mainTarget && presentIsolationKeys.isNotEmpty() ->
         isolationFailure("Normal Passenger entry cannot use test isolation defines")
 }
-val testApplication = offlineCamera || localBackend
+val testApplication = offlineCamera || localBackend || localAudio || localCameraBackend
 if (testApplication && gradle.startParameter.taskNames.any {
         it.contains("profile", ignoreCase = true) || it.contains("release", ignoreCase = true)
     }) {
@@ -88,6 +98,8 @@ android {
         applicationId = "com.example.mobi_passenger_app"
         if (offlineCamera) applicationIdSuffix = ".offlinevision"
         if (localBackend) applicationIdSuffix = ".localbackend"
+        if (localAudio) applicationIdSuffix = ".localaudio"
+        if (localCameraBackend) applicationIdSuffix = ".localvision"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
@@ -114,7 +126,7 @@ android {
         sourceSets.getByName("debug").manifest.srcFile(offlineManifest)
     }
 
-    if (localBackend) {
+    if (localBackend || localCameraBackend) {
         val generated = layout.buildDirectory.dir("generated/local-backend").get().asFile
         val manifest = generated.resolve("AndroidManifest.xml")
         generated.mkdirs()
@@ -136,6 +148,30 @@ android {
         """.trimIndent())
         sourceSets.getByName("debug").manifest.srcFile(manifest)
         sourceSets.getByName("debug").res.srcDir(generated.resolve("res"))
+    }
+
+    if (localAudio) {
+        val manifest = layout.buildDirectory.file("generated/local-audio/AndroidManifest.xml").get().asFile
+        manifest.parentFile.mkdirs()
+        manifest.writeText("""
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+                <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+                <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
+                <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
+                <application>
+                    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" tools:node="remove" />
+                    <activity android:name="com.example.mobi_passenger_app.MainActivity" tools:node="remove" />
+                    <activity android:name="com.example.mobi_passenger_app.LocalAudioActivity"
+                        android:exported="true" android:launchMode="singleTop" android:theme="@style/LaunchTheme"
+                        android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize"
+                        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode">
+                        <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                        <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                    </activity>
+                </application>
+            </manifest>
+        """.trimIndent())
+        sourceSets.getByName("debug").manifest.srcFile(manifest)
     }
 
     buildTypes {

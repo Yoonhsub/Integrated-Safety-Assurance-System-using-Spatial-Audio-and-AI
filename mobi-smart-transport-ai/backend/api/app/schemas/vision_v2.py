@@ -33,7 +33,7 @@ class StrictModel(BaseModel):
 
 class CameraRegistration(StrictModel):
     producerId: str
-    sourceType: Literal["live", "replay"]
+    sourceType: Literal["live", "replay", "android_camera"]
 
     @field_validator("producerId")
     @classmethod
@@ -64,7 +64,7 @@ class VisionEnvelope(StrictModel):
     bindingId: UUID
     cameraEpoch: UUID
     visionEventId: UUID
-    sourceType: Literal["live", "replay"]
+    sourceType: Literal["live", "replay", "android_camera"]
     capturedAt: datetime
     captureClock: Literal["unknown", "host_read", "sensor"] = "unknown"
     frameIndex: int = Field(ge=0, strict=True)
@@ -104,9 +104,19 @@ class VisionEnvelope(StrictModel):
         timestamp = self.detectionResult.get("capturedAt")
         if timestamp is not None and datetime.fromisoformat(timestamp.replace("Z", "+00:00")) != self.capturedAt:
             raise ValueError("Conflicting capture timestamps")
-        expected_source = "webcam" if self.sourceType == "live" else "video_file"
+        expected_source = {"live": "webcam", "replay": "video_file",
+                           "android_camera": "android_camera"}[self.sourceType]
         if self.detectionResult["source"] != expected_source:
             raise ValueError("Input source disagrees with capture mode")
+        if self.sourceType == "android_camera":
+            result = self.detectionResult
+            if not {"frameId", "capturedAt", "imageSize"}.issubset(result):
+                raise ValueError("Android frames require identity, callback time and upright image size")
+            size = result["imageSize"]
+            if size["width"] * size["height"] > 4096 * 4096:
+                raise ValueError("Android upright image exceeds the local preprocessing limit")
+            if self.captureClock != "host_read":
+                raise ValueError("Android camera time is a host callback, not sensor attestation")
         return self
 
 
@@ -126,7 +136,7 @@ class VisionCameraState(StrictModel):
     bindingStatus: Literal["inactive", "active", "invalidated", "expired"]
     connectionStatus: Literal["closed", "waiting", "connected", "lost", "replay"]
     observationStatus: Literal["unknown", "observed", "no_detection", "unavailable", "error", "expired", "ineligible"]
-    sourceType: Literal["live", "replay"]
+    sourceType: Literal["live", "replay", "android_camera"]
     cameraEpoch: UUID | None
     lastFrameIndex: int | None
     lastCapturedAt: datetime | None
@@ -137,17 +147,23 @@ class VisionCameraState(StrictModel):
 
 
 class VisionObservationPreview(StrictModel):
+    bindingId: UUID
+    bindingRevision: int = Field(ge=1, le=(1 << 53)-1, strict=True)
+    generation: str = Field(min_length=1)
     sessionId: str
     producerId: str
     cameraId: str
     cameraEpoch: UUID
     visionEventId: UUID
     frameIndex: int = Field(ge=0)
-    sourceType: Literal["live", "replay"]
+    sourceType: Literal["live", "replay", "android_camera"]
     capturedAt: datetime
     receivedAt: datetime
     captureClock: Literal["unknown", "host_read", "sensor"]
     observedClasses: list[Literal["bus", "bus_door"]]
+    frameId: UUID | None = None
+    imageSize: dict[str, int] | None = None
+    detections: list[dict] = Field(default_factory=list)
     message: str
     inferenceStatus: Literal["ok", "unavailable", "error"]
     state: Literal["available", "expired", "lost"]
@@ -156,6 +172,57 @@ class VisionObservationPreview(StrictModel):
     guidanceEligible: Literal[False] = False
 
 
+class VisionActiveBinding(StrictModel):
+    bindingId: UUID
+    bindingRevision: int = Field(ge=1, le=(1 << 53)-1, strict=True)
+    cameraId: str
+    producerId: str
+    sessionId: str
+    cameraEpoch: UUID
+    sourceType: Literal["live", "replay", "android_camera"]
+    expiresAt: datetime
+
+
 class VisionSessionObservations(StrictModel):
+    ownerUid: str
+    generation: str = Field(min_length=1)
+    leaseVersion: int = Field(ge=1, strict=True)
+    authority: UUID
+    viewRevision: int = Field(ge=0, le=(1 << 53)-1, strict=True)
+    bindings: list[VisionActiveBinding]
     sessionId: str
     observations: list[VisionObservationPreview]
+
+
+class VisionLeaseStart(StrictModel):
+    """No client-selected UID, ID, lifetime or generation."""
+
+
+class VisionLeaseResponse(StrictModel):
+    version: int = Field(ge=1)
+    leaseId: str
+    ownerUid: str
+    createdAt: datetime
+    expiresAt: datetime
+    status: Literal["active", "revoked", "expired"]
+
+
+class VisionOperationStart(StrictModel):
+    operationId: UUID
+    # Untrusted optional CAS precondition, never caller-selected server version.
+    expectedActiveVersion: int | None = Field(default=None, ge=0, strict=True)
+
+
+class VisionStartTicket(StrictModel):
+    operationId: UUID
+    startTicket: str
+    version: int = Field(ge=1)
+    activeVersion: int = Field(ge=0)
+    registeredAt: datetime
+    expiresAt: datetime
+
+
+class VisionLeaseIssue(StrictModel):
+    operationId: UUID
+    startTicket: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
+    version: int = Field(ge=1, strict=True)

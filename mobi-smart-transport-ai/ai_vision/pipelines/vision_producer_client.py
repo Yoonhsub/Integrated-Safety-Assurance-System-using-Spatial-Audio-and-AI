@@ -143,7 +143,8 @@ class VisionEvent:
         data = self.payload()
         _validator("vision_v2.request.schema.json").validate(data)
         detection = data["detectionResult"]
-        expected = "webcam" if data["sourceType"] == "live" else "video_file"
+        expected = {"live": "webcam", "replay": "video_file",
+                    "android_camera": "android_camera"}[data["sourceType"]]
         if detection["source"] != expected:
             raise ValueError("Source mode mismatch")
         captured = _timestamp(data["capturedAt"])

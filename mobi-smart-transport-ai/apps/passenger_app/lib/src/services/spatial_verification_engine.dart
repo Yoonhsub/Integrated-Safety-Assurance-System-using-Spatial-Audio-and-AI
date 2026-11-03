@@ -29,7 +29,9 @@ class _GuidanceRequest {
 /// One coordinator and one active source for both test buffers and real TTS.
 /// Reserved commands exist only in the explicit local debug entry.
 class SpatialVerificationEngine implements SpeechEngine {
-  SpatialVerificationEngine(this.output, this.tts, {this.onGuidanceTrace});
+  SpatialVerificationEngine(this.output, this.tts,
+      {this.onGuidanceTrace, this.allowDirectTestCommands = true});
+  final bool allowDirectTestCommands;
   final void Function(String guidanceId, String phase)? onGuidanceTrace;
   final Map<String, _GuidanceRequest> _guidanceRequests = {};
   final Set<String> _seen = {};
@@ -121,6 +123,7 @@ class SpatialVerificationEngine implements SpeechEngine {
       if (request == null) throw SpeechCancelled();
       await _speakGuidance(request, revision);
     } else if (text.startsWith('@spatial:')) {
+      if (!allowDirectTestCommands) throw SpeechCancelled();
       final fields = text.split(':');
       if (fields.length != 3) throw StateError('Invalid test command');
       await output.prepareFromGesture();

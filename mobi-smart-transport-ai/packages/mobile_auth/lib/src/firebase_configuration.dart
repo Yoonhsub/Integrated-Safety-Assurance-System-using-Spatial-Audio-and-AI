@@ -36,11 +36,20 @@ class FirebaseWebConfiguration {
       projectId.isNotEmpty &&
       authDomain.isNotEmpty;
 
+  /// Android needs its own registered Firebase app ID; authDomain is web-only.
+  bool get isCompleteForAndroid =>
+      apiKey.isNotEmpty &&
+      projectId.isNotEmpty &&
+      !projectId.startsWith('demo-') &&
+      RegExp(r'^1:[0-9]+:android:[a-fA-F0-9]+$').hasMatch(appId) &&
+      RegExp(r'^[0-9]+$').hasMatch(messagingSenderId) &&
+      appId.split(':')[1] == messagingSenderId;
+
   FirebaseOptions toFirebaseOptions() => FirebaseOptions(
         apiKey: apiKey,
         appId: appId,
         messagingSenderId: messagingSenderId,
         projectId: projectId,
-        authDomain: authDomain,
+        authDomain: authDomain.isEmpty ? null : authDomain,
       );
 }

@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+from uuid import UUID
 
 from fastapi import HTTPException
 
@@ -74,7 +75,11 @@ class VisionEventLedger:
                     raise auth_error(409, "VISION_EVENT_ID_CONFLICT")
                 scope = ("producerUid", "visionEventId", "bindingId", "cameraId", "cameraEpoch",
                          "sessionId", "ownerUid", "sessionGeneration", "sourceType")
-                if (any(existing.get(field) != candidate[field] for field in scope)
+                if "bindingRevision" in candidate or "bindingRevision" in existing:
+                    scope += ("bindingRevision",)
+                if "passengerLeaseId" in candidate or "passengerLeaseId" in existing:
+                    scope += ("passengerLeaseId",)
+                if (any(existing.get(field) != candidate.get(field) for field in scope)
                         or not isinstance(existing.get("attemptId"), str)):
                     raise auth_error(503, "Vision receipt scope is invalid")
                 try:
@@ -89,6 +94,16 @@ class VisionEventLedger:
             previous = streams.get(str(request.bindingId))
             # Pure validation against every CAS snapshot, no model/HTTP side effects.
             validate_new(previous)
+            # Same atomic receipt/watermark transaction, not just a last-frame
+            # comparison: Android frame UUIDs cannot recur within this binding.
+            frame_ids = None
+            if request.sourceType == "android_camera":
+                frame_ids = (previous or {}).get("frameIds", {})
+                if not isinstance(frame_ids, dict):
+                    raise auth_error(503, "Android frame identity fence is invalid")
+                frame_key = UUID(request.detectionResult["frameId"]).hex
+                if frame_key in frame_ids:
+                    raise auth_error(409, "Frame identity was already accepted")
             updated = deepcopy(raw)
             updated.setdefault("events", {})[key] = {**candidate, "fingerprint": digest}
             updated.setdefault("streams", {})[str(request.bindingId)] = {
@@ -99,6 +114,9 @@ class VisionEventLedger:
                 "visionEventId": str(request.visionEventId),
                 "receivedAt": candidate["firstProcessedAt"],
             }
+            if frame_ids is not None:
+                updated["streams"][str(request.bindingId)]["frameIds"] = {
+                    **frame_ids, frame_key: str(request.visionEventId)}
             if observation is not None:
                 # Separate projection, atomically paired with the receipt/watermark.
                 # Identical retries return above and cannot refresh this snapshot.

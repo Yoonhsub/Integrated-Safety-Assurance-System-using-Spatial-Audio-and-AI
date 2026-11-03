@@ -41,6 +41,10 @@ class FirebaseAuthSession implements AuthSession {
   /// A stale guard is cancellation, never a reason to sign out a newer user.
   bool Function() captureRequestGuard() => _epochs.capture();
 
+  /// Opaque local identity shared by wrappers of this Auth delegate. Token
+  /// refresh does not rotate it; login boundaries do. Never sent to a server.
+  Object get loginScope => _epochs.scope;
+
   /// Registration of this exact Auth delegate, including named Firebase apps.
   /// No credentials or token values are exposed.
   FirebaseWebConfiguration get webConfiguration {
@@ -58,7 +62,9 @@ class FirebaseAuthSession implements AuthSession {
     String? requiredRole,
   }) async {
     final config = configuration ?? FirebaseWebConfiguration.fromEnvironment();
-    if (!config.isComplete) return false;
+    final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    if (android ? !config.isCompleteForAndroid : !config.isComplete)
+      return false;
     const authOnly = AuthOnlyConfiguration.fromEnvironment();
     if (authOnly.enabled &&
         !authOnly.matchesWebConfiguration(config, requiredRole: requiredRole))
@@ -167,6 +173,16 @@ class _FirebaseAuthEpoch {
   int _generation = 0, _pending = 0;
   bool _blocked = false, _transitioning = false, _seenInitial = false;
   bool closed = false;
+  int _scopeGeneration = -1;
+  Object _scope = Object();
+  Object get scope {
+    if (_scopeGeneration != _generation) {
+      _scopeGeneration = _generation;
+      _scope = Object();
+    }
+    return _scope;
+  }
+
   String? _lastUid;
   User? get visibleUser => closed || _blocked || _transitioning || _pending != 0
       ? null

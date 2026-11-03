@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../local_vision/local_vision_page.dart';
 import '../features/voice_live/live_caption_controller.dart';
 import '../features/voice_live/live_voice_controller.dart';
 import '../features/voice_live/live_voice_page.dart';
@@ -15,6 +16,10 @@ import '../mock_scenario/mock_script_lines.dart';
 import '../models/v3_guidance_models.dart';
 import '../services/api_base_url.dart';
 import '../services/local_guidance_runtime.dart';
+import '../services/local_demo_beacon_mapping.dart';
+import '../services/native_directional_cue_output.dart';
+import '../services/spatial_verification_engine.dart';
+import '../services/session_guidance_audio.dart';
 import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/converse_live.dart';
@@ -29,6 +34,7 @@ import '../widgets/chat_overlay.dart';
 import '../widgets/debug_panel.dart';
 import '../widgets/vision_observation_panel.dart';
 import '../widgets/session_safety_panel.dart';
+import '../widgets/guidance_beacon_panel.dart';
 import '../widgets/mock_control_panel.dart';
 
 import '../mock_scenario/mock_scenario_control_panel.dart';
@@ -55,7 +61,8 @@ class V3GuidancePage extends StatefulWidget {
   State<V3GuidancePage> createState() => _V3GuidancePageState();
 }
 
-class _V3GuidancePageState extends State<V3GuidancePage> {
+class _V3GuidancePageState extends State<V3GuidancePage>
+    with WidgetsBindingObserver {
   static const String _routePlanningMessage =
       '요청하신 내용을 응답하기 위해 경로를 계산 중입니다. 잠시만 기다려 주세요.';
   static const String _navStartPrompt =
@@ -65,16 +72,24 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       '알겠습니다. 안내는 시작하지 않겠습니다. 다른 목적지를 말씀해 주세요.';
 
   static final String _apiBaseUrl = resolveApiBaseUrl();
+  static final _demoBeaconMapping = LocalDemoBeaconMapping.fromEnvironment();
 
   AuthSession get _auth =>
       widget.localRuntime?.auth ?? FirebaseAuthSession.instance;
   bool Function() _captureAuthGuard() =>
       widget.localRuntime?.captureGuard() ??
       FirebaseAuthSession.instance.captureRequestGuard();
+  bool get _androidAudio =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  SpatialVerificationEngine? _nativeAudio;
+  SpeechPriorityCoordinator? _nativePriority;
+  PriorityLease? _guidanceHold;
+  bool _audioForeground = true;
   SpeechPriorityCoordinator get _priority =>
-      widget.localRuntime?.priority ?? sharedSpeechPriority;
+      widget.localRuntime?.priority ?? _nativePriority ?? sharedSpeechPriority;
 
   String _sessionId = '';
+  bool _cameraOpen = false;
   bool Function()? _safetySessionGuard;
   String? _safetySessionUid;
   final _safetyLifecycle = SessionSafetyLifecycle();
@@ -90,6 +105,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     return _speechScope.capture(() =>
         mounted &&
         _speechAuthValid &&
+        _audioForeground &&
+        !_cameraOpen &&
+        _guidanceHold == null &&
         authGuard() &&
         _sessionId == session &&
         _auth.currentAccount?.uid == uid);
@@ -168,6 +186,20 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (_androidAudio && widget.localRuntime == null) {
+      final output = NativeDirectionalCueOutput();
+      _nativeAudio = SpatialVerificationEngine(
+          output,
+          FlutterSpeechEngine.platform(
+              requireOfflineKoreanVoice: true,
+              requestNativeFocus: true,
+              diagnostic: output.recordTtsEvent),
+          allowDirectTestCommands: false);
+      // One existing coordinator arbitrates every output owned by this page.
+      // No wire event can supply a test direction or reserved engine command.
+      _nativePriority = SpeechPriorityCoordinator(_nativeAudio!);
+    }
     _client =
         widget.localRuntime?.client ?? V3AgentApiClient(baseUrl: _apiBaseUrl);
     _cueService = AudioHapticCueService(
@@ -189,6 +221,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _speechAuthSubscription = _auth.authStateChanges.listen((account) {
       if (!authGuard()) {
         _speechAuthValid = false;
+        _client.invalidateVisionSession(_sessionId);
         unawaited(_stopAllCueAudio().catchError((Object _) {}));
       }
     }, onError: (Object _) {
@@ -215,8 +248,21 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_androidAudio) return;
+    _audioForeground = state == AppLifecycleState.resumed;
+    if (!_audioForeground) {
+      unawaited(observeAudioCleanup(_stopAllCueAudio,
+          channel: 'Guidance background', report: debugPrint));
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _audioForeground = false;
     _safetyLifecycle.dispose();
+    _client.invalidateVisionSession(_sessionId);
     _speechScope.dispose();
     _routeRequestScope.dispose();
     _speechAuthSubscription?.cancel();
@@ -226,11 +272,98 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
     _utteranceController.dispose();
     _bodyScrollController.dispose();
     _mockScenarioController.dispose();
-    unawaited(_cueService.dispose().catchError((Object _) {}));
+    if (_nativeAudio == null) {
+      unawaited(_cueService.dispose().catchError((Object _) {}));
+    } else {
+      unawaited(observeAudioCleanup(() async {
+        try {
+          await _cueService.dispose();
+        } finally {
+          try {
+            await _nativeAudio!.dispose();
+          } finally {
+            _guidanceHold?.release();
+            _nativePriority!.dispose();
+          }
+        }
+      }, channel: 'Guidance audio', report: debugPrint));
+    }
     unawaited(observeAudioCleanup(_spatialCueService.dispose,
         channel: 'Clip', report: debugPrint));
     unawaited(_mockScriptAudioService.dispose().catchError((Object _) {}));
     super.dispose();
+  }
+
+  Future<void> _openPassengerCamera() async {
+    if (_cameraOpen || _sessionId.isEmpty || _isBusy) return;
+    final sessionId = _sessionId;
+    final uid = _auth.currentAccount?.uid;
+    final guard = _captureAuthGuard();
+    final generation = _visionSpeechGeneration;
+    bool current() =>
+        mounted &&
+        guard() &&
+        _speechAuthValid &&
+        _sessionId == sessionId &&
+        generation == _visionSpeechGeneration;
+    Map<String, dynamic>? binding;
+    var frameIndex = 0;
+    setState(() => _cameraOpen = true);
+    try {
+      await _stopAllCueAudio();
+      if (!mounted || !current()) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => LocalVisionPage(
+                ownerUid: uid,
+                remoteApi: _client,
+                remoteSessionId: sessionId,
+                bundledModel: true,
+                previewPriority: _priority.engine is SpatialVerificationEngine
+                    ? _priority
+                    : null,
+                previewEngine: _priority.engine is SpatialVerificationEngine
+                    ? _priority.engine as SpatialVerificationEngine
+                    : null,
+                previewScope: '$sessionId:$generation:camera',
+                sessionCurrent: current,
+                authChanges: _auth.authStateChanges.map((a) => a?.uid),
+                beforeStart: () async {
+                  if (!current()) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  final result = await _client.startPassengerCamera(sessionId);
+                  if (!current()) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  binding = result;
+                  frameIndex = result['nextFrameIndex'] as int;
+                },
+                onResult: (observation) async {
+                  final active = binding;
+                  if (!current() || active == null) {
+                    throw const VisionLeaseException(terminal: true);
+                  }
+                  try {
+                    await _client.sendPassengerCamera(
+                        active, observation.toDetectionResult(), frameIndex++);
+                  } on VisionLeaseException catch (error) {
+                    // A polling request already owns the shared transport slot: drop
+                    // this frame instead of accumulating/retrying stale camera work.
+                    if (!error.blocked || error.terminal) rethrow;
+                  }
+                },
+                onStop: () async {
+                  final active = binding;
+                  binding = null;
+                  _client.invalidateVisionSession(sessionId);
+                  if (active != null && current()) {
+                    await _client.stopPassengerCamera(active);
+                  }
+                },
+              )));
+    } finally {
+      if (mounted) setState(() => _cameraOpen = false);
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -248,6 +381,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
         _healthStatus = health;
         _sessionState = session;
       });
+      if (_androidAudio) {
+        // Bootstrap happens once per successfully created session, never build().
+        unawaited(_speakAgentMessage('안내가 시작되었습니다. 목적지를 말씀하거나 입력해 주세요.')
+            .catchError((Object error) {
+          if (mounted) setState(() => _errorMessage = '한국어 음성을 준비하지 못했습니다.');
+          debugPrint('Guidance start speech failure: ${error.runtimeType}');
+        }));
+      }
     });
   }
 
@@ -357,7 +498,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
 
   /// 전체 화면 Live 음성 대화 페이지를 연다(실제 API 모드 전용).
   Future<void> _openLiveVoice() async {
-    unawaited(_cueService.prepareLiveGeneratedSpeech());
+    if (!_androidAudio) unawaited(_cueService.prepareLiveGeneratedSpeech());
     // 공간음향 AudioContext는 첫 사용자 제스처(웹 JS unlock)에서 생성·resume한다.
     // iOS는 제스처 이전에 만든 컨텍스트를 못 쓰게 하므로 사전 prepare()를 호출하지 않는다.
     _activatePendingNavAfterLiveExit = false;
@@ -839,7 +980,16 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   /// Live 음성 대화 전용 발화: Gemini Live 스트리밍만 사용하고 실패/중단(barge-in) 시
   /// WAV 폴백으로 다시 말하지 않는다(중복 음성·끼어들기 깨짐 방지).
   Future<void> _speakLiveOnly(String message, {VoidCallback? onStart}) async {
-    if (message.trim().isEmpty) return;
+    if (message.trim().isEmpty || message.startsWith('@')) return;
+    if (_androidAudio) {
+      final request = _speechRequest();
+      await request.run(() async {
+        request.check();
+        onStart?.call();
+        await _cueService.speakLocal(message);
+      });
+      return;
+    }
     final request = _speechRequest();
     final scriptLineId = _nextLiveScriptLineId;
     _nextLiveScriptLineId = null;
@@ -867,6 +1017,13 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Future<void> _speakAgentMessage(String message,
       {bool forceLocal = false, SpeechRequest? originatingRequest}) async {
     final request = originatingRequest ?? _speechRequest();
+    if (_androidAudio) {
+      // Native Korean TTS is the normal Android output, not a cloud fallback.
+      // Directionless information must never acquire invented directional cues.
+      if (message.trim().isEmpty || message.startsWith('@')) return;
+      await request.run(() => _cueService.speakLocal(message));
+      return;
+    }
     Future<void> fallback() async {
       request.check();
       if (forceLocal) {
@@ -1443,12 +1600,42 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
   Future<void> _stopAllCueAudio() async {
     _speechScope.invalidate();
     _routeRequestScope.invalidate();
+    _safetyLifecycle.silence();
     // Cleanup of one output must not prevent cancellation of the others.
-    await Future.wait([
-      _cueService.stopCue(),
-      _spatialCueService.stopCue(),
-      _mockScriptAudioService.stop(),
-    ]);
+    final lease = _priority.claimPriority();
+    try {
+      await Future.wait([
+        _cueService.stopCue(),
+        _spatialCueService.stopCue(),
+        _mockScriptAudioService.stop(),
+      ]);
+    } finally {
+      lease.release();
+    }
+  }
+
+  Future<void> _audioAction(Future<void> Function() action) async {
+    // STOP is available even while a Backend request is in progress.
+    try {
+      await action();
+    } catch (error) {
+      debugPrint('Guidance audio control failure: ${error.runtimeType}');
+      if (mounted) {
+        setState(() => _errorMessage = '음성 중단을 확인하지 못했습니다. 앱을 다시 열어 주세요.');
+      }
+    }
+  }
+
+  Future<void> _toggleGuidanceHold() async {
+    if (_guidanceHold != null) {
+      setState(() {
+        _guidanceHold!.release();
+        _guidanceHold = null;
+      });
+      return; // A release never replays the interrupted event.
+    }
+    setState(() => _guidanceHold = _priority.claimPriority());
+    await _stopAllCueAudio();
   }
 
   Future<void> _handleMockScenarioCueFrame(MockScenarioState state) async {
@@ -1820,6 +2007,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
       await _safetyLifecycle.reset(
           isCurrent: current,
           request: () async {
+            _client.invalidateVisionSession(_sessionId);
             setState(() => _visionSpeechGeneration++);
             await _stopAllCueAudio();
             if (!current()) throw const StaleAuthRequestException();
@@ -1880,8 +2068,12 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
             icon: const Icon(Icons.home_outlined),
           ),
           IconButton(
-            tooltip: '상태 새로고침',
-            onPressed: _isBusy ? null : () => _runGuarded(_refreshState),
+            tooltip: _sessionId.isEmpty ? '서버 다시 연결' : '상태 새로고침',
+            onPressed: _isBusy
+                ? null
+                : _sessionId.isEmpty
+                    ? _bootstrap
+                    : () => _runGuarded(_refreshState),
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
@@ -1892,6 +2084,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
           IconButton(
             tooltip: '로그아웃',
             onPressed: () async {
+              final logoutGuard = _captureAuthGuard();
+              _client.invalidateVisionSession(_sessionId);
               _safetyLifecycle.dispose();
               _speechAuthValid = false;
               try {
@@ -1899,7 +2093,14 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               } catch (_) {
                 // Logout still invalidates all pending voice requests.
               } finally {
-                await _auth.signOut();
+                try {
+                  if (logoutGuard()) await _client.revokeVisionLease();
+                } on VisionLeaseException {
+                  // Local admission is closed even when remote cleanup failed;
+                  // the server lease expiry remains authoritative.
+                } finally {
+                  if (logoutGuard()) await _auth.signOut();
+                }
               }
             },
             icon: const Icon(Icons.logout),
@@ -1924,6 +2125,56 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!kIsWeb &&
+                      defaultTargetPlatform == TargetPlatform.android)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: FilledButton.icon(
+                        onPressed: _sessionId.isEmpty || _isBusy || _cameraOpen
+                            ? null
+                            : _openPassengerCamera,
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('버스 카메라 시작'),
+                      ),
+                    ),
+                  if (_androidAudio)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Wrap(spacing: 8, runSpacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: () => _audioAction(_stopAllCueAudio),
+                            icon: const Icon(Icons.stop_circle_outlined),
+                            label: const Text('음성 중지 (STOP)')),
+                        OutlinedButton.icon(
+                            onPressed: () => _audioAction(_toggleGuidanceHold),
+                            icon: Icon(_guidanceHold == null
+                                ? Icons.pause_circle_outline
+                                : Icons.play_circle_outline),
+                            label: Text(_guidanceHold == null
+                                ? '안내 일시 정지 (Live Hold)'
+                                : '새 안내 허용')),
+                      ]),
+                    ),
+                  if (_androidAudio && _sessionId.isNotEmpty && !_cameraOpen)
+                    GuidanceBeaconPanel(
+                      sessionId: _sessionId,
+                      scopeVersion: _visionSpeechGeneration,
+                      ownerUid: _safetySessionUid ?? '',
+                      targetBusId: state?.targetBusId,
+                      routeNo: state?.selectedRouteNo,
+                      priority: _priority,
+                      captureGuard: () => _safetySessionGuard ?? () => false,
+                      captureAudioGuard: () {
+                        final request = _speechRequest();
+                        return () => request.valid;
+                      },
+                      authChanges: _auth.authStateChanges,
+                      scanner: widget.localRuntime?.beaconScanner,
+                      mockInput: widget.localRuntime != null,
+                      demoMapping: _demoBeaconMapping,
+                      identities:
+                          widget.localRuntime?.beaconIdentities ?? const [],
+                    ),
                   if (widget.localRuntime != null && _sessionId.isNotEmpty)
                     widget.localRuntime!.controls(_sessionId,
                         () => _cueService.speakLocal('검증용 Live Hold 안내입니다.'),
@@ -1931,7 +2182,9 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                       _safetyLifecycle.silence();
                       await _stopAllCueAudio();
                     }),
-                  if (_sessionId.isNotEmpty)
+                  if (_sessionId.isNotEmpty &&
+                      !_cameraOpen &&
+                      _client.visionSessionReady(_sessionId))
                     ScenarioObservationBuilder(
                       controller: _mockScenarioController,
                       builder: (context, isPlaying) => VisionObservationPanel(
@@ -1940,6 +2193,7 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                           speechPriority: _priority,
                           priorityBlocked: isPlaying,
                           ownerUid: _auth.currentAccount?.uid,
+                          captureAuthGuard: _captureAuthGuard,
                           authChanges: _auth.authStateChanges
                               .map((account) => account?.uid),
                           fetch: _client.fetchVisionObservations),
@@ -1948,7 +2202,8 @@ class _V3GuidancePageState extends State<V3GuidancePage> {
                     SessionSafetyHost(
                       lifecycle: _safetyLifecycle,
                       priority: _priority,
-                      audio: widget.localRuntime?.audio,
+                      audio: widget.localRuntime?.audio ??
+                          SessionGuidanceAudio(priority: _priority),
                       allowSynthetic: widget.localRuntime != null,
                       openTransport: _client.openSafetyPolling,
                       sessionId: _sessionId,

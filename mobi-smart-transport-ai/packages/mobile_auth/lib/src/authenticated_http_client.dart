@@ -56,8 +56,21 @@ class AuthenticatedApiClient {
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
+    Future<void>? abortTrigger,
   }) =>
-      _send('POST', uri, headers: headers, body: body);
+      _send('POST', uri,
+          headers: headers, body: body, abortTrigger: abortTrigger);
+
+  Future<http.Response> delete(Uri uri,
+          {Map<String, String>? headers, Future<void>? abortTrigger}) =>
+      _send('DELETE', uri, headers: headers, abortTrigger: abortTrigger);
+
+  Future<http.Response> put(Uri uri,
+          {Map<String, String>? headers,
+          Object? body,
+          Future<void>? abortTrigger}) =>
+      _send('PUT', uri,
+          headers: headers, body: body, abortTrigger: abortTrigger);
 
   Future<http.Response> patch(
     Uri uri, {

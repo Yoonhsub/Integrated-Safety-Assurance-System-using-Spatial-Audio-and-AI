@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from jsonschema import ValidationError
 
 from ai_vision.pipelines.vision_producer_client import (
     EmulatorProducerAuth, ProducerError, RetryPolicy, VisionEvent, VisionProducerClient,
@@ -267,3 +268,16 @@ def test_409_reason_whitelist(detail, code):
     c, b, clock, _ = client(lambda r: httpx.Response(409, json={"detail": detail}))
     with pytest.raises(ProducerError) as error: c.send(event(b, clock))
     assert error.value.code == code and "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("source,mode", [("webcam","live"),("video_file","replay"),("android_camera","android_camera")])
+def test_explicit_android_source_client_contract_matches_server(source,mode):
+    from app.schemas.vision_v2 import VisionEnvelope
+    b=binding();b["sourceType"]=mode
+    stamp=Clock().utc().isoformat()
+    result=dict(schemaVersion="1.0.0",source=source,status="ok",frameId=str(uuid4()),capturedAt=stamp,
+                imageSize=dict(width=480,height=640),modelInfo=dict(provider="mock",name="fixture"),detections=[])
+    e=VisionEvent.create(b,result,frame_index=0,captured_at=stamp,capture_clock="host_read")
+    VisionEnvelope.model_validate(e.payload())
+    result["source"]="webcam" if source!="webcam" else "android_camera"
+    with pytest.raises((ValueError, ValidationError)):VisionEvent.create(b,result,frame_index=1,captured_at=stamp,capture_clock="host_read")

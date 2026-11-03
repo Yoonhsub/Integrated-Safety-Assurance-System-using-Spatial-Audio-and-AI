@@ -1,5 +1,6 @@
 """Fail-closed local bindings; no durable safety observations or Live delivery."""
 import math
+import hashlib
 import os
 from typing import Callable
 
@@ -24,6 +25,13 @@ def require_local_vision() -> None:
         raise auth_error(503, "Vision v2 requires the isolated local emulator environment") from None
 
 
+def require_passenger_preview() -> None:
+    # Deployment opt-in reuses verified Firebase authentication, never fake auth.
+    # Session/lease authority remains single-process, as before.
+    if os.getenv("MOBI_PASSENGER_CAMERA_PREVIEW") != "1":
+        require_local_vision()
+
+
 @dataclass(frozen=True)
 class Binding:
     binding_id: str
@@ -32,15 +40,17 @@ class Binding:
     session_id: str
     owner_uid: str
     session_generation: str
+    lease_id: str
     epoch: str
     source_type: str
     expires_at: datetime
     deadline: float
     started_mono: float
+    revision: int
 
     def public(self) -> dict:
         return {
-            "bindingId": self.binding_id, "cameraId": self.camera_id,
+            "bindingId": self.binding_id, "bindingRevision": self.revision, "cameraId": self.camera_id,
             "producerId": self.producer_id, "sessionId": self.session_id,
             "cameraEpoch": self.epoch, "sourceType": self.source_type,
             "expiresAt": self.expires_at.isoformat(),
@@ -106,6 +116,29 @@ class VisionBindingService:
         self._cameras: dict[str, CameraRegistration] = {}
         self._bindings: dict[str, Binding] = {}
         self._observations: dict[str, Observation] = {}
+        # Process authority + monotonically increasing view revisions. Never
+        # delete revision/identity tombstones on revoke, reset or re-registration.
+        self._authority = str(uuid4())
+        self._revision = 0
+        self._session_revisions: dict[str, int] = {}
+        self._identities: set[str] = set()
+
+    def _identity(self):
+        for _ in range(8):
+            value = str(uuid4())
+            if value not in self._identities:
+                self._identities.add(value)
+                return value
+        raise auth_error(503, "Binding identity allocation unavailable")
+
+    def _advance(self, *sessions):
+        if self._revision >= (1 << 53) - 1:
+            raise auth_error(503, "Binding revision authority exhausted")
+        self._revision += 1
+        for sid in set(sessions):
+            if sid is not None:
+                self._session_revisions[sid] = self._revision
+        return self._revision
 
     def _now(self):
         return self._utc_clock() if self._utc_clock else datetime.now(timezone.utc)
@@ -135,7 +168,10 @@ class VisionBindingService:
         if not valid_key(camera_id):
             raise auth_error(422, "Invalid camera identifier")
         with self._lock:
-            self._cameras[camera_id] = registration.model_copy(deep=True)
+            owned = registration.model_copy(deep=True)
+            previous = self._bindings.get(camera_id)
+            self._advance(previous.session_id if previous else None)
+            self._cameras[camera_id] = owned
             # Even re-registering the same camera invalidates its old epoch.
             self._bindings.pop(camera_id, None)
             self._observations.pop(camera_id, None)
@@ -144,16 +180,18 @@ class VisionBindingService:
     def bind(self, request: BindingCreate) -> dict:
         require_local_vision()
         require_role("admin")
-        with self._lock, self.sessions.vision_scope(request.sessionId) as session:
+        with self._lock, self.sessions.vision_scope(request.sessionId, require_lease=True) as session:
             camera = self._cameras.get(request.cameraId)
             if camera is None:
                 raise auth_error(403, "Camera is not registered")
             binding = Binding(
-                str(uuid4()), request.cameraId, camera.producerId, session.session_id,
-                session.owner_uid, session.vision_generation, str(uuid4()), camera.sourceType,
+                self._identity(), request.cameraId, camera.producerId, session.session_id,
+                session.owner_uid, session.vision_generation, session.vision_lease_id, self._identity(), camera.sourceType,
                 self._now() + timedelta(seconds=request.ttlSeconds),
-                self._mono() + request.ttlSeconds, self._mono(),
+                self._mono() + request.ttlSeconds, self._mono(), self._revision + 1,
             )
+            previous = self._bindings.get(request.cameraId)
+            self._advance(session.session_id, previous.session_id if previous else None)
             self._bindings[request.cameraId] = binding
             self._observations.pop(request.cameraId, None)
             return binding.public()
@@ -165,6 +203,7 @@ class VisionBindingService:
             binding = self._bindings.get(camera_id)
             if binding is None or binding.binding_id != binding_id:
                 raise auth_error(403, "Binding is not active")
+            self._advance(binding.session_id)
             del self._bindings[camera_id]
             self._observations.pop(camera_id, None)
 
@@ -174,6 +213,9 @@ class VisionBindingService:
         # Administrators configure bindings; they do not impersonate producers.
         if principal.role != "vision_producer" or principal.uid != request.producerId:
             raise auth_error(403, "Producer identity mismatch")
+        return self._accept(request, principal, passenger_camera=False)
+
+    def _accept(self, request: VisionEnvelope, principal, *, passenger_camera: bool):
         with self._lock:
             binding = self._bindings.get(request.cameraId)
             if binding is None or (
@@ -184,11 +226,13 @@ class VisionBindingService:
                 or binding.source_type != request.sourceType
             ):
                 raise auth_error(403, "Binding access denied")
-            with self.sessions.vision_scope(binding.session_id) as session:
+            scope = self.sessions.observation_scope if passenger_camera else self.sessions.vision_scope
+            with scope(binding.session_id, require_lease=True) as session:
                 now = self._now()
                 mono = self._mono()
                 if (session.owner_uid != binding.owner_uid
                         or session.vision_generation != binding.session_generation
+                        or session.vision_lease_id != binding.lease_id
                         or mono >= binding.deadline or now >= binding.expires_at):
                     raise auth_error(403, "Binding expired or invalidated")
                 policy = self._policy()
@@ -198,9 +242,10 @@ class VisionBindingService:
                 def validate_new(durable_previous):
                     # Scope lifecycle changes are blocked by these locks. Time
                     # expiry is checked on each SDK retry; no callback side effects.
+                    self.sessions.validate_vision_lease(session, retire_expired=False)
                     if self._mono() >= binding.deadline or self._now() >= binding.expires_at:
                         raise auth_error(403, "Binding expired or invalidated")
-                    if local_previous and request.sourceType == "live":
+                    if local_previous and request.sourceType in {"live", "android_camera"}:
                         elapsed = mono - local_previous.received_mono
                         wall_elapsed = (now - local_previous.received_at).total_seconds()
                         if local_previous.clock_error or elapsed < 0 or abs(wall_elapsed - elapsed) > policy.future_skew:
@@ -227,7 +272,7 @@ class VisionBindingService:
                             raise auth_error(409, "Capture timestamp moved backwards")
                         if frame_id is not None and frame_id == request.detectionResult.get("frameId"):
                             raise auth_error(409, "Frame identity was already accepted")
-                    if request.sourceType == "live":
+                    if request.sourceType in {"live", "android_camera"}:
                         if age < -policy.future_skew:
                             raise auth_error(409, "Capture timestamp is too far in the future")
                         if age >= policy.max_age:
@@ -250,6 +295,7 @@ class VisionBindingService:
                     "cameraId": request.cameraId, "bindingId": binding.binding_id,
                     "cameraEpoch": binding.epoch, "sessionId": binding.session_id,
                     "ownerUid": binding.owner_uid, "sessionGeneration": binding.session_generation,
+                    "passengerLeaseId": binding.lease_id, "bindingRevision": binding.revision,
                     "sourceType": request.sourceType, "frameIndex": request.frameIndex,
                     "firstProcessedAt": now.isoformat(), "bindingExpiresAt": binding.expires_at.isoformat(),
                     "retentionPolicy": "retain-no-automatic-deletion",
@@ -267,15 +313,21 @@ class VisionBindingService:
                     d["classId"] == c for d in result["detections"])]
                 phrases = {"bus": "버스가 감지되었습니다", "bus_door": "버스 문이 감지되었습니다"}
                 preview = dict(sessionId=binding.session_id, producerId=principal.uid,
+                    bindingId=binding.binding_id, bindingRevision=binding.revision,
+                    generation=binding.session_generation,
                     cameraId=request.cameraId, cameraEpoch=binding.epoch,
                     visionEventId=str(request.visionEventId), frameIndex=request.frameIndex,
                     sourceType=request.sourceType, capturedAt=request.capturedAt.isoformat(),
                     receivedAt=now.isoformat(), captureClock=request.captureClock,
                     observedClasses=classes,
+                    frameId=result.get("frameId"), imageSize=result.get("imageSize"),
+                    detections=[dict(d, bbox=dict(d["bbox"])) for d in result["detections"]
+                                if status == "ok" and d["classId"] in allowed],
                     message=". ".join(phrases[c] for c in classes) if classes else "현재 관찰된 대상 객체가 없습니다",
                     inferenceStatus=status)
                 record = self.ledger.commit(principal.uid, request, candidate, validate_new,
                                             observation=preview)
+                self.sessions.validate_vision_lease(session)
                 if record["attemptId"] == attempt_id:
                     # Cache is only a projection of a CONFIRMED atomic commit.
                     # An uncertain commit leaves this empty/old, never refreshed.
@@ -288,17 +340,74 @@ class VisionBindingService:
                 # even when newer frames have advanced the persisted watermark.
                 return VisionReceipt.model_validate(record["response"])
 
-    def preview(self, session_id: str) -> dict:
+    @staticmethod
+    def _phone_camera(uid: str, session_id: str) -> str:
+        return "phone-" + hashlib.sha256((uid + "\0" + session_id).encode()).hexdigest()[:40]
+
+    def start_passenger_camera(self, session_id: str) -> dict:
+        require_passenger_preview()
+        principal = require_role("passenger")
+        if principal.role != "passenger":
+            raise auth_error(403, "Passenger camera requires passenger identity")
+        with self._lock:
+            self.sessions.attach_vision_lease(session_id)
+            with self.sessions.observation_scope(session_id, require_lease=True) as session:
+                camera_id = self._phone_camera(principal.uid, session_id)
+                previous = self._bindings.get(camera_id)
+                now, mono = self._now(), self._mono()
+                if (previous and previous.lease_id == session.vision_lease_id
+                        and previous.session_generation == session.vision_generation
+                        and now < previous.expires_at and mono < previous.deadline):
+                    observation = self._observations.get(camera_id)
+                    return dict(previous.public(), nextFrameIndex=0 if observation is None else observation.frame_index + 1)
+                binding = Binding(self._identity(), camera_id, principal.uid, session_id,
+                    session.owner_uid, session.vision_generation, session.vision_lease_id,
+                    self._identity(), "android_camera", now + timedelta(seconds=900),
+                    mono + 900, mono, self._revision + 1)
+                self._advance(session_id)
+                self._cameras[camera_id] = CameraRegistration(producerId=principal.uid, sourceType="android_camera")
+                self._bindings[camera_id] = binding
+                self._observations.pop(camera_id, None)
+                return dict(binding.public(), nextFrameIndex=0)
+
+    def accept_passenger_camera(self, session_id: str, request: VisionEnvelope) -> VisionReceipt:
+        require_passenger_preview()
+        principal = require_role("passenger")
+        if (principal.role != "passenger" or request.sessionId != session_id
+                or request.cameraId != self._phone_camera(principal.uid, session_id)
+                or request.producerId != principal.uid or request.sourceType != "android_camera"):
+            raise auth_error(403, "Passenger camera access denied")
+        return self._accept(request, principal, passenger_camera=True)
+
+    def stop_passenger_camera(self, session_id: str, binding_id: str) -> None:
+        require_passenger_preview()
+        principal = require_role("passenger")
+        if principal.role != "passenger":
+            raise auth_error(403, "Passenger camera access denied")
+        with self._lock, self.sessions.observation_scope(session_id, require_lease=True):
+            camera_id = self._phone_camera(principal.uid, session_id)
+            binding = self._bindings.get(camera_id)
+            if binding is None or binding.binding_id != binding_id:
+                raise auth_error(403, "Passenger camera is no longer active")
+            self._advance(session_id)
+            self._bindings.pop(camera_id, None)
+            self._observations.pop(camera_id, None)
+
+    def preview(self, session_id: str, *, proof_only=False) -> dict:
         """Read-only display projection; never feeds guidance or safety events."""
-        require_local_vision()
+        require_passenger_preview()
         require_role("passenger")
-        with self._lock, self.sessions.observation_scope(session_id) as session:
+        with self._lock, self.sessions.observation_scope(session_id, require_lease=True) as session:
             now, mono, policy = self._now(), self._mono(), self._policy()
-            items = []
+            items, active = [], []
             for binding in self._bindings.values():
                 if (binding.session_id != session.session_id or binding.owner_uid != session.owner_uid
                         or binding.session_generation != session.vision_generation
+                        or binding.lease_id != session.vision_lease_id
                         or mono >= binding.deadline or now >= binding.expires_at):
+                    continue
+                active.append(binding.public())
+                if proof_only:
                     continue
                 observation = self._observations.get(binding.camera_id)
                 if observation is None or observation.preview is None:
@@ -318,9 +427,15 @@ class VisionBindingService:
                 value = dict(observation.preview, state=state, validForSeconds=remaining,
                              freshnessVerified=False, guidanceEligible=False)
                 if state != "available":
-                    value.update(observedClasses=[], message="카메라 연결이 중단되었습니다" if lost else "현재 관찰 정보가 없습니다")
+                    value.update(observedClasses=[], detections=[], message="카메라 연결이 중단되었습니다" if lost else "현재 관찰 정보가 없습니다")
                 items.append(value)
-            return dict(sessionId=session.session_id, observations=sorted(items, key=lambda x: x["cameraId"]))
+            lease = self.sessions.validate_vision_lease(session)
+            return dict(sessionId=session.session_id, ownerUid=session.owner_uid,
+                        generation=session.vision_generation, leaseVersion=lease.version,
+                        authority=self._authority,
+                        viewRevision=self._session_revisions.get(session.session_id, 0),
+                        bindings=sorted(active, key=lambda x: x["cameraId"]),
+                        observations=sorted(items, key=lambda x: x["cameraId"]))
 
 
     def state(self, camera_id: str) -> dict:
@@ -340,7 +455,7 @@ class VisionBindingService:
             now, mono = self._now(), self._mono()
             value.update(cameraEpoch=binding.epoch, bindingStatus="active", connectionStatus="waiting")
             try:
-                with self.sessions.vision_scope(binding.session_id) as session:
+                with self.sessions.vision_scope(binding.session_id, require_lease=True) as session:
                     if session.vision_generation != binding.session_generation or session.owner_uid != binding.owner_uid:
                         value["bindingStatus"] = "invalidated"
                     if mono >= binding.deadline or now >= binding.expires_at:

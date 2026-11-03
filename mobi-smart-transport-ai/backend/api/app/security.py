@@ -6,13 +6,14 @@ import math
 import os
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Annotated
 from threading import Lock
 
 import firebase_admin
 from firebase_admin import auth, credentials
-from fastapi import Depends, HTTPException, WebSocketException
+from fastapi import Depends, Header, HTTPException, WebSocketException
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import HTTPConnection
 
@@ -23,6 +24,8 @@ class Principal:
     role: str
     driver_id: str | None = None
     expires_at: float | None = None
+    auth_time: float | None = None  # Verified login time, not token issuance/refresh time.
+    vision_lease: str | None = None  # Untrusted header; store checks ownership/state.
 
 
 current_principal: ContextVar[Principal | None] = ContextVar("principal", default=None)
@@ -33,7 +36,15 @@ PUBLIC = {
 }
 # Deliberate per-operation allowlist: newly added endpoints default to denied.
 POLICY = {
+    ("POST", "/guidance/vision-lease/operations"): {"passenger"},
+    ("POST", "/guidance/vision-lease"): {"passenger"},
+    ("PUT", "/guidance/vision-lease"): {"passenger"},
+    ("GET", "/guidance/vision-lease"): {"passenger"},
+    ("DELETE", "/guidance/vision-lease"): {"passenger"},
     ("GET", "/guidance/safety-events"): {"passenger", "admin"},
+    ("POST", "/ai-vision/v2/sessions/{sessionId}/phone-camera"): {"passenger"},
+    ("POST", "/ai-vision/v2/sessions/{sessionId}/phone-camera/events"): {"passenger"},
+    ("DELETE", "/ai-vision/v2/sessions/{sessionId}/phone-camera/{bindingId}"): {"passenger"},
     ("GET", "/ai-vision/v2/sessions/{sessionId}/observations"): {"passenger", "admin"},
     ("GET", "/ai-vision/v2/cameras/{cameraId}/state"): {"admin", "vision_producer"},
     ("PUT", "/ai-vision/v2/cameras/{cameraId}"): {"admin"},
@@ -177,7 +188,10 @@ def verify_user(token: str) -> Principal:
         raise auth_error(403, "Account role is not provisioned")
     if role == "driver" and not valid_key(driver_id):
         raise auth_error(403, "Driver mapping is not provisioned")
-    return Principal(uid, role, driver_id if role == "driver" else None, float(claims["exp"]))
+    login_time = claims.get("auth_time")
+    if isinstance(login_time, bool) or not isinstance(login_time, (int, float)) or not math.isfinite(login_time) or login_time <= 0:
+        login_time = None  # Legacy operations remain compatible; Vision lease fails closed.
+    return Principal(uid, role, driver_id if role == "driver" else None, float(claims["exp"]), login_time)
 
 
 def operation(connection: HTTPConnection) -> tuple[str, str]:
@@ -202,7 +216,8 @@ async def get_principal(connection: HTTPConnection) -> Principal | None:
     raise error
 
 
-async def authorize_api(connection: HTTPConnection, principal=Depends(get_principal)):
+async def authorize_api(connection: HTTPConnection, principal=Depends(get_principal),
+                        vision_lease: Annotated[str | None, Header(alias="X-Mobi-Vision-Lease")] = None):
     key = operation(connection)
     if key in PUBLIC:
         yield
@@ -222,6 +237,10 @@ async def authorize_api(connection: HTTPConnection, principal=Depends(get_princi
         raise auth_error(401 if principal is None else 403, "Permission denied")
     if key[1].startswith("/mock/") and os.getenv("APP_ENV", "development").lower() not in {"development", "test", "local"}:
         raise auth_error(403, "Demo mutations are disabled")
+    if vision_lease is not None:
+        if principal.role != "passenger" or len(vision_lease) != 43 or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in vision_lease):
+            raise auth_error(403, "Invalid Vision lease scope")
+        principal = replace(principal, vision_lease=vision_lease)
     marker = current_principal.set(principal)
     timer = None
     if connection.scope["type"] == "websocket" and principal.expires_at is not None:

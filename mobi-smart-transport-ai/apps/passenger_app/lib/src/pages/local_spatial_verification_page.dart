@@ -4,18 +4,24 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/spatial_verification_engine.dart';
 import '../services/directional_guidance.dart';
+import '../services/session_guidance_audio.dart';
 import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
+import '../services/audio_shutdown.dart';
 
 /// Local explicit debug page. No Backend, Firebase, sensors or automatic sound.
 class LocalSpatialVerificationPage extends StatefulWidget {
   const LocalSpatialVerificationPage(
       {super.key,
       this.enabled = false,
+      this.nativeStereoOnly = false,
+      this.stopOnBackground = false,
       required this.output,
       required this.tts,
-      this.cuesFactory});
-  final bool enabled;
+      this.cuesFactory,
+      this.onLogout});
+  final bool enabled, nativeStereoOnly, stopOnBackground;
+  final Future<void> Function()? onLogout;
   final SpatialTestOutput output;
   final SpeechEngine tts;
   final AudioHapticCueService Function(SpeechPriorityCoordinator)? cuesFactory;
@@ -23,7 +29,9 @@ class LocalSpatialVerificationPage extends StatefulWidget {
   State<LocalSpatialVerificationPage> createState() => _SpatialState();
 }
 
-class _SpatialState extends State<LocalSpatialVerificationPage> {
+class _SpatialState extends State<LocalSpatialVerificationPage>
+    with WidgetsBindingObserver {
+  final _clock = Stopwatch()..start();
   late final SpatialVerificationEngine _engine;
   late final SpeechPriorityCoordinator _priority;
   late final AudioHapticCueService _cues;
@@ -59,6 +67,7 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.stopOnBackground) WidgetsBinding.instance.addObserver(this);
     _engine = SpatialVerificationEngine(widget.output, widget.tts,
         onGuidanceTrace: (id, phase) => _record('$id $phase'));
     _priority = SpeechPriorityCoordinator(_engine);
@@ -71,6 +80,16 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
           setState(() => _probe = probe);
         }
       });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (widget.stopOnBackground &&
+        state != AppLifecycleState.resumed &&
+        !_disposed &&
+        !_stopping) {
+      unawaited(_stop('APP_BACKGROUND', end: true));
     }
   }
 
@@ -121,7 +140,16 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
     final epoch = _epoch;
     var request = _request;
     bool current() => _valid(epoch, request) && !_priority.priorityActive;
-    final command = _engine.registerGuidance(guidance, current);
+    final admission = widget.nativeStereoOnly
+        ? ObservationAdmission(
+            deadlineMicros: _clock.elapsedMicroseconds + 3000000,
+            nowMicros: () => _clock.elapsedMicroseconds,
+            eventId: guidance.guidanceId,
+            sessionGeneration: guidance.sessionGeneration,
+            receivedAt: DateTime.now().toUtc().toIso8601String())
+        : null;
+    final command = _engine.registerGuidance(guidance, current,
+        admit: admission?.admit, phase: admission?.phase);
     if (command == null) {
       _record('DUPLICATE_GUIDANCE_IGNORED ${guidance.guidanceId}');
       return;
@@ -136,8 +164,11 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
         await widget.output.prepareFromGesture();
       }
       if (!current()) return;
-      final complete =
-          await _priority.speakObservation(_owner, command, current);
+      final complete = await _priority.speakObservation(
+          _owner, command, current,
+          admit: admission?.admit,
+          onDeadline: () => admission?.cancel('PLAYBACK_WATCHDOG'));
+      admission?.finish(complete);
       if (current()) {
         _record(
             '${guidance.guidanceId} ${complete ? 'GUIDANCE_COMPLETED' : 'GUIDANCE_CANCELLED'}');
@@ -223,6 +254,19 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
     }
   }
 
+  Future<void> _logout() async {
+    await _stop('LOGOUT', end: true);
+    if (_disposed || !mounted || widget.onLogout == null) return;
+    try {
+      await widget.onLogout!();
+    } catch (_) {
+      if (mounted && !_disposed) {
+        _failed = true;
+        _record('AUTH_LOGOUT_FAILED · 음성은 중단된 상태입니다');
+      }
+    }
+  }
+
   Future<void> _exitPage() async {
     if (!_allowed || _disposed || _stopping) return;
     // Navigation transitions keep the old Widget mounted. Retire audio now,
@@ -235,12 +279,13 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _disposed = true;
     _current = false;
     _epoch++;
     _request++;
     _timer?.cancel();
-    unawaited(() async {
+    unawaited(observeAudioCleanup(() async {
       try {
         await _cues.dispose();
       } finally {
@@ -250,8 +295,9 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
           _priority.dispose();
         }
       }
-    }()
-        .catchError((Object _) {}));
+    },
+        report: (message) => debugPrint(message),
+        channel: 'Local audio cleanup'));
     super.dispose();
   }
 
@@ -262,7 +308,10 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
     }
     final ready = _current && !_failed && !_stopping && !_hold;
     return Scaffold(
-        appBar: AppBar(title: const Text('LOCAL Spatial Audio · 검증 전용')),
+        appBar: AppBar(
+            title: Text(widget.nativeStereoOnly
+                ? 'Android Stereo Cue + TTS · 검증'
+                : 'LOCAL Spatial Audio · 검증 전용')),
         body: SingleChildScrollView(
             child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -270,18 +319,21 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                          '로컬 생성 4초 테스트 음원. 실제 버스·거리·출입문·Head Tracking 정보가 아닙니다.'),
+                          '로컬 생성 테스트 음원. 실제 버스·거리·출입문·Head Tracking 정보가 아닙니다.'),
                       const Text(
                           '헤드폰 좌우 채널을 확인하세요. 자동 재생 없음. TTS는 공간화되지 않습니다.'),
-                      const Text(
-                          '좌표: listener=(0,0,0), 정면=-Z, 오른쪽=+X, 위=+Y; LEFT=(-1,0,-1), CENTER=(0,0,-1), RIGHT=(1,0,-1). 테스트 임의 단위.'),
+                      Text(widget.nativeStereoOnly
+                          ? 'Stereo 채널: LEFT=L, CENTER=L/R 동일, RIGHT=R. 3D 정면·거리 검증 아님.'
+                          : '좌표: listener=(0,0,0), 정면=-Z, 오른쪽=+X, 위=+Y; LEFT=(-1,0,-1), CENTER=(0,0,-1), RIGHT=(1,0,-1). 테스트 임의 단위.'),
                       Text(
                           'epoch=$_epoch · generation=$_generation · current=$_current'),
                       Text(
                           'Engine: ${_probe['phase']} · context=${_probe['contextState']} · active=${_probe['active']} · run=${_probe['runId']}'),
                       if (_failed)
                         const Text('AUDIO_BLOCKED · 새 음원 금지, reload required'),
-                      for (final mode in ['STEREO', 'HRTF'])
+                      for (final mode in (widget.nativeStereoOnly
+                          ? ['STEREO']
+                          : ['STEREO', 'HRTF']))
                         Wrap(spacing: 8, children: [
                           for (final direction in ['CENTER', 'LEFT', 'RIGHT'])
                             ElevatedButton(
@@ -289,8 +341,13 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
                                     ready ? () => _play(mode, direction) : null,
                                 child: Text('$mode $direction'))
                         ]),
-                      const Text(
-                          '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
+                      Text(widget.nativeStereoOnly
+                          ? 'Android Stereo PCM Cue → 한국어 로컬 TTS · HRTF/실기기 청취 미검증'
+                          : '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
+                      if (widget.nativeStereoOnly)
+                        ExpansionTile(
+                            title: const Text('Native 출력 경로·TTS 상태'),
+                            children: [Text(jsonEncode(_probe))]),
                       Wrap(spacing: 8, children: [
                         for (final direction in TestDirection.values)
                           ElevatedButton(
@@ -323,9 +380,7 @@ class _SpatialState extends State<LocalSpatialVerificationPage> {
                                 : null,
                             child: const Text('세션 종료')),
                         OutlinedButton(
-                            onPressed: !_stopping
-                                ? () => _stop('LOGOUT', end: true)
-                                : null,
+                            onPressed: !_stopping ? _logout : null,
                             child: const Text('로그아웃')),
                         OutlinedButton(
                             onPressed: !_stopping

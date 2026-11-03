@@ -1,5 +1,6 @@
 """HTTP auth boundary tests with mocked Firebase verifier, not real hardware."""
 import json
+from copy import deepcopy
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,19 @@ from app.services.firebase_client import FirebaseClient, FirebaseSettings
 
 pytestmark = pytest.mark.auth_boundary
 ROOT = Path(__file__).resolve().parents[3]
+LEASES = {}
+ISSUES = {}
+
+
+def issue_for(http, uid="alice", operation_id=None):
+    auth = {"Authorization": "Bearer " + uid}
+    registered = http.post("/guidance/vision-lease/operations", headers=auth, json={"operationId": operation_id or str(uuid4())})
+    if registered.status_code != 201:
+        return registered
+    ticket = registered.json()
+    issue = {k: ticket[k] for k in ("operationId", "startTicket", "version")}
+    ISSUES[uid] = issue
+    return http.post("/guidance/vision-lease", headers=auth, json=issue)
 
 
 @pytest.fixture
@@ -41,7 +55,7 @@ def client(monkeypatch):
                   "outage": RuntimeError("secret-error")}
         if token in errors:
             raise errors[token]
-        return {"uid": token, "exp": time.time() + 3600, "mobi_role": "admin"}
+        return {"uid": token, "exp": time.time() + 3600, "auth_time": 1000, "mobi_role": "admin"}
 
     roles = {"producer": "vision_producer", "producer-b": "vision_producer",
              "alice": "passenger", "bob": "passenger", "driver": "driver", "admin": "admin"}
@@ -50,7 +64,12 @@ def client(monkeypatch):
         disabled=False, custom_claims={"mobi_role": roles[uid], "mobi_driver_id": "fleet-a"}))
     marker = security.current_principal.set(None)
     try:
+        LEASES.clear()
         with TestClient(app) as http:
+            for uid in ("alice", "bob"):
+                issued = issue_for(http, uid)
+                assert issued.status_code == 201
+                LEASES[uid] = issued.json()["leaseId"]
             yield http
     finally:
         security.current_principal.reset(marker)
@@ -60,7 +79,10 @@ def client(monkeypatch):
 
 
 def headers(uid="admin"):
-    return {"Authorization": "Bearer " + uid}
+    value = {"Authorization": "Bearer " + uid}
+    if uid in LEASES:
+        value["X-Mobi-Vision-Lease"] = LEASES[uid]
+    return value
 
 
 def prepare(client, source="live"):
@@ -74,11 +96,14 @@ def prepare(client, source="live"):
     assert response.status_code == 201
     binding = response.json()
     fixture = json.loads((ROOT / "ai_vision/pipelines/fixtures/mock_detection_results.json").read_text(encoding="utf-8"))["results"][0]
-    fixture["source"] = "webcam" if source == "live" else "video_file"
+    fixture["source"] = {"live": "webcam", "replay": "video_file", "android_camera": "android_camera"}[source]
     fixture["capturedAt"] = datetime.now(timezone.utc).isoformat()
     payload = {k: binding[k] for k in ("bindingId", "cameraId", "producerId", "sessionId", "cameraEpoch", "sourceType")}
     payload.update(envelopeVersion="2.0.0", visionEventId=str(uuid4()), capturedAt=fixture["capturedAt"],
                    frameIndex=0, detectionResult=fixture)
+    if source == "android_camera":
+        payload["captureClock"] = "host_read"
+        fixture["imageSize"] = {"width": 640, "height": 480}
     return payload
 
 
@@ -141,7 +166,7 @@ def test_old_bindings_invalidated(client, operation):
     if operation == "reset":
         assert client.post("/guidance/reset", headers=headers("alice"), json={"sessionId": sid, "event": "RESET", "payload": {}}).status_code == 200
     elif operation == "end":
-        marker = security.current_principal.set(security.Principal("alice", "passenger"))
+        marker = security.current_principal.set(security.Principal("alice", "passenger", auth_time=1000, vision_lease=LEASES["alice"]))
         try:
             v3_guidance_store.close_vision(sid)
         finally:
@@ -396,7 +421,7 @@ def test_invalidation_cannot_leave_current_observation(client, clock, operation)
     elif operation == "reset":
         assert client.post("/guidance/reset", headers=headers("alice"), json={"sessionId": payload["sessionId"], "event": "RESET", "payload": {}}).status_code == 200
     elif operation == "close":
-        marker = security.current_principal.set(security.Principal("alice", "passenger"))
+        marker = security.current_principal.set(security.Principal("alice", "passenger", auth_time=1000, vision_lease=LEASES["alice"]))
         try: v3_guidance_store.close_vision(payload["sessionId"])
         finally: security.current_principal.reset(marker)
     else:
@@ -431,7 +456,7 @@ def test_lifecycle_races_with_frame_acceptance(client, clock, operation):
             return client.post("/ai-vision/v2/bindings", headers=headers(), json={"cameraId": "camera-a", "sessionId": payload["sessionId"]}).status_code
         if operation == "revoke":
             return client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{payload['bindingId']}", headers=headers()).status_code
-        marker = security.current_principal.set(security.Principal("alice", "passenger"))
+        marker = security.current_principal.set(security.Principal("alice", "passenger", auth_time=1000, vision_lease=LEASES["alice"]))
         try: v3_guidance_store.close_vision(payload["sessionId"])
         finally: security.current_principal.reset(marker)
         return 200
@@ -678,7 +703,7 @@ def test_preview_revoke_reset_close_and_reverse_order(client,clock):
     assert client.get(path,headers=headers('alice')).json()['observations']==[]
     assert send(client,payload).status_code==403
     from app.security import current_principal,Principal
-    token=current_principal.set(Principal('alice','passenger'))
+    token=current_principal.set(Principal('alice','passenger',auth_time=1000,vision_lease=LEASES['alice']))
     try: v3_guidance_store.close_vision(payload['sessionId'])
     finally: current_principal.reset(token)
     assert client.get(path,headers=headers('alice')).status_code==403
@@ -707,3 +732,714 @@ def test_verified_tflite_profile_door_preview_remains_observation_only(client,cl
     assert '승차' not in item['message']
     clock.advance(3)
     assert client.get(path,headers=headers('alice')).json()['observations'][0]['observedClasses']==[]
+
+
+# Vision login Lease acceptance: never client-selected, never a token substitute.
+def new_lease(client, monkeypatch=None, login_time=None):
+    if login_time is not None:
+        old = security.auth.verify_id_token
+        def verify(token, **kwargs):
+            claims = old(token, **kwargs)
+            if claims["uid"] == "alice":
+                claims["auth_time"] = login_time
+            return claims
+        monkeypatch.setattr(security.auth, "verify_id_token", verify)
+    response = issue_for(client)
+    assert response.status_code == 201
+    LEASES["alice"] = response.json()["leaseId"]
+    return response.json()
+
+
+def owned_preview(client, payload, expected=200):
+    response = client.get(f"/ai-vision/v2/sessions/{payload['sessionId']}/observations", headers=headers("alice"))
+    assert response.status_code == expected
+    if expected != 200:
+        assert "observations" not in response.json() and "detections" not in response.text
+    return response
+
+
+def test_lease_relogin_denies_old_transmission_and_preview(client, monkeypatch):
+    payload = prepare(client)
+    assert send(client, payload).status_code == 202
+    before = ledger_data()
+    lease_a = LEASES["alice"]
+    new_lease(client, monkeypatch, 2000)
+    assert LEASES["alice"] != lease_a
+    assert send(client, payload).status_code == 403
+    assert ledger_data() == before
+    owned_preview(client, payload, 403)
+    old = headers("alice");old["X-Mobi-Vision-Lease"] = lease_a
+    assert client.get("/guidance/vision-lease", headers=old).status_code == 403
+    # New session with the active lease still needs explicit administrator binding.
+    sid = client.post("/guidance/session", headers=headers("alice"), json={}).json()["sessionId"]
+    forged = dict(payload, sessionId=sid)
+    assert send(client, forged).status_code == 403
+    rebound = client.post("/ai-vision/v2/bindings", headers=headers(), json={"cameraId":"camera-a","sessionId":sid}).json()
+    candidate = dict(payload, **{k:rebound[k] for k in ("bindingId","cameraEpoch","sessionId")}, visionEventId=str(uuid4()))
+    assert send(client, candidate).status_code == 202
+    assert owned_preview(client, candidate).json()["observations"][0]["visionEventId"] == candidate["visionEventId"]
+
+
+def test_lease_refresh_same_auth_time_keeps_id_and_deadline(client):
+    payload = prepare(client)
+    first = client.get("/guidance/vision-lease", headers=headers("alice")).json()
+    # Fixture reissues exp on each verification; immutable auth_time is unchanged.
+    second = client.get("/guidance/vision-lease", headers=headers("alice")).json()
+    assert second == first and send(client, payload).status_code == 202
+
+
+@pytest.mark.parametrize("mode", ["logout", "expiry"])
+def test_lease_revoke_expiry_blocks_reads_and_writes(client, mode, monkeypatch):
+    payload = prepare(client)
+    assert send(client, payload).status_code == 202
+    before = ledger_data()
+    if mode == "logout":
+        assert client.delete("/guidance/vision-lease", headers=headers("alice")).status_code == 204
+    else:
+        monkeypatch.setattr(v3_guidance_store, "_lease_clock", lambda: float("inf"))
+    assert send(client, dict(payload, frameIndex=1, visionEventId=str(uuid4()))).status_code == 403
+    assert ledger_data() == before
+    owned_preview(client, payload, 403)
+    assert state(client).json()["lastFrameIndex"] is None
+
+
+@pytest.mark.parametrize("body", [{"leaseId":"chosen"}, {"ownerUid":"bob"}, {"ttlSeconds":999999}])
+def test_lease_client_cannot_choose_scope(client, body):
+    assert client.post("/guidance/vision-lease", json=body, headers=headers("alice")).status_code == 422
+
+
+@pytest.mark.parametrize("uid,expected", [(None,401),("bad",401),("producer",403),("admin",403),("bob",403)])
+def test_lease_auth_and_cross_owner_denied(client, uid, expected):
+    value = headers(uid) if uid else {}
+    value["X-Mobi-Vision-Lease"] = LEASES["alice"]
+    response = client.get("/guidance/vision-lease", headers=value)
+    assert response.status_code == expected
+    assert "leaseId" not in response.json() and "observations" not in response.text
+
+
+def test_lease_header_required_and_cannot_attach_old_session(client):
+    payload = prepare(client)
+    assert client.get(f"/ai-vision/v2/sessions/{payload['sessionId']}/observations", headers={"Authorization":"Bearer alice"}).status_code == 403
+    # An unleased normal Guidance session remains supported but cannot bind Vision.
+    sid = client.post("/guidance/session", headers={"Authorization":"Bearer alice"}, json={}).json()["sessionId"]
+    assert client.post("/ai-vision/v2/bindings", headers=headers(), json={"cameraId":"camera-a","sessionId":sid}).status_code == 403
+
+
+def test_lease_missing_login_time_fails_closed_without_breaking_normal_guidance(client, monkeypatch):
+    old = security.auth.verify_id_token
+    def verify(token, **kw):
+        value=old(token, **kw);value.pop("auth_time",None);return value
+    monkeypatch.setattr(security.auth,"verify_id_token",verify)
+    auth={"Authorization":"Bearer alice"}
+    assert client.post("/guidance/vision-lease", headers=auth, json=ISSUES["alice"]).status_code == 401
+    assert client.post("/guidance/session", headers=auth, json={}).status_code == 200
+
+
+def test_lease_older_login_cannot_replace_newer(client,monkeypatch):
+    new_lease(client,monkeypatch,2000)
+    current=LEASES["alice"]
+    old=security.auth.verify_id_token
+    def stale(token,**kw):
+        value=old(token,**kw);value["auth_time"]=1000;return value
+    monkeypatch.setattr(security.auth,"verify_id_token",stale)
+    assert issue_for(client).status_code == 403
+    assert v3_guidance_store._vision_leases["alice"].lease_id==current
+
+
+def test_lease_logout_cannot_revoke_new_login_with_old_header(client):
+    old=LEASES["alice"];new_lease(client)
+    assert client.delete("/guidance/vision-lease",headers={"Authorization":"Bearer alice","X-Mobi-Vision-Lease":old}).status_code==403
+    assert client.get("/guidance/vision-lease",headers=headers("alice")).status_code==200
+
+
+def test_lease_reset_keeps_lease_but_discards_old_generation(client):
+    payload=prepare(client);lease=LEASES["alice"]
+    assert send(client,payload).status_code==202
+    assert client.post("/guidance/reset",headers=headers("alice"),json={"sessionId":payload["sessionId"],"event":"RESET","payload":{}}).status_code==200
+    assert client.get("/guidance/vision-lease",headers=headers("alice")).json()["leaseId"]==lease
+    assert send(client,payload).status_code==403
+    assert owned_preview(client,payload).json()["observations"]==[]
+
+
+def test_lease_expiry_without_logout_bounds_old_binding(client,monkeypatch):
+    payload=prepare(client);before=ledger_data()
+    clock=v3_guidance_store._lease_clock
+    monkeypatch.setattr(v3_guidance_store,"_lease_clock",lambda:clock()+901)
+    assert send(client,payload).status_code==403
+    assert ledger_data()==before
+    owned_preview(client,payload,403)
+
+
+def test_lease_rotation_linearizes_with_memory_commit(client,monkeypatch):
+    from threading import Event
+    payload=prepare(client);service=vision_v2.vision_binding_service
+    entered,release,rotation_started,rotation_done=Event(),Event(),Event(),Event()
+    storage=service.ledger._injected_storage;original=storage.transaction
+    def paused(path,transform):
+        entered.set();assert release.wait(5);return original(path,transform)
+    monkeypatch.setattr(storage,"transaction",paused)
+    def rotate():
+        rotation_started.set();result=issue_for(client);rotation_done.set();return result
+    with ThreadPoolExecutor(2) as pool:
+        pending=pool.submit(send,client,payload);assert entered.wait(5)
+        rotated=pool.submit(rotate);assert rotation_started.wait(5)
+        try:assert not rotation_done.wait(.1)
+        finally:release.set()
+        assert pending.result(5).status_code==202
+        answer=rotated.result(5);assert answer.status_code==201;LEASES["alice"]=answer.json()["leaseId"]
+    assert send(client,payload).status_code==403
+    owned_preview(client,payload,403)
+    assert all(not record.safety_items for record in v3_guidance_store._sessions.values())
+
+
+def test_lease_rotation_after_auth_before_accept_has_no_commit(client,monkeypatch):
+    payload=prepare(client);service=vision_v2.vision_binding_service;original=service.accept
+    from threading import Event
+    entered,release=Event(),Event()
+    def paused(value):
+        entered.set();assert release.wait(5);return original(value)
+    monkeypatch.setattr(service,"accept",paused)
+    with ThreadPoolExecutor(1) as pool:
+        pending=pool.submit(send,client,payload);assert entered.wait(5)
+        try:new_lease(client)
+        finally:release.set()
+        assert pending.result(5).status_code==403
+    assert ledger_data() is None
+    owned_preview(client,payload,403)
+
+
+
+def test_lease_authenticated_renewal_preserves_id_and_binding(client,monkeypatch):
+    payload=prepare(client)
+    first=client.get("/guidance/vision-lease",headers=headers("alice")).json()
+    clock=v3_guidance_store._lease_clock
+    monkeypatch.setattr(v3_guidance_store,"_lease_clock",lambda:clock()+10)
+    answer=client.put("/guidance/vision-lease",headers=headers("alice"),json={})
+    assert answer.status_code==200 and answer.json()["leaseId"]==first["leaseId"]
+    assert answer.json()["createdAt"]==first["createdAt"]
+    assert v3_guidance_store._vision_leases['alice'].deadline>clock()+900
+    assert send(client,payload).status_code==202
+
+
+def test_lease_expired_cannot_renew_and_logout_is_idempotent(client,monkeypatch):
+    first=LEASES['alice'];clock=v3_guidance_store._lease_clock
+    monkeypatch.setattr(v3_guidance_store,'_lease_clock',lambda:clock()+901)
+    assert client.put('/guidance/vision-lease',headers=headers('alice'),json={}).status_code==403
+    assert client.delete('/guidance/vision-lease',headers=headers('alice')).status_code==204
+    assert client.delete('/guidance/vision-lease',headers=headers('alice')).status_code==204
+    assert v3_guidance_store._vision_leases['alice'].lease_id==first
+
+
+
+def test_lease_fingerprint_receipt_scope_cannot_drop_lease(client):
+    payload=prepare(client)
+    assert send(client,payload).status_code==202
+    service=vision_v2.vision_binding_service
+    from app.services.vision_event_ledger import producer_path
+    raw=ledger_data()
+    next(iter(raw['events'].values())).pop('passengerLeaseId')
+    service.ledger._injected_storage.set(producer_path('producer'),raw)
+    assert send(client,payload).status_code==503
+    assert ledger_data()==raw
+
+
+def test_lease_transaction_expiry_validator_is_side_effect_free(client,monkeypatch):
+    payload=prepare(client);service=vision_v2.vision_binding_service
+    session=v3_guidance_store._sessions[payload['sessionId']];generation=session.vision_generation
+    lease=v3_guidance_store._vision_leases['alice']
+    def transaction(path,transform):
+        monkeypatch.setattr(v3_guidance_store,'_lease_clock',lambda:lease.deadline+1)
+        try:transform(None)
+        finally:assert session.vision_generation==generation and not session.vision_closed
+    monkeypatch.setattr(service.ledger._injected_storage,'transaction',transaction)
+    assert send(client,payload).status_code==403
+    assert ledger_data() is None
+    owned_preview(client,payload,403)
+
+
+# Server registration order is the authority, never UUID/time from the client.
+def start_operation(client, uid="alice", operation_id=None, **extra):
+    return client.post("/guidance/vision-lease/operations", headers={"Authorization":"Bearer "+uid},
+                       json={"operationId":operation_id or str(uuid4()), **extra})
+
+
+def issue_ticket(client, ticket, uid="alice"):
+    return client.post("/guidance/vision-lease", headers={"Authorization":"Bearer "+uid},
+                       json={k:ticket[k] for k in ("operationId","startTicket","version")})
+
+
+def lease_state_snapshot():
+    from copy import deepcopy
+    service=vision_v2.vision_binding_service
+    lease=v3_guidance_store._vision_leases.get("alice")
+    return (dict(lease.__dict__) if lease else None,
+            {sid:(r.vision_closed,r.vision_generation,r.vision_lease_id) for sid,r in v3_guidance_store._sessions.items()},
+            deepcopy(service._bindings),deepcopy(service._observations),ledger_data())
+
+
+def test_ticket_registration_retry_does_not_advance_version_or_revoke(client):
+    payload=prepare(client);assert send(client,payload).status_code==202
+    before=lease_state_snapshot();key=str(uuid4())
+    first=start_operation(client,operation_id=key);assert first.status_code==201
+    version=v3_guidance_store._vision_start_versions['alice']
+    second=start_operation(client,operation_id=key)
+    assert second.status_code==201 and second.json()==first.json()
+    assert v3_guidance_store._vision_start_versions['alice']==version
+    assert lease_state_snapshot()==before
+
+
+def test_ticket_concurrent_registration_and_issue_once(client):
+    key=str(uuid4());before=v3_guidance_store._vision_start_versions['alice']
+    with ThreadPoolExecutor(8) as pool:
+        tickets=list(pool.map(lambda _:start_operation(client,operation_id=key),range(8)))
+    assert all(t.status_code==201 and t.json()==tickets[0].json() for t in tickets)
+    assert v3_guidance_store._vision_start_versions['alice']==before+1
+    ticket=tickets[0].json()
+    with ThreadPoolExecutor(8) as pool:
+        issued=list(pool.map(lambda _:issue_ticket(client,ticket),range(8)))
+    assert all(x.status_code==201 and x.json()==issued[0].json() for x in issued)
+    lease=v3_guidance_store._vision_leases['alice'];assert lease.version==ticket['version']
+    op=v3_guidance_store._vision_operations[('alice',key)]
+    assert op.status=='issued' and op.receipt is not None
+    assert not {'leaseId','startTicket','token','refreshToken','authorization'}.intersection(op.receipt)
+
+
+def test_ticket_same_key_different_payload_conflict_preserves_binding(client):
+    payload=prepare(client);before=lease_state_snapshot();key=str(uuid4())
+    ticket=start_operation(client,operation_id=key).json()
+    different=start_operation(client,operation_id=key,expectedActiveVersion=ticket['activeVersion'])
+    assert different.status_code==409 and lease_state_snapshot()==before
+    issued=issue_ticket(client,ticket);assert issued.status_code==201
+    after=lease_state_snapshot();wrong=dict(ticket,version=ticket['version']+1)
+    assert issue_ticket(client,wrong).status_code==409 and lease_state_snapshot()==after
+
+
+def test_ticket_active_binding_survives_duplicate_and_pending_start(client):
+    payload=prepare(client);assert send(client,payload).status_code==202
+    old_issue=ISSUES['alice'];before=lease_state_snapshot()
+    pending=start_operation(client).json()
+    replay=issue_ticket(client,old_issue)
+    assert replay.status_code==201 and replay.json()['leaseId']==LEASES['alice']
+    assert lease_state_snapshot()==before
+    issued=issue_ticket(client,pending);assert issued.status_code==201
+    LEASES['alice']=issued.json()['leaseId']
+    assert send(client,payload).status_code==403
+    owned_preview(client,payload,403)
+
+
+def test_ticket_late_first_old_operation_and_old_receipt_cannot_replace(client):
+    a=start_operation(client).json();b=start_operation(client).json()
+    before=lease_state_snapshot()
+    assert issue_ticket(client,a).status_code==410 and lease_state_snapshot()==before
+    granted=issue_ticket(client,b);assert granted.status_code==201
+    after=lease_state_snapshot()
+    assert issue_ticket(client,a).status_code==410 and lease_state_snapshot()==after
+    # A newer committed operation retires the previous committed receipt too.
+    c=start_operation(client).json();assert issue_ticket(client,c).status_code==201
+    after=lease_state_snapshot()
+    assert issue_ticket(client,b).status_code==410 and lease_state_snapshot()==after
+    assert start_operation(client,operation_id=b['operationId']).status_code==410
+
+
+@pytest.mark.parametrize('mode',['logout','expiry','ticket-expiry'])
+def test_ticket_terminal_replay_never_revives(client,monkeypatch,mode):
+    ticket=start_operation(client).json()
+    if mode!='ticket-expiry':
+        response=issue_ticket(client,ticket);assert response.status_code==201;LEASES['alice']=response.json()['leaseId']
+    if mode=='logout':
+        assert client.delete('/guidance/vision-lease',headers=headers('alice')).status_code==204
+    else:
+        clock=v3_guidance_store._lease_clock
+        monkeypatch.setattr(v3_guidance_store,'_lease_clock',lambda:clock()+901)
+    before=lease_state_snapshot()
+    assert issue_ticket(client,ticket).status_code in (403,410)
+    assert lease_state_snapshot()==before
+    assert start_operation(client,operation_id=ticket['operationId']).status_code==410
+
+
+def test_ticket_logout_fences_pending_but_delayed_duplicate_logout_does_not(client):
+    old_header=headers('alice');pending=start_operation(client).json()
+    assert client.delete('/guidance/vision-lease',headers=old_header).status_code==204
+    assert issue_ticket(client,pending).status_code==410
+    new=start_operation(client).json()
+    assert client.delete('/guidance/vision-lease',headers=old_header).status_code==204
+    assert issue_ticket(client,new).status_code==201
+
+
+def test_ticket_scope_token_refresh_and_new_auth_context(client,monkeypatch):
+    ticket=start_operation(client).json();before=lease_state_snapshot()
+    assert issue_ticket(client,ticket,'bob').status_code==403
+    assert lease_state_snapshot()==before
+    # Same UID, different verified auth_time cannot recover old operation.
+    original=security.auth.verify_id_token
+    def new_auth(token,**kw):
+        value=original(token,**kw)
+        if value['uid']=='alice':value['auth_time']=2000
+        return value
+    monkeypatch.setattr(security.auth,'verify_id_token',new_auth)
+    assert issue_ticket(client,ticket).status_code==403
+    assert start_operation(client,operation_id=ticket['operationId']).status_code==403
+    assert lease_state_snapshot()==before
+    newer=start_operation(client).json();first=issue_ticket(client,newer)
+    second=issue_ticket(client,newer)
+    assert first.status_code==second.status_code==201 and first.json()==second.json()
+
+
+def test_ticket_cross_uid_same_key_is_scoped_and_cannot_recover_other_receipt(client):
+    key=str(uuid4());a=start_operation(client,operation_id=key).json();b=start_operation(client,'bob',key).json()
+    assert a['startTicket']!=b['startTicket']
+    assert issue_ticket(client,a,'bob').status_code==403
+    assert issue_ticket(client,b,'alice').status_code==403
+    assert issue_ticket(client,a).status_code==201
+    assert issue_ticket(client,b,'bob').status_code==201
+
+
+def test_ticket_receipt_cleanup_keeps_tombstone_and_healthy_renewed_lease(client,monkeypatch):
+    payload=prepare(client);assert send(client,payload).status_code==202
+    issue=ISSUES['alice'];clock=v3_guidance_store._lease_clock
+    monkeypatch.setattr(v3_guidance_store,'_lease_clock',lambda:clock()+100)
+    assert client.put('/guidance/vision-lease',headers=headers('alice'),json={}).status_code==200
+    monkeypatch.setattr(v3_guidance_store,'_lease_clock',lambda:clock()+901)
+    before=lease_state_snapshot();version=v3_guidance_store._vision_start_versions['alice']
+    assert issue_ticket(client,issue).status_code==410
+    assert start_operation(client,operation_id=issue['operationId']).status_code==410
+    assert lease_state_snapshot()==before and v3_guidance_store._vision_start_versions['alice']==version
+    row=v3_guidance_store._vision_operations[('alice',issue['operationId'])]
+    assert row.receipt is None and row.status=='receipt-expired'
+    # Receipt cleanup is not Lease revocation; normal owner GET still works.
+    assert client.get('/guidance/vision-lease',headers=headers('alice')).status_code==200
+
+
+def test_ticket_session_close_replay_does_not_reopen_guidance(client):
+    payload=prepare(client);assert send(client,payload).status_code==202
+    marker=security.current_principal.set(security.Principal('alice','passenger',auth_time=1000,vision_lease=LEASES['alice']))
+    try:v3_guidance_store.close_vision(payload['sessionId'])
+    finally:security.current_principal.reset(marker)
+    before=lease_state_snapshot()
+    assert issue_ticket(client,ISSUES['alice']).status_code==201
+    assert lease_state_snapshot()==before
+    assert send(client,payload).status_code==403
+    owned_preview(client,payload,403)
+
+
+def test_ticket_internal_issue_exception_rolls_back_every_state(client,monkeypatch):
+    payload=prepare(client);assert send(client,payload).status_code==202
+    ticket=start_operation(client).json();before=lease_state_snapshot();old=v3_guidance_store._invalidate_lease
+    def fail(lease,state):
+        old(lease,state)
+        raise RuntimeError('injected after invalidation, no secrets')
+    monkeypatch.setattr(v3_guidance_store,'_invalidate_lease',fail)
+    response=issue_ticket(client,ticket)
+    assert response.status_code==503 and lease_state_snapshot()==before
+    op=v3_guidance_store._vision_operations[('alice',ticket['operationId'])]
+    assert op.status=='prepared' and op.receipt is None
+    monkeypatch.setattr(v3_guidance_store,'_invalidate_lease',old)
+    assert issue_ticket(client,ticket).status_code==201
+
+
+def test_ticket_internal_registration_exception_keeps_version_and_active_state(client,monkeypatch):
+    first=start_operation(client).json();before=lease_state_snapshot();version=v3_guidance_store._vision_start_versions['alice'];old=v3_guidance_store._operation_response
+    monkeypatch.setattr(v3_guidance_store,'_operation_response',lambda _:(_ for _ in ()).throw(RuntimeError('injected')))
+    assert start_operation(client).status_code==503
+    assert lease_state_snapshot()==before and v3_guidance_store._vision_start_versions['alice']==version
+    row=v3_guidance_store._vision_operations[('alice',first['operationId'])];assert row.status=='prepared'
+    monkeypatch.setattr(v3_guidance_store,'_operation_response',old)
+    assert issue_ticket(client,first).status_code==201
+
+
+def test_ticket_unregistered_and_wrong_auth_no_receipt_disclosure(client):
+    ticket={'operationId':str(uuid4()),'version':1,'startTicket':'A'*43}
+    before=lease_state_snapshot()
+    for uid,expected in [('alice',403),('bad',401),('producer',403)]:
+        response=issue_ticket(client,ticket,uid)
+        assert response.status_code==expected and 'leaseId' not in response.json() and 'startTicket' not in response.json()
+    assert lease_state_snapshot()==before
+
+
+def test_ticket_multiple_concurrent_operations_only_latest_registered_can_issue(client):
+    with ThreadPoolExecutor(5) as pool:
+        tickets=list(pool.map(lambda _:start_operation(client).json(),range(5)))
+    assert len({t['version'] for t in tickets})==5
+    winner=max(tickets,key=lambda t:t['version'])
+    with ThreadPoolExecutor(5) as pool:
+        answers=list(pool.map(lambda t:issue_ticket(client,t),tickets))
+    assert sum(a.status_code==201 for a in answers)==1
+    assert v3_guidance_store._vision_leases['alice'].version==winner['version']
+    assert all(a.status_code in (201,410) for a in answers)
+
+
+def test_ticket_expected_active_version_is_only_a_server_checked_precondition(client):
+    before=lease_state_snapshot();version=v3_guidance_store._vision_start_versions['alice']
+    assert start_operation(client,expectedActiveVersion=99999).status_code==409
+    assert lease_state_snapshot()==before and v3_guidance_store._vision_start_versions['alice']==version
+
+
+def test_ticket_capacity_rejection_does_not_forget_old_keys(client):
+    from copy import copy
+    original=next(op for (uid,_),op in v3_guidance_store._vision_operations.items() if uid=='alice')
+    while sum(uid=='alice' for uid,_ in v3_guidance_store._vision_operations)<1024:
+        op=copy(original);op.operation_id=str(uuid4());op.status='expired';op.receipt=None
+        v3_guidance_store._vision_operations[('alice',op.operation_id)]=op
+    before=lease_state_snapshot()
+    assert start_operation(client).status_code==503 and lease_state_snapshot()==before
+    assert len([uid for uid,_ in v3_guidance_store._vision_operations if uid=='alice'])==1024
+
+
+@pytest.mark.parametrize("source", ["live", "replay", "android_camera"])
+def test_source_registration_is_explicit_and_preview_remains_ineligible(client, source):
+    payload = prepare(client, source)
+    r = send(client, payload)
+    assert r.status_code == 202 and r.json()["guidanceEligible"] is False
+    preview = owned_preview(client, payload).json()["observations"][0]
+    assert preview["sourceType"] == source and preview["guidanceEligible"] is False
+    assert preview["freshnessVerified"] is False
+    from app.schemas.vision_v2 import VisionSessionObservations
+    VisionSessionObservations.model_validate(owned_preview(client, payload).json())
+
+
+@pytest.mark.parametrize("change", ["frame-id", "missing-size", "area", "pixel-bbox", "negative-bbox",
+    "bounds", "confidence", "class-name", "rotation-field", "extra-image", "source", "clock", "timestamp"])
+def test_android_contract_rejects_bad_metadata_without_commit(client, change):
+    from copy import deepcopy
+    payload = prepare(client, "android_camera")
+    before = deepcopy(vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger"))
+    result = payload["detectionResult"]
+    if change == "frame-id": result["frameId"] = "not-uuid"
+    if change == "missing-size": result.pop("imageSize")
+    if change == "area": result["imageSize"] = {"width": 4096, "height": 4097}
+    if change == "pixel-bbox": result["detections"][0]["bbox"]["x"] = 64
+    if change == "negative-bbox": result["detections"][0]["bbox"]["x"] = -.1
+    if change == "bounds": result["detections"][0]["bbox"] = dict(x=.9,y=.1,w=.2,h=.2)
+    if change == "confidence": result["detections"][0]["confidence"] = 1.1
+    if change == "class-name": result["detections"][0]["className"] = "버스 문"
+    if change == "rotation-field": result["rotation"] = 90
+    if change == "extra-image": payload["image"] = "image-upload-not-supported"
+    if change == "source": result["source"] = "webcam"
+    if change == "clock": payload["captureClock"] = "sensor"
+    if change == "timestamp": result["capturedAt"] = "2000-01-01T00:00:00Z"
+    assert send(client, payload).status_code == 422
+    assert vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger") == before
+    assert owned_preview(client, payload).json()["observations"] == []
+
+
+@pytest.mark.parametrize("source", ["live", "android_camera"])
+@pytest.mark.parametrize("age,status", [(5,409), (6,409), (-1.01,409), (-.5,202), (0,202)])
+def test_android_uses_existing_live_freshness_bounds(client, clock, source, age, status):
+    payload = frame(prepare(client, source), 0, clock, age=age)
+    before = deepcopy(vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger"))
+    assert send(client, payload).status_code == status
+    if status != 202:
+        assert vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger") == before
+        assert owned_preview(client,payload).json()["observations"] == []
+
+
+def test_android_frame_uuid_reuse_fenced_atomically_even_nonconsecutive(client, clock):
+    from copy import deepcopy
+    original = frame(prepare(client, "android_camera"), 0, clock)
+    first = send(client, original)
+    assert first.status_code == 202
+    before_ttl = owned_preview(client, original).json()["observations"][0]["validForSeconds"]
+    clock.advance(.1)
+    assert send(client, original).json() == first.json()
+    assert owned_preview(client, original).json()["observations"][0]["validForSeconds"] < before_ttl
+    second = frame(original, 1, clock)
+    assert send(client, second).status_code == 202
+    third = frame(original, 2, clock)
+    third["detectionResult"]["frameId"] = original["detectionResult"]["frameId"].upper()
+    before = deepcopy(vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger"))
+    assert send(client, third).status_code == 409
+    assert vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger") == before
+    assert owned_preview(client, original).json()["observations"][0]["visionEventId"] == second["visionEventId"]
+
+
+@pytest.mark.parametrize("mode", ["unregistered", "other-uid", "source-forgery", "reset", "revoke", "epoch", "logout", "relogin", "closed"])
+def test_android_binding_security_denial_has_no_new_observation(client, mode):
+    from copy import deepcopy
+    payload = prepare(client, "android_camera")
+    assert send(client, payload).status_code == 202
+    stale = dict(payload, visionEventId=str(uuid4()), frameIndex=1)
+    stale["detectionResult"] = dict(payload["detectionResult"], frameId=str(uuid4()))
+    if mode == "unregistered":
+        stale["producerId"] = "producer-b"
+    elif mode == "other-uid":
+        r=client.post("/guidance/session",headers=headers("bob"),json={});stale["sessionId"]=r.json()["sessionId"]
+    elif mode == "source-forgery":
+        stale["sourceType"]="live";stale["detectionResult"]["source"]="webcam"
+    elif mode == "reset":
+        assert client.post("/guidance/reset",headers=headers("alice"),json={"sessionId":payload["sessionId"],"event":"RESET"}).status_code==200
+    elif mode == "revoke":
+        assert client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{payload['bindingId']}",headers=headers()).status_code==204
+    elif mode == "epoch":
+        assert client.post("/ai-vision/v2/bindings",headers=headers(),json={"cameraId":"camera-a","sessionId":payload["sessionId"]}).status_code==201
+    elif mode == "logout":
+        assert client.delete("/guidance/vision-lease",headers=headers("alice")).status_code==204
+    elif mode == "relogin":
+        fresh=issue_for(client);assert fresh.status_code==201
+        LEASES["alice"]=fresh.json()["leaseId"]
+    elif mode == "closed":
+        marker=security.current_principal.set(security.Principal("alice","passenger",auth_time=1000,vision_lease=LEASES["alice"]))
+        try:v3_guidance_store.close_vision(payload["sessionId"])
+        finally:security.current_principal.reset(marker)
+    before=deepcopy(vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger"))
+    assert send(client,stale,"producer-b" if mode=="unregistered" else "producer").status_code==403
+    assert vision_v2.vision_binding_service.ledger._injected_storage._memory_db.get("visionProducerLedger")==before
+    if mode in {"reset","revoke","epoch"}:
+        assert owned_preview(client,payload).json()["observations"]==[]
+    elif mode in {"logout","relogin","closed"}:
+        assert owned_preview(client,payload,expected=403).status_code==403
+    assert all(not session.safety_items for session in v3_guidance_store._sessions.values())
+
+
+@pytest.mark.parametrize("operation", ["revoke", "replace", "register", "reset", "logout", "close"])
+def test_binding_revision_proof_lifecycle_snapshot(client, operation):
+    payload=prepare(client,"android_camera");assert send(client,payload).status_code==202
+    before=owned_preview(client,payload).json();binding=before['bindings'][0]
+    assert before['viewRevision'] >= binding['bindingRevision'] > 0
+    assert before['observations'][0]['bindingRevision']==binding['bindingRevision']
+    assert before['observations'][0]['cameraEpoch']==binding['cameraEpoch']
+    sid=payload['sessionId'];path=f'/ai-vision/v2/sessions/{sid}/observations'
+    proof=client.get(path+'?proofOnly=true',headers=headers('alice')).json()
+    assert proof['bindings']==before['bindings'] and proof['viewRevision']==before['viewRevision'] and proof['observations']==[]
+    if operation=='revoke':assert client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{payload['bindingId']}",headers=headers()).status_code==204
+    elif operation=='replace':assert client.post('/ai-vision/v2/bindings',headers=headers(),json={'cameraId':'camera-a','sessionId':sid}).status_code==201
+    elif operation=='register':assert client.put('/ai-vision/v2/cameras/camera-a',headers=headers(),json={'producerId':'producer','sourceType':'android_camera'}).status_code==200
+    elif operation=='reset':assert client.post('/guidance/reset',headers=headers('alice'),json={'sessionId':sid,'event':'RESET'}).status_code==200
+    elif operation=='logout':assert client.delete('/guidance/vision-lease',headers=headers('alice')).status_code==204
+    else:
+        marker=security.current_principal.set(security.Principal('alice','passenger',auth_time=1000,vision_lease=LEASES['alice']))
+        try:v3_guidance_store.close_vision(sid)
+        finally:security.current_principal.reset(marker)
+    response=client.get(path+'?proofOnly=true',headers=headers('alice'))
+    if operation in {'logout','close'}:assert response.status_code==403
+    else:
+        after=response.json();assert after['observations']==[]
+        if operation=='reset':assert after['generation']!=before['generation'] and after['bindings']==[]
+        else:assert after['viewRevision']>before['viewRevision']
+    assert send(client,dict(payload,visionEventId=str(uuid4()),frameIndex=1)).status_code==403
+
+
+def test_binding_revision_aba_tombstones_and_collision_failure(client,monkeypatch):
+    payload=prepare(client,'android_camera');service=vision_v2.vision_binding_service
+    first=owned_preview(client,payload).json();one=first['bindings'][0];sid=payload['sessionId']
+    assert client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{one['bindingId']}",headers=headers()).status_code==204
+    second=client.post('/ai-vision/v2/bindings',headers=headers(),json={'cameraId':'camera-a','sessionId':sid}).json()
+    assert second['bindingRevision']>one['bindingRevision'] and second['cameraEpoch']!=one['cameraEpoch']
+    # Force UUID allocation toward epoch A. No ID or epoch resurrection occurs.
+    from uuid import UUID
+    monkeypatch.setattr(bindings,'uuid4',lambda:UUID(one['cameraEpoch']))
+    before=owned_preview(client,payload).json()
+    assert client.post('/ai-vision/v2/bindings',headers=headers(),json={'cameraId':'camera-a','sessionId':sid}).status_code==503
+    after=owned_preview(client,payload).json()
+    assert after['bindings']==before['bindings'] and after['viewRevision']==before['viewRevision']
+    assert client.delete(f"/ai-vision/v2/cameras/camera-a/bindings/{one['bindingId']}",headers=headers()).status_code==403
+    assert owned_preview(client,payload).json()['bindings'][0]['bindingId']==second['bindingId']
+
+
+@pytest.mark.parametrize('field,value',[('bindingRevision',1),('revision',0),('cameraEpoch',str(uuid4())),('bindingId',str(uuid4()))])
+def test_client_cannot_choose_binding_revision_or_identity(client,field,value):
+    payload=prepare(client,'android_camera');before=owned_preview(client,payload).json()
+    assert client.post('/ai-vision/v2/bindings',headers=headers(),json={'cameraId':'camera-a','sessionId':payload['sessionId'],field:value}).status_code==422
+    after=owned_preview(client,payload).json();assert after['bindings']==before['bindings'] and after['viewRevision']==before['viewRevision']
+
+
+def test_revision_cross_uid_and_query_input_are_not_authority(client):
+    payload=prepare(client,'android_camera');path=f"/ai-vision/v2/sessions/{payload['sessionId']}/observations"
+    assert client.get(path+'?proofOnly=true',headers=headers('bob')).status_code==403
+    assert client.get(path+'?viewRevision=1',headers=headers('alice')).status_code==422
+    assert client.get(path+'?proofOnly=invalid',headers=headers('alice')).status_code==422
+
+
+def test_revision_read_and_revoke_linearize_under_existing_lock(client,monkeypatch):
+    import threading
+    payload=prepare(client,'android_camera');assert send(client,payload).status_code==202
+    entered,release=threading.Event(),threading.Event();service=vision_v2.vision_binding_service
+    old=service._now;armed=[True]
+    def held():
+        if armed[0]:
+            armed[0]=False;entered.set();assert release.wait(5)
+        return old()
+    monkeypatch.setattr(service,'_now',held)
+    with ThreadPoolExecutor(2) as pool:
+        read=pool.submit(owned_preview,client,payload);assert entered.wait(5)
+        revoke=pool.submit(client.delete,f"/ai-vision/v2/cameras/camera-a/bindings/{payload['bindingId']}",headers=headers())
+        release.set();first=read.result();assert first.status_code==200
+        assert revoke.result().status_code==204
+    final=owned_preview(client,payload).json();assert final['bindings']==[] and final['observations']==[]
+    assert final['viewRevision']>first.json()['viewRevision']
+
+
+@pytest.mark.parametrize("source", ["live", "android_camera"])
+def test_functional_preview_projects_validated_detection_details_and_clears_on_expiry(client, monkeypatch, source):
+    payload = prepare(client, source)
+    result = payload["detectionResult"]
+    result["frameId"] = str(uuid4())
+    result["imageSize"] = {"width": 640, "height": 480}
+    result["detections"] = [{"classId":"bus", "className":"버스", "confidence":.83,
+                             "bbox":{"x":.1,"y":.2,"w":.3,"h":.4}}]
+    assert send(client, payload).status_code == 202
+    preview = owned_preview(client, payload).json()["observations"][0]
+    assert preview["frameId"] == result["frameId"]
+    assert preview["imageSize"] == result["imageSize"]
+    assert preview["detections"] == result["detections"]
+    assert preview["guidanceEligible"] is False
+    service = vision_v2.vision_binding_service
+    observation = service._observations[payload["cameraId"]]
+    monkeypatch.setattr(service, "_mono", lambda: observation.received_mono + 4)
+    monkeypatch.setattr(service, "_now", lambda: observation.received_at + timedelta(seconds=4))
+    expired = owned_preview(client, payload).json()["observations"][0]
+    assert expired["detections"] == [] and expired["observedClasses"] == []
+
+
+# Normal passenger app flow: no administrator or producer credential on phone.
+def phone_payload(binding, index=0):
+    fixture = json.loads((ROOT / "ai_vision/pipelines/fixtures/mock_detection_results.json").read_text(encoding="utf-8"))["results"][0]
+    fixture.update(source="android_camera", frameId=str(uuid4()),
+                   capturedAt=datetime.now(timezone.utc).isoformat(), imageSize={"width": 640, "height": 480})
+    payload = {k: binding[k] for k in ("bindingId", "cameraId", "producerId", "sessionId", "cameraEpoch", "sourceType")}
+    return dict(payload, envelopeVersion="2.0.0", visionEventId=fixture["frameId"],
+                capturedAt=fixture["capturedAt"], captureClock="host_read",
+                frameIndex=index, detectionResult=fixture)
+
+
+def test_passenger_phone_start_send_read_stop_restart_without_admin(client, monkeypatch):
+    from app.services.safety_event_service import SafetyEventService
+    monkeypatch.setattr(SafetyEventService, "create", lambda *a: pytest.fail("preview must not create safety events"))
+    # Existing navigation session starts without a Vision header.
+    session = client.post("/guidance/session", headers={"Authorization": "Bearer alice"}, json={}).json()
+    sid = session["sessionId"]
+    path = f"/ai-vision/v2/sessions/{sid}/phone-camera"
+    assert client.post(path, headers={"Authorization": "Bearer alice"}).status_code == 403
+    started = client.post(path, headers=headers("alice"))
+    assert started.status_code == 201, started.text
+    binding = started.json()
+    assert binding["producerId"] == "alice"
+    assert client.post(path, headers=headers("alice")).json() == binding
+    payload = phone_payload(binding)
+    accepted = client.post(path + "/events", headers=headers("alice"), json=payload)
+    assert accepted.status_code == 202, accepted.text
+    assert accepted.json()["guidanceEligible"] is False
+    preview = client.get(f"/ai-vision/v2/sessions/{sid}/observations", headers=headers("alice")).json()
+    assert preview["observations"][0]["frameId"] == payload["detectionResult"]["frameId"]
+    # The separate external-producer API remains closed to passenger credentials.
+    assert send(client, payload, "alice").status_code == 403
+    assert client.post(path, headers=headers("alice")).json()["nextFrameIndex"] == 1
+    assert client.delete(path + "/" + binding["bindingId"], headers=headers("alice")).status_code == 204
+    assert client.get(f"/ai-vision/v2/sessions/{sid}/observations", headers=headers("alice")).json()["observations"] == []
+    assert client.post(path + "/events", headers=headers("alice"), json=payload).status_code == 403
+    fresh = client.post(path, headers=headers("alice")).json()
+    assert fresh["cameraEpoch"] != binding["cameraEpoch"]
+    assert client.post(path + "/events", headers=headers("alice"), json=phone_payload(fresh)).status_code == 202
+
+
+def test_passenger_phone_cannot_bind_other_user_or_survive_reset(client):
+    sid = client.post("/guidance/session", headers=headers("alice"), json={}).json()["sessionId"]
+    path = f"/ai-vision/v2/sessions/{sid}/phone-camera"
+    assert client.post(path, headers=headers("bob")).status_code == 403
+    assert client.post(path, headers=headers("admin")).status_code == 403
+    binding = client.post(path, headers=headers("alice")).json()
+    payload = phone_payload(binding)
+    assert client.post(path + "/events", headers=headers("bob"), json=payload).status_code == 403
+    assert client.get(f"/ai-vision/v2/sessions/{sid}/observations", headers=headers("bob")).status_code == 403
+    assert client.post("/guidance/reset", headers=headers("alice"), json={"sessionId": sid, "event": "RESET"}).status_code == 200
+    assert client.post(path + "/events", headers=headers("alice"), json=payload).status_code == 403
+    assert client.get(f"/ai-vision/v2/sessions/{sid}/observations", headers=headers("alice")).json()["observations"] == []

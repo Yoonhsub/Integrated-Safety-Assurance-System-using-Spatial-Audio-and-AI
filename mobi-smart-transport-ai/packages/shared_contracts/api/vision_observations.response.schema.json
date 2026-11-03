@@ -1,8 +1,83 @@
 {
   "$defs": {
+    "VisionActiveBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingId": {
+          "format": "uuid",
+          "title": "Bindingid",
+          "type": "string"
+        },
+        "bindingRevision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Bindingrevision",
+          "type": "integer"
+        },
+        "cameraId": {
+          "title": "Cameraid",
+          "type": "string"
+        },
+        "producerId": {
+          "title": "Producerid",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "cameraEpoch": {
+          "format": "uuid",
+          "title": "Cameraepoch",
+          "type": "string"
+        },
+        "sourceType": {
+          "enum": [
+            "live",
+            "replay",
+            "android_camera"
+          ],
+          "title": "Sourcetype",
+          "type": "string"
+        },
+        "expiresAt": {
+          "format": "date-time",
+          "title": "Expiresat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindingId",
+        "bindingRevision",
+        "cameraId",
+        "producerId",
+        "sessionId",
+        "cameraEpoch",
+        "sourceType",
+        "expiresAt"
+      ],
+      "title": "VisionActiveBinding",
+      "type": "object"
+    },
     "VisionObservationPreview": {
       "additionalProperties": false,
       "properties": {
+        "bindingId": {
+          "format": "uuid",
+          "title": "Bindingid",
+          "type": "string"
+        },
+        "bindingRevision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Bindingrevision",
+          "type": "integer"
+        },
+        "generation": {
+          "minLength": 1,
+          "title": "Generation",
+          "type": "string"
+        },
         "sessionId": {
           "title": "Sessionid",
           "type": "string"
@@ -33,7 +108,8 @@
         "sourceType": {
           "enum": [
             "live",
-            "replay"
+            "replay",
+            "android_camera"
           ],
           "title": "Sourcetype",
           "type": "string"
@@ -59,10 +135,48 @@
         },
         "observedClasses": {
           "items": {
-            "enum": ["bus", "bus_door"],
+            "enum": [
+              "bus",
+              "bus_door"
+            ],
             "type": "string"
           },
           "title": "Observedclasses",
+          "type": "array"
+        },
+        "frameId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frameid"
+        },
+        "imageSize": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Imagesize"
+        },
+        "detections": {
+          "items": {
+            "type": "object"
+          },
+          "title": "Detections",
           "type": "array"
         },
         "message": {
@@ -106,6 +220,9 @@
         }
       },
       "required": [
+        "bindingId",
+        "bindingRevision",
+        "generation",
         "sessionId",
         "producerId",
         "cameraId",
@@ -128,6 +245,38 @@
   },
   "additionalProperties": false,
   "properties": {
+    "ownerUid": {
+      "title": "Owneruid",
+      "type": "string"
+    },
+    "generation": {
+      "minLength": 1,
+      "title": "Generation",
+      "type": "string"
+    },
+    "leaseVersion": {
+      "minimum": 1,
+      "title": "Leaseversion",
+      "type": "integer"
+    },
+    "authority": {
+      "format": "uuid",
+      "title": "Authority",
+      "type": "string"
+    },
+    "viewRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Viewrevision",
+      "type": "integer"
+    },
+    "bindings": {
+      "items": {
+        "$ref": "#/$defs/VisionActiveBinding"
+      },
+      "title": "Bindings",
+      "type": "array"
+    },
     "sessionId": {
       "title": "Sessionid",
       "type": "string"
@@ -141,11 +290,15 @@
     }
   },
   "required": [
+    "ownerUid",
+    "generation",
+    "leaseVersion",
+    "authority",
+    "viewRevision",
+    "bindings",
     "sessionId",
     "observations"
   ],
   "title": "VisionSessionObservations",
-  "type": "object",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "vision_observations.response.schema.json"
+  "type": "object"
 }
