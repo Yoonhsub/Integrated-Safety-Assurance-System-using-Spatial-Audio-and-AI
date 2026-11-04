@@ -35,8 +35,8 @@ void main() {
     try {
       await app.main();
       await tester.pump();
-      expect(find.text('로컬 시연 · 카메라와 음향'), findsOneWidget);
-      await tester.tap(find.text('온라인 서비스 · Firebase 로그인'));
+      expect(find.text('카메라 인식 시작'), findsOneWidget);
+      await tester.tap(find.text('온라인 서비스 연결'));
       await tester.pump();
       expect(find.textContaining('UNAVAILABLE'), findsOneWidget);
       expect(find.textContaining('Android 로그인 설정'), findsOneWidget);
