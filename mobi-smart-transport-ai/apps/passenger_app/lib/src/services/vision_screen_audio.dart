@@ -4,32 +4,52 @@ import 'directional_guidance.dart';
 import 'session_guidance_audio.dart';
 import 'spatial_verification_engine.dart';
 import 'speech_priority_coordinator.dart';
+import 'head_tracking_direction.dart';
 
 /// Camera-only information adapter. No SafetyInterpreter, Backend write,
 /// guidanceEligible change, object tracking, distance or world direction.
 class VisionScreenAudio extends ChangeNotifier {
-  VisionScreenAudio(
-      {required this.priority,
-      required this.engine,
-      required this.sessionGeneration,
-      required this.isCurrent,
-      int Function()? nowMicros,
-      this.minimumInterval = const Duration(seconds: 8)})
-      : _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
+  VisionScreenAudio({
+    required this.priority,
+    required this.engine,
+    required this.sessionGeneration,
+    required this.isCurrent,
+    HeadTrackingState? headTracking,
+    double? horizontalFovDegrees,
+    int Function()? nowMicros,
+    this.minimumInterval = const Duration(seconds: 8),
+  }) : headTracking = headTracking ?? sharedHeadTrackingState,
+       horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
+       _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
     if (!identical(priority.engine, engine)) {
       throw ArgumentError('Audio owner mismatch');
     }
+    this.headTracking.resetForSession();
     priority.addListener(_priorityChanged);
+    this.headTracking.addListener(_headTrackingChanged);
   }
   static final _clock = Stopwatch()..start();
+  static final double _configuredFov =
+      double.tryParse(
+        const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
+      ) ??
+      0;
   final SpeechPriorityCoordinator priority;
   final SpatialVerificationEngine engine;
   final String sessionGeneration;
   final bool Function() isCurrent;
   final Duration minimumInterval;
+  final HeadTrackingState headTracking;
+  final double horizontalFovDegrees;
   final int Function() _now;
   final _owner = Object();
-  bool enabled = false, busy = false, _disposed = false;
+  HeadTrackingMountCalibration mountCalibration =
+      const HeadTrackingMountCalibration();
+  bool enabled = false,
+      headTrackingEnabled = false,
+      busy = false,
+      _activeHeadTracked = false,
+      _disposed = false;
   int _revision = 0, admitted = 0, completed = 0, skippedBusy = 0;
   String status = '카메라 화면 음향 시연 OFF';
   String? _lastFrame, _lastMeaning;
@@ -37,6 +57,19 @@ class VisionScreenAudio extends ChangeNotifier {
   PriorityLease? _hold;
   Map<String, Object?> diagnostic = const {};
   bool get holding => _hold != null;
+  HeadTrackingSnapshot get headTrackingSnapshot => headTracking.snapshot;
+  bool get hasCameraCalibration =>
+      horizontalFovDegrees > 0 &&
+      horizontalFovDegrees < 180 &&
+      horizontalFovDegrees.isFinite;
+  bool get canActivateHeadTracking =>
+      hasCameraCalibration &&
+      mountCalibration.verified &&
+      mountCalibration.mount != HeadTrackingCameraMount.handheldPhone &&
+      isCurrent() &&
+      !priority.priorityActive &&
+      !priority.outputUncertain &&
+      headTracking.snapshot.usable(DateTime.now().toUtc());
   static const classNames = {
     'bus': '버스',
     'bus_door': '버스 문',
@@ -44,13 +77,13 @@ class VisionScreenAudio extends ChangeNotifier {
     'roadway': '차도',
     'sidewalk': '보도',
     'obstacle': '장애물',
-    'tactile_paving': '점자블록'
+    'tactile_paving': '점자블록',
   };
   static TestDirection direction(double centerX) => centerX < 1 / 3
       ? TestDirection.left
       : centerX > 2 / 3
-          ? TestDirection.right
-          : TestDirection.center;
+      ? TestDirection.right
+      : TestDirection.center;
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -81,6 +114,76 @@ class VisionScreenAudio extends ChangeNotifier {
       unawaited(_stopOwned());
       _notify();
     }
+  }
+
+  void _headTrackingChanged() {
+    if (_disposed) return;
+    if (headTrackingEnabled &&
+        !headTracking.snapshot.usable(DateTime.now().toUtc())) {
+      _invalidateHeadTracking('센서 연결 또는 최신 보정 yaw 무효');
+    }
+    _notify();
+  }
+
+  void _invalidateHeadTracking(String reason) {
+    final mustStop = headTrackingEnabled && _activeHeadTracked;
+    headTrackingEnabled = false;
+    if (mustStop) {
+      _revision++;
+      unawaited(_stopOwned());
+    }
+    status = '$reason · 새 프레임부터 기존 화면 기준 Cue 사용';
+  }
+
+  void setHeadTrackingMount(HeadTrackingCameraMount mount) {
+    if (_disposed) return;
+    _invalidateHeadTracking('장착 방식 변경');
+    mountCalibration = HeadTrackingMountCalibration(mount: mount);
+    _notify();
+  }
+
+  void setMountAlignment({
+    required bool verified,
+    double? cameraAxisOffsetDegrees,
+  }) {
+    if (_disposed) return;
+    _invalidateHeadTracking('축 정렬 확인 변경');
+    mountCalibration = HeadTrackingMountCalibration(
+      mount: mountCalibration.mount,
+      axesAlignmentVerified: verified,
+      cameraAxisOffsetDegrees:
+          verified &&
+              cameraAxisOffsetDegrees?.isFinite == true &&
+              cameraAxisOffsetDegrees!.abs() <= 180
+          ? cameraAxisOffsetDegrees
+          : null,
+    );
+    _notify();
+  }
+
+  void setHeadTrackingEnabled(bool value) {
+    if (_disposed) return;
+    if (!value) {
+      headTrackingEnabled = false;
+      status = 'Head Tracking OFF · 기존 화면 기준 Cue 사용';
+      _notify();
+      return;
+    }
+    if (!canActivateHeadTracking) {
+      headTrackingEnabled = false;
+      status = !hasCameraCalibration
+          ? '카메라 수평 화각 미확인 · Head Tracking 사용 불가'
+          : !mountCalibration.supportsHeadTrackedCue
+          ? '지원·검증된 카메라 장착 방식이 아님 · 화면 기준 Cue 유지'
+          : !mountCalibration.verified
+          ? '카메라·센서 축 정렬과 측정 오프셋 확인 필요'
+          : '활성 세션·오디오 소유권·READY 센서 확인 필요';
+      _notify();
+      return;
+    }
+    headTrackingEnabled = true;
+    status = 'Head Tracking ON · HRTF 핑만 보정, TTS는 일반 출력';
+    _notify();
   }
 
   Future<void> _stopOwned() async {
@@ -162,8 +265,12 @@ class VisionScreenAudio extends ChangeNotifier {
           c < .5 ||
           c > 1 ||
           b is! Map ||
-          ['x', 'y', 'w', 'h']
-              .any((k) => b[k] is! num || !(b[k] as num).isFinite)) {
+          [
+            'x',
+            'y',
+            'w',
+            'h',
+          ].any((k) => b[k] is! num || !(b[k] as num).isFinite)) {
         continue;
       }
       final x = b['x'] as num,
@@ -199,7 +306,7 @@ class VisionScreenAudio extends ChangeNotifier {
     final sideText = switch (side) {
       TestDirection.left => '왼쪽',
       TestDirection.center => '가운데',
-      TestDirection.right => '오른쪽'
+      TestDirection.right => '오른쪽',
     };
     final text =
         '화면 위치 시연입니다. 화면 $sideText, 인식된 객체 이름은 ${selected['className']}입니다. 실제 거리와 이동 방향은 알 수 없습니다.';
@@ -211,14 +318,16 @@ class VisionScreenAudio extends ChangeNotifier {
         isCurrent() &&
         !priority.priorityActive;
     final admission = ObservationAdmission(
-        deadlineMicros: _now() +
-            const Duration(seconds: 2).inMicroseconds -
-            age.inMicroseconds,
-        nowMicros: _now,
-        eventId: result['frameId'] as String,
-        sessionGeneration: sessionGeneration,
-        receivedAt: DateTime.now().toUtc().toIso8601String(),
-        eventCreatedAt: result['capturedAt']);
+      deadlineMicros:
+          _now() +
+          const Duration(seconds: 2).inMicroseconds -
+          age.inMicroseconds,
+      nowMicros: _now,
+      eventId: result['frameId'] as String,
+      sessionGeneration: sessionGeneration,
+      receivedAt: DateTime.now().toUtc().toIso8601String(),
+      eventCreatedAt: result['capturedAt'],
+    );
     bool admit() {
       final already = admission.started;
       if (!admission.admit()) return false;
@@ -230,25 +339,51 @@ class VisionScreenAudio extends ChangeNotifier {
       return true;
     }
 
-    final guidance = DirectionalGuidance(
-        guidanceId: result['frameId'] as String,
-        sessionGeneration: sessionGeneration,
-        // The real auth lifetime is the caller's pinned request guard, not this
-        // legacy local-verification integer namespace.
-        authEpoch: 0,
-        priority: GuidancePriority.observation,
-        text: text,
-        provenance: DirectionalGuidance.screenProvenance,
-        testDirection: side,
-        directionEvidence: DirectionEvidence.cameraScreenBbox);
-    final command = engine.registerGuidance(guidance, valid,
-        admit: admit, spokenText: text, phase: (phase) {
-      if (valid()) {
-        status = phase;
-        diagnostic = {...diagnostic, 'phase': phase};
-        _notify();
+    double? cameraAngle, correctedAngle;
+    if (headTrackingEnabled && canActivateHeadTracking) {
+      cameraAngle = horizontalAngleForNormalizedBbox(
+        x: (box['x'] as num).toDouble(),
+        width: (box['w'] as num).toDouble(),
+        horizontalFovDegrees: horizontalFovDegrees,
+      );
+      correctedAngle = headTrackedAngleForMount(
+        cameraAngle: cameraAngle,
+        sensor: headTracking.snapshot,
+        now: DateTime.now().toUtc(),
+        calibration: mountCalibration,
+      );
+      if (correctedAngle == null) {
+        _invalidateHeadTracking('장착·센서 조건 무효');
       }
-    });
+    } else if (headTrackingEnabled) {
+      _invalidateHeadTracking('장착·센서 조건 무효');
+    }
+    final guidance = DirectionalGuidance(
+      guidanceId: result['frameId'] as String,
+      sessionGeneration: sessionGeneration,
+      // The real auth lifetime is the caller's pinned request guard, not this
+      // legacy local-verification integer namespace.
+      authEpoch: 0,
+      priority: GuidancePriority.observation,
+      text: text,
+      provenance: DirectionalGuidance.screenProvenance,
+      testDirection: side,
+      headTrackedAzimuthDegrees: correctedAngle,
+      directionEvidence: DirectionEvidence.cameraScreenBbox,
+    );
+    final command = engine.registerGuidance(
+      guidance,
+      valid,
+      admit: admit,
+      spokenText: text,
+      phase: (phase) {
+        if (valid()) {
+          status = phase;
+          diagnostic = {...diagnostic, 'phase': phase};
+          _notify();
+        }
+      },
+    );
     if (command == null) return;
     diagnostic = {
       'frameId': result['frameId'],
@@ -259,18 +394,29 @@ class VisionScreenAudio extends ChangeNotifier {
       'bbox': Map<String, Object?>.from(box),
       'screenCenterX': cx,
       'screenDirection': side.name.toUpperCase(),
+      'headTrackingStatus': headTracking.snapshot.status.name,
+      'headTrackingEnabled': correctedAngle != null,
+      'headTrackingMount': mountCalibration.mount.name,
+      'axesAlignmentVerified': mountCalibration.axesAlignmentVerified,
+      if (cameraAngle != null) 'cameraAngleDegrees': cameraAngle,
+      if (correctedAngle != null) 'correctedAngleDegrees': correctedAngle,
       'coordinateFrame': 'upright-mirrored-camera-image',
       'provenance': DirectionalGuidance.screenProvenance,
       'guidanceEligible': false,
-      'text': text
+      'text': text,
     };
     busy = true;
+    _activeHeadTracked = correctedAngle != null;
     status = 'Cue → TTS 준비';
     _notify();
     unawaited(() async {
       try {
-        final ok = await priority.speakObservation(_owner, command, valid,
-            onDeadline: () => admission.cancel('PLAYBACK_WATCHDOG'));
+        final ok = await priority.speakObservation(
+          _owner,
+          command,
+          valid,
+          onDeadline: () => admission.cancel('PLAYBACK_WATCHDOG'),
+        );
         admission.finish(ok);
         if (ok) completed++;
         if (revision == _revision && !_disposed) {
@@ -290,6 +436,7 @@ class VisionScreenAudio extends ChangeNotifier {
       } finally {
         engine.retireGuidance(command);
         busy = false;
+        _activeHeadTracked = false;
         _notify();
       }
     }());
@@ -302,6 +449,9 @@ class VisionScreenAudio extends ChangeNotifier {
     enabled = false;
     _revision++;
     priority.removeListener(_priorityChanged);
+    headTracking.removeListener(_headTrackingChanged);
+    headTracking.resetForSession();
+    mountCalibration = const HeadTrackingMountCalibration();
     _hold?.release();
     _hold = null;
     unawaited(_stopOwned());

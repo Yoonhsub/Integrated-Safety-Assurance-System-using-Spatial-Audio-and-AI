@@ -9,6 +9,23 @@ abstract interface class NativeCuePort {
   Stream<Map<String, dynamic>> get events;
 }
 
+abstract interface class HeadTrackedCuePort {
+  Future<Map<String, dynamic>> invoke(String method, Map<String, dynamic> args);
+}
+
+class _AndroidHeadTrackedCuePort implements HeadTrackedCuePort {
+  static final instance = _AndroidHeadTrackedCuePort();
+  final _channel = const MethodChannel('mobi.passenger/hardware-tone');
+  @override
+  Future<Map<String, dynamic>> invoke(
+      String method, Map<String, dynamic> args) async {
+    final result =
+        await _channel.invokeMapMethod<String, dynamic>(method, args);
+    if (result == null) throw StateError('HRTF acknowledgement missing');
+    return result;
+  }
+}
+
 /// One channel handler per Activity; old page disposal cannot remove a new handler.
 class _AndroidCuePort implements NativeCuePort {
   _AndroidCuePort() {
@@ -37,18 +54,25 @@ class _AndroidCuePort implements NativeCuePort {
 
 /// Stereo only. No HRTF, head tracking, device forcing or microphone capture.
 class NativeDirectionalCueOutput
-    implements SpatialTestOutput, DirectionalCueOutput {
-  NativeDirectionalCueOutput({NativeCuePort? port})
+    implements SpatialTestOutput, DirectionalCueOutput, HeadTrackedCueOutput {
+  NativeDirectionalCueOutput(
+      {NativeCuePort? port, HeadTrackedCuePort? headTrackedPort})
       : _port = port ?? _AndroidCuePort.instance,
+        _headTrackedPort =
+            headTrackedPort ?? _AndroidHeadTrackedCuePort.instance,
         _owner = 'audio-${DateTime.now().microsecondsSinceEpoch}-${++_owners}' {
     _subscription = _port.events.listen(_event);
   }
   static int _owners = 0;
   final NativeCuePort _port;
+  final HeadTrackedCuePort _headTrackedPort;
   final String _owner;
   late final StreamSubscription<Map<String, dynamic>> _subscription;
   int _id = 0;
-  bool _closed = false, _ready = false, _uncertain = false;
+  bool _closed = false,
+      _ready = false,
+      _uncertain = false,
+      _headTrackedActive = false;
   Completer<bool>? _playing;
   Future<void>? _stopBarrier, _disposing;
   Map<String, dynamic> _probe = {
@@ -134,6 +158,68 @@ class NativeDirectionalCueOutput
     return pending.future;
   }
 
+  @override
+  Future<bool> playHeadTrackedCue(double azimuthDegrees) async {
+    _ensureOpen();
+    if (!_ready ||
+        _playing != null ||
+        _stopBarrier != null ||
+        !azimuthDegrees.isFinite ||
+        azimuthDegrees < -180 ||
+        azimuthDegrees > 180) {
+      throw StateError('Prepare first; valid exclusive HRTF cue required');
+    }
+    final id = ++_id, pending = Completer<bool>();
+    _playing = pending;
+    unawaited(pending.future
+        .then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+    try {
+      final data = await _headTrackedPort.invoke('start', {
+        'left': .7071067811865476,
+        'right': .7071067811865476,
+        'sensorAgeMs': 0,
+        'intervalMs': 1000,
+        'beaconAgeMs': -1,
+        'pattern': 'warning',
+        'azimuthDegrees': azimuthDegrees,
+      });
+      if (data['running'] != true) {
+        throw StateError(data['reason'] ?? 'HRTF start not confirmed');
+      }
+      _headTrackedActive = true;
+      _probe = {
+        ..._probe,
+        ...data,
+        'phase': 'playing',
+        'active': true,
+        'runId': id,
+        'direction': 'HEAD_TRACKED',
+        'azimuthDegrees': azimuthDegrees,
+      };
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      if (_closed || id != _id || !identical(_playing, pending)) {
+        return pending.future;
+      }
+      final stopped = await _headTrackedPort.invoke('stop', const {});
+      if (stopped['confirmed'] != true) {
+        throw StateError('HRTF stop not confirmed');
+      }
+      _headTrackedActive = false;
+      _playing = null;
+      _probe = {..._probe, ...stopped, 'phase': 'completed', 'active': false};
+      pending.complete(true);
+    } catch (error, stack) {
+      _headTrackedActive = false;
+      if (identical(_playing, pending)) {
+        _playing = null;
+        _uncertain = true;
+        if (!pending.isCompleted) pending.completeError(error, stack);
+      }
+      Error.throwWithStackTrace(error, stack);
+    }
+    return pending.future;
+  }
+
   void _event(Map<String, dynamic> data) {
     if (_closed || data['owner'] != _owner || data['id'] != _id) return;
     final pending = _playing;
@@ -169,10 +255,13 @@ class NativeDirectionalCueOutput
     _retire();
     _uncertain = true;
     final operation = () async {
-      final data = await _port.invoke('stop', _args());
+      final data = _headTrackedActive
+          ? await _headTrackedPort.invoke('stop', const {})
+          : await _port.invoke('stop', _args());
       if (data['confirmed'] != true) {
         throw StateError('Native stop not confirmed');
       }
+      _headTrackedActive = false;
       _uncertain = false;
       if (!_closed) {
         _probe = {..._probe, ...data, 'phase': 'stopped', 'active': false};
@@ -196,6 +285,13 @@ class NativeDirectionalCueOutput
       unawaited(_subscription.cancel().catchError((Object error) {
         debugPrint('Native audio event cleanup failure: ${error.runtimeType}');
       }));
+      if (_headTrackedActive) {
+        final stopped = await _headTrackedPort.invoke('stop', const {});
+        if (stopped['confirmed'] != true) {
+          throw StateError('HRTF dispose stop not confirmed');
+        }
+        _headTrackedActive = false;
+      }
       final data = await _port.invoke('dispose', _args());
       if (data['confirmed'] != true) {
         throw StateError('Native dispose not confirmed');

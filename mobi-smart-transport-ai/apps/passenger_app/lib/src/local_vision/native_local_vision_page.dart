@@ -14,6 +14,7 @@ import '../services/speech_priority_coordinator.dart';
 import '../services/spatial_verification_engine.dart';
 import '../services/vision_screen_audio.dart';
 import '../widgets/vision_screen_audio_panel.dart';
+import '../features/hardware_bus/wit_sensor_panel.dart';
 
 /// Offline by default. Optional transport and opt-in screen-only information audio.
 /// Safety output remains disabled. The shared engine is owned by Guidance.
@@ -54,6 +55,8 @@ class LocalVisionPage extends StatefulWidget {
 
 class _LocalVisionPageState extends State<LocalVisionPage>
     with WidgetsBindingObserver {
+  static const _hardwarePermissions =
+      MethodChannel('mobi.passenger/hardware-permissions');
   StreamSubscription<String?>? _authSubscription;
   final _clock = Stopwatch()..start();
   final _runTime = Stopwatch();
@@ -68,6 +71,13 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   int _generation = 0;
   Future<void>? _stopping;
   String _status = '버스·문 모델 파일을 선택해 주세요';
+
+  Future<bool> _ensureHeadTrackingReady() async {
+    if (!Platform.isAndroid) return false;
+    final state =
+        await _hardwarePermissions.invokeMapMethod<String, dynamic>('request');
+    return state?['granted'] == true && state?['locationEnabled'] == true;
+  }
 
   @override
   void initState() {
@@ -455,6 +465,15 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                 audio: _previewAudio!,
                 cameraActive: _pump.active,
                 showStopButton: false),
+          if (_previewAudio != null)
+            ExpansionTile(
+                title: const Text('WT901 Head Tracking (기본 OFF)'),
+                subtitle: const Text('센서 연결·정면 보정·검증된 카메라 화각이 모두 필요'),
+                maintainState: true,
+                children: [
+                  WitSensorPanel(
+                      stateOnly: true, ensureReady: _ensureHeadTrackingReady),
+                ]),
           if (widget.onEndSession != null)
             OutlinedButton(
                 onPressed: busy

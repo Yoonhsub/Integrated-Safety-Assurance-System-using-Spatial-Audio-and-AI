@@ -16,6 +16,10 @@ abstract interface class DirectionalCueOutput {
   Future<bool> playCue(TestDirection direction);
 }
 
+abstract interface class HeadTrackedCueOutput {
+  Future<bool> playHeadTrackedCue(double azimuthDegrees);
+}
+
 class _GuidanceRequest {
   _GuidanceRequest(
       this.guidance, this.isCurrent, this.admit, this.phase, this.spokenText);
@@ -85,8 +89,14 @@ class SpatialVerificationEngine implements SpeechEngine {
       if (!(request.admit?.call() ?? true)) throw SpeechCancelled();
       _trace(request, 'CUE_START');
       _guidanceCheck(request, revision);
-      final complete = await (output as DirectionalCueOutput)
-          .playCue(guidance.testDirection!);
+      final azimuth = guidance.headTrackedAzimuthDegrees;
+      final complete = azimuth != null
+          ? output is HeadTrackedCueOutput
+              ? await (output as HeadTrackedCueOutput)
+                  .playHeadTrackedCue(azimuth)
+              : throw StateError('Head-tracked HRTF capability missing')
+          : await (output as DirectionalCueOutput)
+              .playCue(guidance.testDirection!);
       _guidanceCheck(request, revision);
       if (!complete) throw SpeechCancelled();
       _trace(request, 'CUE_COMPLETED');

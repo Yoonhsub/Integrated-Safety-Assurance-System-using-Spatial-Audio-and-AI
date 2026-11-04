@@ -195,3 +195,29 @@ SHA256: 79049294311fd37c800cfa086dff0203c5bade9403f32c43a01fe5f1870e4d0c
 이전 Vision 화면 음향 APK 37e384...는 이전 확인본으로 보존하며 신규 단독 실행의 실기기 수락을 대체하지 않는다.
 
 최종 코드 검증: Passenger 467 PASS / 9 SKIP, Flutter analyze PASS, 일반 Android debug APK 빌드 PASS. 실제 단독 청취 NOT_VERIFIED.
+
+## 11. WT901 Head Tracking 실기기 수락 절차 (현재 NOT_VERIFIED)
+
+Head Tracking은 기본 OFF이며, FOV나 장착 방식만 선택해도 활성화되지 않는다. `UNVERIFIED`와 `HANDHELD_PHONE`은 항상 기존 화면 기준 LEFT/CENTER/RIGHT Stereo Cue로 fallback한다. 스마트폰을 손에 들고 사용하는 현재 경로에는 phone yaw가 없으므로 고정 카메라로 간주하지 않는다.
+
+| 장착 방식 | HRTF 활성 조건 | 계산 | 표시 의미 |
+|---|---|---|---|
+| UNVERIFIED | 활성 불가 | Stereo fallback | 장착 관계 미확인 |
+| FIXED_WORLD_CAMERA | 유효 FOV + WT901 READY/최신 yaw/정면 보정 + 실측 축 정렬/오프셋 | `cameraAngle + axisOffset - relativeHeadYaw`를 ±180° 정규화 | 고정 카메라 기준 head-relative 핑 |
+| HEAD_MOUNTED_CAMERA | 유효 FOV + WT901 READY/최신 yaw/정면 보정 + 실측 축 정렬/오프셋 | `cameraAngle + axisOffset`; yaw 재차감 금지 | 머리 상대 카메라 핑, 세계 고정 음향 아님 |
+| HANDHELD_PHONE | phone yaw가 없어 활성 불가 | Stereo fallback | 휴대폰이 고정됐다고 추정하지 않음 |
+
+실물 수락은 다음 순서로만 수행한다.
+
+1. WT901 실물을 BLE로 연결하고 화면 상태가 READY가 되는지 확인한다.
+2. 센서를 오른쪽/왼쪽으로 돌려 원본·필터 yaw의 실제 부호를 기록한다. 코드의 양수=오른쪽 가정과 다르면 활성화하지 않는다.
+3. 실제 장착 방식(FIXED_WORLD_CAMERA 또는 HEAD_MOUNTED_CAMERA)을 선택한다. 선택만으로 검증 완료가 아니다.
+4. 카메라 광축과 센서/머리 기준축의 수평 오프셋을 실측하고 `실물 축 정렬·오프셋`에 입력한다. 임의 0°를 측정값으로 사용하지 않는다.
+5. 실제 카메라 수평 FOV를 확인하고 `MOBI_CAMERA_HORIZONTAL_FOV_DEGREES` 빌드 설정과 일치하는지 확인한다. 알 수 없으면 Stereo를 유지한다.
+6. 정면을 본 상태에서 WT901 정면 보정을 실행하고 기준 yaw·데이터 나이를 확인한다.
+7. Head Tracking을 사용자가 직접 ON으로 전환한다. 활성 세션, 정상 오디오 소유권, READY/최신 yaw, FOV, 장착/정렬 조건 중 하나라도 빠지면 ON이 거부되어야 한다.
+8. 실제 객체를 카메라 좌/중/우에 놓고 머리를 ±30°, ±90°, ±180° 경계로 움직인다. FIXED_WORLD_CAMERA에서는 오른쪽 머리 회전에 대해 고정 정면 객체 핑이 상대적으로 왼쪽으로 이동해야 한다. HEAD_MOUNTED_CAMERA에서는 yaw를 다시 빼지 않는지 확인한다.
+9. HRTF 핑 재생 중 센서를 끄거나 연결을 해제한다. 현재 핑이 중단되고 과거 DetectionResult가 재생되지 않으며, 새 프레임부터 Stereo fallback만 허용되는지 확인한다. 재연결 후에는 정면 보정과 축 확인을 다시 수행한다.
+10. Shokz OpenRun Pro 2에서 핑 방향, 이어지는 일반 한국어 TTS, STOP, Live Hold, 카메라/세션 종료 후 무음을 각각 청취 확인한다. 자동 callback 성공과 사람의 방향 청취 결과를 분리 기록한다.
+
+WT901 실제 yaw 부호, 카메라/센서 축 오프셋, 실제 FOV, 장착 안정성, Shokz 방향 청취는 모두 실물 확인 전까지 NOT_VERIFIED다. Mock yaw와 테스트 오프셋은 분기 회귀용이며 제품 UI의 실제 측정 증거가 아니다.
