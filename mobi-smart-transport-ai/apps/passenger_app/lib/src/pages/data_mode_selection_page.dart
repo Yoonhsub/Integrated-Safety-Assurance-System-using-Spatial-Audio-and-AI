@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+<<<<<<< HEAD
 import 'package:mobi_mobile_auth/mobile_auth.dart';
+=======
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
 
 import '../services/api_base_url.dart';
 
@@ -30,9 +35,13 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
     setState(() => _isSwitching = true);
 
     try {
+<<<<<<< HEAD
       final response = await AuthenticatedApiClient(
         onUnauthorized: FirebaseAuthSession.instance.signOut,
       )
+=======
+      final response = await http
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
           .post(
             Uri.parse('$_apiBaseUrl/config/data-mode'),
             headers: const {'Content-Type': 'application/json'},
@@ -71,11 +80,16 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // 앱 로고 아이콘
+<<<<<<< HEAD
                 Icon(
                   Icons.directions_bus,
                   size: 64,
                   color: colorScheme.primary,
                 ),
+=======
+                Icon(Icons.directions_bus,
+                    size: 64, color: colorScheme.primary),
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
                 const SizedBox(height: 16),
                 // 앱 제목
                 Text(
@@ -114,6 +128,19 @@ class _DataModeSelectionPageState extends State<DataModeSelectionPage> {
                   isBusy: _isSwitching,
                   onTap: () => _selectMode('live'),
                 ),
+                if (!kIsWeb &&
+                    defaultTargetPlatform == TargetPlatform.android) ...[
+                  const SizedBox(height: 20),
+                  _ModeCard(
+                    icon: Icons.bluetooth_audio,
+                    title: '실기기 연동확인',
+                    description: '비콘·머리 센서·골전도 이어폰으로\n왼쪽 접근·정차·오른쪽 출발을 확인합니다.',
+                    color: colorScheme.secondary,
+                    isBusy: _isSwitching,
+                    onTap: () =>
+                        Navigator.of(context).pushNamed('/hardware-bus'),
+                  ),
+                ],
                 // 전환 중 로딩 표시
                 if (_isSwitching) ...[
                   const SizedBox(height: 24),
@@ -180,18 +207,32 @@ class _ModeCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
+<<<<<<< HEAD
                         style: Theme.of(context)
                             .textTheme
                             .titleMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
+=======
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
                       ),
                       const SizedBox(height: 4),
                       Text(
                         description,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+<<<<<<< HEAD
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withValues(alpha: 0.6),
+=======
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.6),
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
                             ),
                       ),
                     ],

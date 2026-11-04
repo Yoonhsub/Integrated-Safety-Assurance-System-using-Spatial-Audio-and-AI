@@ -8,6 +8,29 @@ import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 
 void main() {
   group('BeaconIngestPayload', () {
+    test('serializes local scan timestamps as UTC without changing the instant', () {
+      final observedAt = DateTime(2026, 10, 23, 12, 34, 56, 123, 456);
+      final signal = BeaconSignal(
+        beaconId: targetMac,
+        rssi: -55,
+        estimatedDistanceMeters: 2.0,
+        signalLevel: BeaconSignalLevel.close,
+        lastDetectedAt: observedAt,
+      );
+      final payload = BeaconIngestPayload.fromSignal(
+        signal: signal,
+        sessionId: 'demo-session',
+        deviceId: 'android-collector-01',
+      );
+
+      final timestamp = payload.toJson()['timestamp'] as String;
+      expect(observedAt.isUtc, isFalse);
+      expect(timestamp, endsWith('Z'));
+      expect(timestamp, observedAt.toUtc().toIso8601String());
+      expect(DateTime.parse(timestamp).isAtSameMomentAs(observedAt), isTrue);
+      expect(payload.timestamp, observedAt);
+    });
+
     test('normalizes MAC-like beacon ids for backend ingest', () {
       final signal = BeaconSignal(
         beaconId: 'c3-00-00-5c-b9-47',
@@ -27,6 +50,7 @@ void main() {
       expect(payload.toJson()['macAddress'], 'C3:00:00:5C:B9:47');
       expect(payload.toJson()['source'], 'REAL_BLE');
       expect(payload.toJson()['distanceMeters'], 2.0);
+      expect(payload.toJson()['timestamp'], '2026-06-07T00:00:00.000Z');
     });
   });
 
@@ -38,6 +62,14 @@ void main() {
         expect(request.url.path, '/api/v3/beacon/ingest');
         capturedPayloads.add(
           Map<String, Object?>.from(jsonDecode(request.body) as Map),
+        );
+        final timestamp = capturedPayloads.last['timestamp'] as String;
+        expect(timestamp, endsWith('Z'));
+        expect(
+          DateTime.parse(timestamp).isAtSameMomentAs(
+            DateTime(2026, 6, 7, 0, 0),
+          ),
+          isTrue,
         );
         return http.Response(
           jsonEncode(<String, Object?>{
@@ -111,7 +143,7 @@ BeaconSignal _signal(String beaconId, int rssi) {
     rssi: rssi,
     estimatedDistanceMeters: 2.0,
     signalLevel: BeaconSignalLevel.close,
-    lastDetectedAt: DateTime.utc(2026, 6, 7, 0, 0),
+    lastDetectedAt: DateTime(2026, 6, 7, 0, 0),
   );
 }
 

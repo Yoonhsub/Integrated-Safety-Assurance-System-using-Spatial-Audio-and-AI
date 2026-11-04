@@ -98,6 +98,10 @@ class BeaconIngestPayload {
       'rssi': rssi,
       'distanceMeters': distanceMeters,
       'source': source,
+<<<<<<< HEAD
+=======
+      // Local DateTime ISO strings omit the offset; send an explicit UTC instant.
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
       'timestamp': timestamp.toUtc().toIso8601String(),
     };
     json.removeWhere((_, value) => value == null);

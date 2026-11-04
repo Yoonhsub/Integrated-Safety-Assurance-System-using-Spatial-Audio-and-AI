@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'pages/agent_name_setup_page.dart';
+import 'features/hardware_bus/hardware_bus_page.dart';
 import 'pages/data_mode_selection_page.dart';
 import 'pages/home_page.dart';
 import 'pages/v3_guidance_page.dart';
@@ -100,6 +101,7 @@ class _MobiAppState extends State<MobiApp> {
         builder: (context, account) => home,
       ),
       routes: <String, WidgetBuilder>{
+<<<<<<< HEAD
         '/v3-guidance': (_) => AuthGate(
               configurationReady: widget.firebaseConfigured,
               appLabel: 'MOBI 승객 앱',
@@ -108,6 +110,13 @@ class _MobiAppState extends State<MobiApp> {
                 onReturnToModeSelection: _resetToModeSelection,
                 dataMode: dataMode ?? 'mock',
               ),
+=======
+        '/hardware-bus': (_) => const HardwareBusPage(),
+        '/v3-guidance': (_) => V3GuidancePage(
+              agentName: agentName ?? '모비',
+              onReturnToModeSelection: _resetToModeSelection,
+              dataMode: dataMode ?? 'mock',
+>>>>>>> 47cf2f7f0a5a9865875d82d5e950252725e2aa13
             ),
       },
     );
