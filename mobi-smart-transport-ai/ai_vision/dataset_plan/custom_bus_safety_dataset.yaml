@@ -1,0 +1,16 @@
+# Ultralytics YOLO 학습용 데이터셋 설정 초안.
+# 실제 이미지·라벨은 Git에 올리지 말고, 팀 보안 저장소 또는 로컬 작업 디스크에 둔다.
+path: data/custom_bus_safety_v1
+train: train/images
+val: val/images
+test: test/images
+
+# class_taxonomy.json의 classes 배열 순서와 반드시 동일해야 한다.
+names:
+  0: bus
+  1: bus_door
+  2: bus_stop
+  3: roadway
+  4: sidewalk
+  5: obstacle
+  6: tactile_paving
