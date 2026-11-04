@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/local_vision/vision_codec.dart';
 import 'package:mobi_passenger_app/src/local_vision/frame_pump.dart';
 import 'package:mobi_passenger_app/src/services/vision_screen_audio.dart';
+import 'package:mobi_passenger_app/src/services/head_tracking_direction.dart';
 import 'package:mobi_passenger_app/src/services/native_directional_cue_output.dart';
 import 'package:mobi_passenger_app/src/services/spatial_verification_engine.dart';
 import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
@@ -12,6 +13,18 @@ import 'package:mobi_passenger_app/src/widgets/vision_screen_audio_panel.dart';
 import 'local_vision_test.dart' as camera;
 import 'native_android_audio_test.dart' as native;
 import 'vision_observation_tts_test.dart' as speech;
+
+class _HeadPort implements HeadTrackedCuePort {
+  final calls = <String>[];
+  @override
+  Future<Map<String, dynamic>> invoke(
+      String method, Map<String, dynamic> args) async {
+    calls.add(method);
+    return method == 'start'
+        ? {'running': true, 'spatial': true}
+        : {'confirmed': true, 'running': false};
+  }
+}
 
 // All detections below are explicit fixtures; no real model/device claim.
 LocalObservation detection(int ticks,
@@ -353,6 +366,100 @@ void main() {
     await flush(t);
     expect(priority.priorityActive, isFalse);
     await t.pumpWidget(const SizedBox());
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'invalid sensor stops active HRTF and only a new frame may use stereo fallback',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 90,
+        nowMicros: () => now);
+    a.setEnabled(true);
+    a.setHeadTrackingMount(HeadTrackingCameraMount.fixedWorldCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isTrue);
+
+    a.observe(detection(0, x: .05).toDetectionResult(), age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls, contains('start'));
+    expect(port.active, isNull);
+
+    sensor.publish(
+        const HeadTrackingSnapshot(status: HeadTrackingStatus.disconnected));
+    await flush(t);
+    expect(headPort.calls, contains('stop'));
+    expect(a.headTrackingEnabled, isFalse);
+    expect(a.enabled, isTrue);
+    expect(tts.spoken, isEmpty);
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+
+    now = const Duration(seconds: 9).inMicroseconds;
+    a.observe(detection(now, x: .75).toDetectionResult(), age: Duration.zero);
+    await flush(t);
+    expect(port.active?['direction'], 'RIGHT');
+    expect(headPort.calls.where((v) => v == 'start').length, 1);
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('mount choice alone and missing FOV cannot activate HRTF',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 0);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 0,
+        filteredYaw: 0,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+
+    a.setHeadTrackingMount(HeadTrackingCameraMount.fixedWorldCamera);
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isFalse);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isFalse);
+    a.setHeadTrackingMount(HeadTrackingCameraMount.handheldPhone);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isFalse);
+
     a.dispose();
     await engine.dispose();
     priority.dispose();

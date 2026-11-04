@@ -6,6 +6,7 @@ import 'wit_sensor_protocol.dart';
 import 'direction_audio_panel.dart';
 import 'direction_pan.dart';
 import 'spatial_warning_check_panel.dart';
+import '../../services/head_tracking_direction.dart';
 
 const witSensorMac = 'F1:35:40:62:CD:43';
 
@@ -22,6 +23,7 @@ class WitSensorPanel extends StatefulWidget {
     this.audioScope = '',
     this.obstacles,
     this.sessionNow,
+    this.stateOnly = false,
   });
   final Future<bool> Function() ensureReady;
   final int? beaconRssi;
@@ -32,6 +34,7 @@ class WitSensorPanel extends StatefulWidget {
   final String audioScope;
   final ObstacleCueSnapshot? obstacles;
   final Duration Function()? sessionNow;
+  final bool stateOnly;
 
   @override
   State<WitSensorPanel> createState() => _WitSensorPanelState();
@@ -64,7 +67,24 @@ class _WitSensorPanelState extends State<WitSensorPanel>
       _connected && _latest != null && _age.elapsedMilliseconds < 2000;
 
   void _refresh() {
+    if (_connected &&
+        _latest != null &&
+        !_fresh &&
+        sharedHeadTrackingState.snapshot.status != HeadTrackingStatus.stale) {
+      _publish(HeadTrackingStatus.stale, message: '센서 데이터 만료');
+    }
     if (mounted && !_disposed) setState(() {});
+  }
+
+  void _publish(HeadTrackingStatus status, {String? message}) {
+    sharedHeadTrackingState.publish(HeadTrackingSnapshot(
+      status: status,
+      rawYaw: _latest?.z,
+      filteredYaw: _filteredYaw,
+      referenceYaw: _reference,
+      receivedAt: _latest == null ? null : DateTime.now().toUtc(),
+      message: message ?? _status,
+    ));
   }
 
   @override
@@ -88,6 +108,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _yawFilter.reset();
     _filteredYaw = null;
     _status = '권한 확인 중…';
+    _publish(HeadTrackingStatus.connecting);
     _refresh();
     try {
       if (!await widget.ensureReady()) {
@@ -117,6 +138,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
       if (!_current(generation)) return;
       _connected = true;
       _status = '센서 데이터 서비스 확인 중…';
+      _publish(HeadTrackingStatus.connectedUncalibrated);
       _refresh();
       final services = await _device.discoverServices().timeout(
             const Duration(seconds: 15),
@@ -154,6 +176,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             ..reset()
             ..start();
           _status = '센서 각도 수신 중';
+          _publish(_reference == null
+              ? HeadTrackingStatus.connectedUncalibrated
+              : HeadTrackingStatus.ready);
           if (_frames == 1 || _frames % 20 == 0) {
             debugPrint(
               'MOBI_WIT_ANGLES frames=$_frames X=${_latest!.x} Y=${_latest!.y} Z=${_latest!.z}',
@@ -192,6 +217,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _filteredYaw = null;
     _age.stop();
     _status = message;
+    _publish(message.contains('실패') || message.contains('오류')
+        ? HeadTrackingStatus.error
+        : HeadTrackingStatus.disconnected);
     _refresh();
     try {
       await _notifications?.cancel();
@@ -268,7 +296,11 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                 ),
                 OutlinedButton(
                   onPressed: _fresh
-                      ? () => setState(() => _reference = _filteredYaw!)
+                      ? () => setState(() {
+                            _reference = _filteredYaw!;
+                            _publish(HeadTrackingStatus.ready,
+                                message: '정면 보정 완료');
+                          })
                       : null,
                   child: const Text('도로 정면을 기준으로 설정'),
                 ),
@@ -277,7 +309,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             const Text(
               '정류장에서 도로 정면을 보고 기준을 설정하세요. 센서를 머리에 고정하고 좌우 부호를 확인하세요.',
             ),
-            if (!_listeningCheck)
+            if (!widget.stateOnly && !_listeningCheck)
               DirectionAudioPanel(
                 key: const ValueKey('direction-audio'),
                 z: _filteredYaw,
@@ -294,21 +326,22 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                 obstacles: widget.obstacles,
                 sessionNow: widget.sessionNow,
               ),
-            ExpansionTile(
-              key: const ValueKey('spatial-listening-check'),
-              title: const Text('공간 경고음 청취 확인 (검증용)'),
-              onExpansionChanged: (open) =>
-                  setState(() => _listeningCheck = open),
-              children: [
-                if (_listeningCheck)
-                  SpatialWarningCheckPanel(
-                    z: _filteredYaw,
-                    reference: _reference,
-                    fresh: _fresh,
-                    sensorAgeMs: _age.elapsedMilliseconds,
-                  ),
-              ],
-            ),
+            if (!widget.stateOnly)
+              ExpansionTile(
+                key: const ValueKey('spatial-listening-check'),
+                title: const Text('공간 경고음 청취 확인 (검증용)'),
+                onExpansionChanged: (open) =>
+                    setState(() => _listeningCheck = open),
+                children: [
+                  if (_listeningCheck)
+                    SpatialWarningCheckPanel(
+                      z: _filteredYaw,
+                      reference: _reference,
+                      fresh: _fresh,
+                      sensorAgeMs: _age.elapsedMilliseconds,
+                    ),
+                ],
+              ),
           ],
         ),
       ),

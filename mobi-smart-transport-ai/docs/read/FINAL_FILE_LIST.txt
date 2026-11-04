@@ -756,8 +756,11 @@ scripts/android_demo.ps1
 scripts/backup_demo_workspace.py
 docs/rw/ANDROID_DEMO_RUNBOOK_20261109.md
 apps/passenger_app/lib/src/services/vision_screen_audio.dart
+apps/passenger_app/lib/src/services/head_tracking_direction.dart
 apps/passenger_app/lib/src/widgets/vision_screen_audio_panel.dart
 apps/passenger_app/test/vision_screen_audio_test.dart
+apps/passenger_app/test/head_tracking_direction_test.dart
+apps/passenger_app/test/head_tracking_audio_test.dart
 
 apps/passenger_app/lib/src/pages/standalone_vision_page.dart
 apps/passenger_app/test/standalone_vision_test.dart

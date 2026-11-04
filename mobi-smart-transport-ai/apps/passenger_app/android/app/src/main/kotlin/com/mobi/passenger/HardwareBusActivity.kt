@@ -43,7 +43,10 @@ open class HardwareBusActivity : FlutterActivity() {
                         val azimuth = call.argument<Number>("azimuthDegrees")?.toDouble()
                         result.success(if (call.method == "start") engine.start(left, right, age, interval, beaconAge, pattern, azimuth) else engine.update(left, right, age, interval, beaconAge, pattern, azimuth))
                     }
-                    "stop" -> { engine.stop(); result.success(null) }
+                    "stop" -> {
+                        engine.stop()
+                        result.success(mapOf("confirmed" to true, "running" to false, "reason" to "중지 확인"))
+                    }
                     "status" -> result.success(engine.state())
                     else -> result.notImplemented()
                 }

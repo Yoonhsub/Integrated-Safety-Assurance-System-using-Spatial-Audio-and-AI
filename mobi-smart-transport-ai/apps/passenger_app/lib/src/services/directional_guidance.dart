@@ -16,6 +16,7 @@ class DirectionalGuidance {
       required this.text,
       required this.provenance,
       this.testDirection,
+      this.headTrackedAzimuthDegrees,
       this.directionEvidence = DirectionEvidence.unverified});
   static const syntheticProvenance = 'SYNTHETIC_DIRECTIONAL_GUIDANCE';
   static const screenProvenance = 'CAMERA_SCREEN_INFORMATIONAL_PREVIEW';
@@ -23,6 +24,7 @@ class DirectionalGuidance {
   final int authEpoch;
   final GuidancePriority priority;
   final TestDirection? testDirection;
+  final double? headTrackedAzimuthDegrees;
   final DirectionEvidence directionEvidence;
   // A screen projection is reviewed only as a screen cue, never a safe route,
   // head-relative/world-relative direction or a verified physical obstacle.
@@ -45,6 +47,15 @@ class DirectionalGuidance {
         text.length > 1000 ||
         provenance.isEmpty) {
       throw ArgumentError('Invalid local Guidance contract');
+    }
+    final azimuth = headTrackedAzimuthDegrees;
+    if (azimuth != null &&
+        (!azimuth.isFinite ||
+            azimuth < -180 ||
+            azimuth > 180 ||
+            provenance != screenProvenance ||
+            directionEvidence != DirectionEvidence.cameraScreenBbox)) {
+      throw ArgumentError('Invalid head-tracked camera azimuth');
     }
   }
 }
