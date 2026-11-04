@@ -1,0 +1,65 @@
+# 버스 문 모델 학습 산출물
+
+## 목적
+
+버스와 버스 문을 구분하는 YOLO11n 학습 결과를 보관한다. Android 실기기 검증은 개발
+일정의 앱 연동 단계에서 진행하며, 이 문서는 그 전 단계의 학습 완료 기록이다.
+
+## 학습 결과
+
+| 항목 | 값 |
+| --- | --- |
+| 데이터 | 공개 버스 문 이미지 1,884장 |
+| 클래스 | `bus`, `bus_door` |
+| 학습 횟수 | 20 epochs |
+| 전체 mAP50 | 0.993 |
+| 전체 mAP50-95 | 0.890 |
+| `bus` mAP50 / mAP50-95 | 0.995 / 0.965 |
+| `bus_door` mAP50 / mAP50-95 | 0.993 / 0.815 |
+
+## 산출물 보관 위치
+
+학습 원본 가중치와 Android용 변환 모델은 Git LFS로 관리한다.
+
+```text
+ai_vision/models/yolo11n_bus_door_v1.pt
+ai_vision/models/yolo11n_bus_door_v1_float32.tflite
+```
+
+학습 과정의 세부 결과는 로컬 산출물 폴더에 보관한다.
+
+```text
+.tool-tmp/model_artifacts/bus_door_v1/
+├── best.pt
+└── results.csv
+```
+
+`best.pt` SHA-256:
+
+```text
+81C44B1818DE6C86B09D790AB240E7797DFAC6C392222789C00E907158513D86
+```
+
+Android용 `yolo11n_bus_door_v1_float32.tflite` SHA-256:
+
+```text
+7178A76B3ABAA83BFAC0AD9C5B1EA40627560D6AA0E05587B335950A1BFFAA85
+```
+
+## 다음 단계
+
+1. Android 앱에 변환된 TFLite 모델을 넣고 카메라 프레임을 연결한다.
+2. 앱 카메라 입력으로 `bus`·`bus_door` 검출을 확인한다.
+3. 검출 박스를 방향·거리 안내 이벤트로 전달하고 실제 정류장에서 조정한다.
+
+## Android 전 연결 검증
+
+학습에 사용하지 않은 공개 테스트 이미지 한 장에서 실제 `best.pt`를 추론했다.
+버스 1개와 버스 문 2개가 검출됐으며, 안내 후보에는 버스와 가장 신뢰도 높은 버스 문이
+함께 생성됐다. 이때 버스 문 후보는 문 bbox가 버스 bbox 안에 충분히 포함되는지 확인한
+뒤 생성하고, 문 방향은 문 bbox로, 상대 거리·움직임은 버스 차체 bbox로 계산한다.
+
+생성된 JSON은 로컬 검증 산출물이며 GitHub에는 올리지 않는다.
+
+팀원이 모델을 받는 방법과 Android 단계의 변환 절차는
+[버스 문 모델 사용 방법](BUS_DOOR_MODEL_USAGE.md)을 따른다.

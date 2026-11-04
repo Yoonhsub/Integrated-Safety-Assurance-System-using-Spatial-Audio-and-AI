@@ -15,4 +15,8 @@ Schema 후보와 정합한다. 후속 통합 단계(2학기 단계 3)에서 윤�
   - (b) ``warn``  + ``approaching_bus``          + 다중 detection (bus, bus_door, bus_stop)
   - (c) ``danger`` + ``off_sidewalk``            + 다중 detection (roadway, sidewalk)
   - (d) ``danger`` + ``tactile_paving_lost``     + 빈 detections (사건 자체가 "사라짐")
+
+- ``bus_door_guidance_candidate.json`` — AI Vision 안내 후보 예시 1건
+  - 실제 버스 문 모델 검증 결과 형식의 ``bus``·``bus_door`` 후보
+  - Context·Audio 통합 검증용이며, 위험도·음성 문구 정책은 포함하지 않음
 """
