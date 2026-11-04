@@ -136,11 +136,12 @@ class _StandaloneVisionPageState extends State<StandaloneVisionPage>
     }
     final target = targets[_target];
     return Scaffold(
-      appBar: AppBar(title: const Text('LOCAL_DEMO · 휴대폰 단독 시연')),
+      appBar: AppBar(title: const Text('휴대폰 단독 모드')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text(
-            'Backend 미연결 · 로그인·PC·USB 없이 실행합니다. 서버 요청·서버 ACK·안전 Guidance는 없습니다.'),
-        const Text('카메라 → 기기 내부 TFLite → 로컬 결과 → 화면 기준 Cue + 한국어 TTS'),
+        const Text('Backend 미연결 · 휴대폰에서만 실행합니다. 로그인·PC·USB 연결이 필요하지 않습니다.'),
+        const SizedBox(height: 16),
+        Text('카메라로 주변 확인', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: _cameraOpen ? null : _openCamera,
           icon: const Icon(Icons.camera_alt_outlined),

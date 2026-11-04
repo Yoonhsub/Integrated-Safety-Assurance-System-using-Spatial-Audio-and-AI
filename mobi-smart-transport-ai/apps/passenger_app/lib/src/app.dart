@@ -1,3 +1,4 @@
+import 'pages/passenger_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'pages/agent_name_setup_page.dart';
@@ -142,7 +143,7 @@ class _MobiAppState extends State<MobiApp> {
 
     return MaterialApp(
       title: 'MOBI Passenger App',
-      theme: ThemeData(useMaterial3: true),
+      theme: passengerTheme(),
       home: _onlineSelected
           ? Scaffold(
               appBar: AppBar(
@@ -158,83 +159,47 @@ class _MobiAppState extends State<MobiApp> {
                       ),
                     )
                   : _firebasePreparing
-                  ? const Center(child: CircularProgressIndicator())
-                  : AuthGate(
-                      configurationReady: _firebaseReady,
-                      requiredRole: 'passenger',
-                      session: widget.authSession,
-                      appLabel: 'MOBI 승객 앱',
-                      builder: (context, account) => home,
-                    ),
+                      ? const Center(child: CircularProgressIndicator())
+                      : AuthGate(
+                          configurationReady: _firebaseReady,
+                          requiredRole: 'passenger',
+                          session: widget.authSession,
+                          appLabel: 'MOBI 승객 앱',
+                          builder: (context, account) => home,
+                        ),
             )
-          : Scaffold(
-              appBar: AppBar(title: const Text('MOBI Passenger')),
-              body: Builder(
-                builder: (context) => ListView(
-                  padding: const EdgeInsets.all(24),
-                  children: [
-                    const Text('사용할 기능을 선택해 주세요.'),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: () =>
-                          Navigator.of(context).pushNamed('/standalone-vision'),
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text('로컬 시연 · 카메라와 음향'),
-                    ),
-                    const Text(
-                      'LOCAL_DEMO · 로그인·PC·Backend 없이 휴대폰에서 실행합니다. 서버 전송과 안전 Guidance는 없습니다.',
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          Navigator.of(context).pushNamed('/hardware-bus'),
-                      icon: const Icon(Icons.bluetooth_searching),
-                      label: const Text('실기기 연동확인 · BLE/WT901/HRTF'),
-                    ),
-                    const Text(
-                      '로컬 하드웨어 시연 · 비콘 테스트 매핑과 가정 방향 사용 · 실제 위험 Guidance와 분리',
-                    ),
-                    const SizedBox(height: 24),
-                    OutlinedButton(
-                      onPressed: () => setState(() => _onlineSelected = true),
-                      child: const Text('온라인 서비스 · Firebase 로그인'),
-                    ),
-                    const Text(
-                      '온라인 기능에는 인터넷과 Backend 연결이 필요합니다. USB 로컬 서버를 사용하는 경우 PC 연결이 필요합니다.',
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          : PassengerLanding(
+              onOnline: () => setState(() => _onlineSelected = true)),
       routes: <String, WidgetBuilder>{
         // Local hardware diagnostics carry no server identity or Guidance authority.
+        '/device-check': (_) => const DeviceCheckPage(),
         '/hardware-bus': (_) => const HardwareBusPage(),
         '/standalone-vision': (_) => const StandaloneVisionPage(),
         '/native-audio': (_) => AuthGate(
-          configurationReady: _firebaseReady,
-          requiredRole: 'passenger',
-          session: widget.authSession,
-          appLabel: 'MOBI 승객 앱',
-          builder: (context, account) => const NativeAudioPage(),
-        ),
+              configurationReady: _firebaseReady,
+              requiredRole: 'passenger',
+              session: widget.authSession,
+              appLabel: 'MOBI 승객 앱',
+              builder: (context, account) => const NativeAudioPage(),
+            ),
         '/local-vision': (_) => AuthGate(
-          configurationReady: _firebaseReady,
-          requiredRole: 'passenger',
-          session: widget.authSession,
-          appLabel: 'MOBI 승객 앱',
-          builder: (context, account) => const LocalVisionPage(),
-        ),
+              configurationReady: _firebaseReady,
+              requiredRole: 'passenger',
+              session: widget.authSession,
+              appLabel: 'MOBI 승객 앱',
+              builder: (context, account) => const LocalVisionPage(),
+            ),
         '/v3-guidance': (_) => AuthGate(
-          configurationReady: _firebaseReady,
-          requiredRole: 'passenger',
-          session: widget.authSession,
-          appLabel: 'MOBI 승객 앱',
-          builder: (context, account) => V3GuidancePage(
-            agentName: agentName ?? '모비',
-            onReturnToModeSelection: _resetToModeSelection,
-            dataMode: dataMode ?? 'mock',
-          ),
-        ),
+              configurationReady: _firebaseReady,
+              requiredRole: 'passenger',
+              session: widget.authSession,
+              appLabel: 'MOBI 승객 앱',
+              builder: (context, account) => V3GuidancePage(
+                agentName: agentName ?? '모비',
+                onReturnToModeSelection: _resetToModeSelection,
+                dataMode: dataMode ?? 'mock',
+              ),
+            ),
       },
     );
   }

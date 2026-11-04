@@ -1,3 +1,4 @@
+import 'package:mobi_passenger_app/src/pages/passenger_presentation.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,10 @@ void main() {
   testWidgets(
       'hardware diagnostics and standalone Vision both open without auth or autoplay',
       (t) async {
+    t.view.physicalSize = const Size(390, 844);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
     SharedPreferences.setMockInitialValues({});
     final initializing = Completer<bool>();
     final noNetwork = auth.NoNetwork(), previous = HttpOverrides.current;
@@ -29,7 +34,13 @@ void main() {
     try {
       await t.pumpWidget(MobiApp(firebaseInitialization: initializing.future));
       await t.pumpAndSettle();
-      expect(find.text('로컬 시연 · 카메라와 음향'), findsOneWidget);
+      expect(find.text('카메라 인식 시작'), findsOneWidget);
+      await t.ensureVisible(find.text('이어폰·BLE 기기 점검'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('이어폰·BLE 기기 점검'));
+      await t.pumpAndSettle();
+      await t.scrollUntilVisible(find.text('실기기 연동확인 · BLE/WT901/HRTF'), 180);
+      await t.pumpAndSettle();
       await t.tap(find.text('실기기 연동확인 · BLE/WT901/HRTF'));
       await t.pumpAndSettle();
       expect(find.byType(HardwareBusPage), findsOneWidget);
@@ -37,7 +48,11 @@ void main() {
       expect(noNetwork.attempts, 0);
       Navigator.of(t.element(find.byType(HardwareBusPage))).pop();
       await t.pumpAndSettle();
-      await t.tap(find.text('로컬 시연 · 카메라와 음향'));
+      Navigator.of(t.element(find.byType(DeviceCheckPage))).pop();
+      await t.pumpAndSettle();
+      await t.ensureVisible(find.text('카메라 인식 시작'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('카메라 인식 시작'));
       await t.pumpAndSettle();
       expect(find.byType(StandaloneVisionPage), findsOneWidget);
       expect(noNetwork.attempts, 0);

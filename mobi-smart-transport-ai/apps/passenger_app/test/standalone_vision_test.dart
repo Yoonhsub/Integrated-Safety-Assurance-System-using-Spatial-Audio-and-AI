@@ -35,7 +35,9 @@ void main() {
       await t
           .pumpWidget(MobiApp(firebaseInitialization: initialization.future));
       await flush(t);
-      await t.tap(find.text('로컬 시연 · 카메라와 음향'));
+      await t.ensureVisible(find.text('카메라 인식 시작'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('카메라 인식 시작'));
       await t.pump();
       await t.pumpAndSettle();
       expect(find.byType(StandaloneVisionPage), findsOneWidget);
@@ -62,7 +64,9 @@ void main() {
           .pumpWidget(MobiApp(firebaseConfigured: true, authSession: session));
       await flush(t);
       expect(find.text('MOBI 스마트 교통 시스템'), findsNothing);
-      await t.tap(find.text('온라인 서비스 · Firebase 로그인'));
+      await t.ensureVisible(find.text('온라인 서비스 연결'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('온라인 서비스 연결'));
       await flush(t);
       expect(find.text('MOBI 스마트 교통 시스템'), findsOneWidget);
       expect(network.attempts, 0);

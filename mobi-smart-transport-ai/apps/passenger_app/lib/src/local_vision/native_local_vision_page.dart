@@ -357,8 +357,75 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     final item = _pump.observation;
     final busy = _starting || _picking || _stopping != null || _ending;
     return Scaffold(
-        appBar: AppBar(title: const Text('버스 카메라')),
+        appBar: AppBar(title: const Text('카메라 인식')),
+        bottomNavigationBar: SafeArea(
+            child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Wrap(spacing: 12, runSpacing: 8, children: [
+                  if (_previewAudio != null)
+                    FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFB03132)),
+                        onPressed: _previewAudio!.stop,
+                        icon: const Icon(Icons.stop),
+                        label: const Text('음성 중지')),
+                  OutlinedButton.icon(
+                      onPressed:
+                          _camera == null && !_starting ? null : () => _stop(),
+                      icon: const Icon(Icons.videocam_off_outlined),
+                      label: const Text('카메라 중지')),
+                ]))),
         body: ListView(padding: const EdgeInsets.all(16), children: [
+          const SizedBox(height: 12),
+          if (item == null)
+            const SizedBox(
+                height: 160, child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
+          else
+            AspectRatio(
+                aspectRatio: item.width / item.height,
+                child: Stack(fit: StackFit.expand, children: [
+                  Image.memory(item.jpeg,
+                      fit: BoxFit.fill, gaplessPlayback: true),
+                  CustomPaint(painter: _BoxPainter(item.boxes)),
+                ])),
+          if (item != null && item.boxes.isNotEmpty)
+            Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('현재 인식 결과',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          for (final box in item.boxes.take(3))
+                            Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 6),
+                                child: Text(
+                                    '${box.classId == 'bus' ? '버스' : box.classId} · ${(box.confidence * 100).round()}%',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge)),
+                          if (item.boxes.length > 3)
+                            Text('외 ${item.boxes.length - 3}개 · 검출 이미지에서 확인'),
+                        ]))),
+          const SizedBox(height: 12),
+          const Card(
+              child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                      '화면 기준의 정보성 시연입니다. 실제 거리·공간 방향·출입문·승차 가능 여부를 판단하지 않습니다.'))),
+          ExpansionTile(
+              title: const Text('실시간 카메라 Preview'),
+              maintainState: true,
+              children: [
+                if (_camera?.value.isInitialized == true) ...[
+                  const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
+                  AspectRatio(
+                      aspectRatio: _camera!.value.aspectRatio,
+                      child: CameraPreview(_camera!)),
+                ],
+              ]),
           Text(widget.producer == null && widget.onResult == null
               ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
               : _pump.error != null
@@ -382,13 +449,12 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                 onPressed:
                     busy || _model == null || _camera != null ? null : _start,
                 child: const Text('카메라 시작')),
-            OutlinedButton(
-                onPressed: _camera == null && !_starting ? null : () => _stop(),
-                child: const Text('카메라 중지')),
           ]),
           if (_previewAudio != null)
             VisionScreenAudioPanel(
-                audio: _previewAudio!, cameraActive: _pump.active),
+                audio: _previewAudio!,
+                cameraActive: _pump.active,
+                showStopButton: false),
           if (widget.onEndSession != null)
             OutlinedButton(
                 onPressed: busy
@@ -409,27 +475,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               onChanged: busy || _camera != null
                   ? null
                   : (v) => setState(() => _front = v)),
-          if (_camera?.value.isInitialized == true) ...[
-            const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
-            AspectRatio(
-                aspectRatio: _camera!.value.aspectRatio,
-                child: CameraPreview(_camera!)),
-          ],
           if (_worker != null)
             Text(
                 'TFLite 로드 ${_worker!.loadMs.toStringAsFixed(1)}ms · warm-up ${_worker!.warmUpMs.toStringAsFixed(1)}ms'),
-          if (item == null)
-            const SizedBox(
-                height: 160, child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
-          else
-            AspectRatio(
-                aspectRatio: item.width / item.height,
-                child: Stack(fit: StackFit.expand, children: [
-                  Image.memory(item.jpeg,
-                      fit: BoxFit.fill, gaplessPlayback: true),
-                  CustomPaint(painter: _BoxPainter(item.boxes)),
-                ])),
-          if (item != null) VisionObservationPanel.localCamera(item),
           if (widget.remoteApi != null &&
               (widget.producer != null || widget.remoteSessionId != null) &&
               _pump.active &&
@@ -441,11 +489,17 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                 ownerUid: widget.ownerUid,
                 fetch: widget.remoteApi!.fetchVisionObservations,
                 hideSpeechControls: true),
-          Text(
-              '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired} · 중복/역순 거부 ${_pump.rejected}'),
-          Text(
-              '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
-          const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),
+          ExpansionTile(
+              title: const Text('인식 상세 정보'),
+              maintainState: true,
+              children: [
+                if (item != null) VisionObservationPanel.localCamera(item),
+                Text(
+                    '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired} · 중복/역순 거부 ${_pump.rejected}'),
+                Text(
+                    '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
+                const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),
+              ]),
         ]));
   }
 }
