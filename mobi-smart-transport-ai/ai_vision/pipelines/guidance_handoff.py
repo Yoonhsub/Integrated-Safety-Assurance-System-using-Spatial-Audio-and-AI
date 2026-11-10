@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from spatial_guidance import SpatialGuidance, interpret_bus_door_guidance, interpret_bus_guidance
+from spatial_guidance import (
+    SpatialGuidance,
+    interpret_bus_door_guidance,
+    interpret_bus_guidance,
+    interpret_bus_stop_guidance,
+    interpret_obstacle_guidance,
+)
 from vision_result import VisionResult
 
 if TYPE_CHECKING:
@@ -64,7 +70,13 @@ def build_vision_guidance_handoff(
     """
     bus_guidance = interpret_bus_guidance(current, previous)
     door_guidance = interpret_bus_door_guidance(current, previous)
-    candidates = tuple(candidate for candidate in (bus_guidance, door_guidance) if candidate is not None)
+    stop_guidance = interpret_bus_stop_guidance(current, previous)
+    obstacle_guidance = interpret_obstacle_guidance(current, previous)
+    candidates = tuple(
+        candidate
+        for candidate in (bus_guidance, door_guidance, *obstacle_guidance, stop_guidance)
+        if candidate is not None
+    )
     if stabilizer is not None:
         candidates = stabilizer.filter(candidates, captured_at=current.captured_at)
     return VisionGuidanceHandoff(

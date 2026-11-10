@@ -98,6 +98,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           priority: widget.previewPriority!,
           engine: widget.previewEngine!,
           sessionGeneration: widget.previewScope,
+          confirmationFrames: 3,
+          requireDoorInBus: true,
           isCurrent: () =>
               mounted &&
               !_disposing &&
