@@ -11,7 +11,7 @@ from ai_vision.pipelines.detection_result import (BoundingBox, Detection, Detect
 from ai_vision.pipelines.vision_input import VisionInferenceRequest, VisionInputSource
 from ai_vision.pipelines.vision_provider import ProviderConfigurationError
 from ai_vision.pipelines.tflite_decoding import (make_letterbox_transform,
-    _preprocess_bgr_image, decode_bus_detections, decode_bus_door_detections)
+    _preprocess_bgr_image, decode_bus_detections, decode_bus_door_detections, decode_unified_detections)
 
 # Explicit artifact identity prevents a two-class obstacle model being decoded as bus/door.
 PROFILES = {
@@ -19,8 +19,19 @@ PROFILES = {
                  'channels': 84, 'classes': ('bus',), 'name': 'yolo11n_coco_bus_baseline_float32'},
     'bus-door': {'sha256': '7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85',
                  'channels': 6, 'classes': ('bus', 'bus_door'), 'name': 'yolo11n_bus_door_v1_float32'},
+    'unified-v4': {'sha256': '3a469c2dadf78e760cba7c836b1d63ff95f5e5c28291293716f7225eea96df56',
+                   'channels': 10,
+                   'classes': ('bus', 'bus_door', 'parked_pm', 'pole', 'tree_trunk', 'bus_stop'),
+                   'name': 'yolo11n_unified_bus_obstacle_stop_v4_float32'},
 }
-NAMES = {'bus': '버스', 'bus_door': '버스 문'}
+NAMES = {
+    'bus': '버스',
+    'bus_door': '버스 문',
+    'bus_stop': '버스 정류장',
+    'parked_pm': '방치 전동 킥보드',
+    'pole': '보도 기둥',
+    'tree_trunk': '나무 줄기',
+}
 
 
 def adapt_vision_result(payload, request: VisionInferenceRequest, model: ModelInfo, allowed_classes):
@@ -74,7 +85,8 @@ class TFLiteVisionProvider:
                 raise ValueError('Unexpected tensor shape/dtype')
         except Exception as exc:
             raise ProviderConfigurationError('Could not initialize verified TFLite runtime/tensors') from exc
-        self.model_info = ModelInfo('tflite',self.profile['name'],'0d2b911', 'sha256:'+self.profile['sha256'])
+        version = 'v4' if profile == 'unified-v4' else '0d2b911'
+        self.model_info = ModelInfo('tflite',self.profile['name'],version, 'sha256:'+self.profile['sha256'])
         self.last_timings = {}
         self._lock = threading.RLock()
 
@@ -114,7 +126,13 @@ class TFLiteVisionProvider:
                 return self._error(request,'INFERENCE_FAILED')
             try:
                 started = time.perf_counter()
-                decoder = decode_bus_detections if self.profile_name == 'coco-bus' else decode_bus_door_detections
+                decoder = (
+                    decode_bus_detections
+                    if self.profile_name == 'coco-bus'
+                    else decode_unified_detections
+                    if self.profile_name == 'unified-v4'
+                    else decode_bus_door_detections
+                )
                 raw = decoder(output,transform=transform)
                 detections = []
                 for box in raw:

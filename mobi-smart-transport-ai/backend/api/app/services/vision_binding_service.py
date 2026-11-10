@@ -305,9 +305,14 @@ class VisionBindingService:
                 # Door display is restricted to the independently checked artifact profile.
                 model = result.get("modelInfo", {})
                 door_profile = (model.get("provider") == "tflite"
-                    and model.get("name") == "yolo11n_bus_door_v1_float32"
-                    and model.get("version") == "0d2b911"
-                    and model.get("identifier") == "sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85")
+                    and (
+                        (model.get("name") == "yolo11n_bus_door_v1_float32"
+                         and model.get("version") == "0d2b911"
+                         and model.get("identifier") == "sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85")
+                        or (model.get("name") == "yolo11n_unified_bus_obstacle_stop_v4_float32"
+                            and model.get("version") == "v4"
+                            and model.get("identifier") == "sha256:3a469c2dadf78e760cba7c836b1d63ff95f5e5c28291293716f7225eea96df56")
+                    ))
                 allowed = ("bus", "bus_door") if door_profile else ("bus",)
                 classes = [c for c in allowed if status == "ok" and any(
                     d["classId"] == c for d in result["detections"])]

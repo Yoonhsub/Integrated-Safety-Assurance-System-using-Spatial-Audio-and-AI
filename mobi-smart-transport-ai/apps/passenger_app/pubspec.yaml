@@ -39,5 +39,6 @@ flutter:
   assets:
     - assets/mock_voice/
     - assets/models/yolo11n_bus_door_v1_float32.tflite
+    - assets/models/yolo11n_unified_bus_obstacle_stop_v4_float32.tflite
   shaders:
     - assets/shaders/voice_aurora.frag

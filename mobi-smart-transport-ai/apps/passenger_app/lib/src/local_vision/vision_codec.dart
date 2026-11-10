@@ -14,12 +14,45 @@ String _frameId() {
 
 const busDoorModelHash =
     '7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85';
-void verifyModel(Uint8List bytes) {
-  if (bytes.isEmpty ||
-      bytes.length > 16 * 1024 * 1024 ||
-      sha256.convert(bytes).toString() != busDoorModelHash) {
-    throw const FormatException('버스·문 모델 SHA256이 일치하지 않습니다.');
+const unifiedV4ModelHash =
+    '3a469c2dadf78e760cba7c836b1d63ff95f5e5c28291293716f7225eea96df56';
+
+const unifiedV4ClassIds = <String>[
+  'bus',
+  'bus_door',
+  'parked_pm',
+  'pole',
+  'tree_trunk',
+  'bus_stop',
+];
+
+const unifiedV4Thresholds = <String, double>{
+  'bus': 0.50,
+  'bus_door': 0.55,
+  'parked_pm': 0.55,
+  'pole': 0.55,
+  'tree_trunk': 0.55,
+  'bus_stop': 0.60,
+};
+
+const visionClassNames = <String, String>{
+  'bus': '버스',
+  'bus_door': '버스 문',
+  'parked_pm': '방치 전동 킥보드',
+  'pole': '보도 기둥',
+  'tree_trunk': '나무 줄기',
+  'bus_stop': '버스 정류장',
+};
+
+String verifyModel(Uint8List bytes) {
+  if (bytes.isEmpty || bytes.length > 16 * 1024 * 1024) {
+    throw const FormatException('모델 파일 크기 오류');
   }
+  final digest = sha256.convert(bytes).toString();
+  if (digest != unifiedV4ModelHash && digest != busDoorModelHash) {
+    throw const FormatException('승인된 비전 모델 SHA256이 일치하지 않습니다.');
+  }
+  return digest;
 }
 
 class FramePlane {
@@ -196,19 +229,29 @@ PreparedFrame prepareFrame(VisionFrame frame) {
 
 List<LocalBox> decodeBoxes(Float32List output, PreparedFrame frame,
     {int candidates = 8400}) {
-  if (output.length != 6 * candidates) {
+  final List<String> classIds;
+  final Map<String, double> thresholds;
+  if (output.length == 10 * candidates) {
+    classIds = unifiedV4ClassIds;
+    thresholds = unifiedV4Thresholds;
+  } else if (output.length == 6 * candidates) {
+    classIds = const ['bus', 'bus_door'];
+    thresholds = const {'bus': 0.50, 'bus_door': 0.50};
+  } else {
     throw const FormatException('출력 tensor 크기 오류');
   }
   final boxes = <LocalBox>[];
   double bounded(double v, int size) => v.clamp(0, size.toDouble());
-  for (var c = 0; c < 2; c++) {
+  for (var c = 0; c < classIds.length; c++) {
+    final classId = classIds[c];
+    final minScore = thresholds[classId] ?? 0.50;
     final raw = <LocalBox>[];
     for (var i = 0; i < candidates; i++) {
       final score = output[(4 + c) * candidates + i];
       if (!score.isFinite || score < 0 || score > 1) {
         throw const FormatException('잘못된 confidence');
       }
-      if (score < .5) continue;
+      if (score < minScore) continue;
       final cx = output[i],
           cy = output[candidates + i],
           w = output[2 * candidates + i],
@@ -222,8 +265,8 @@ List<LocalBox> decodeBoxes(Float32List output, PreparedFrame frame,
       final x2 = bounded(((cx + w / 2) * 640 - frame.padX) / frame.scaleX, iw);
       final y2 = bounded(((cy + h / 2) * 640 - frame.padY) / frame.scaleY, ih);
       if (x2 > x1 && y2 > y1) {
-        raw.add(LocalBox(c == 0 ? 'bus' : 'bus_door', score, x1 / iw, y1 / ih,
-            (x2 - x1) / iw, (y2 - y1) / ih));
+        raw.add(LocalBox(classId, score, x1 / iw, y1 / ih, (x2 - x1) / iw,
+            (y2 - y1) / ih));
       }
     }
     raw.sort((a, b) => b.confidence.compareTo(a.confidence));
@@ -245,12 +288,16 @@ double _iou(LocalBox a, LocalBox b) {
 
 class LocalObservation {
   LocalObservation(this.frame, this.jpeg, this.boxes, this.width, this.height,
-      this.inferenceMs, this.processingMs);
+      this.inferenceMs, this.processingMs,
+      {this.modelName = 'yolo11n_unified_bus_obstacle_stop_v4_float32',
+      this.modelVersion = 'v4',
+      this.modelHash = unifiedV4ModelHash});
   final VisionFrame frame;
   final Uint8List jpeg;
   final List<LocalBox> boxes;
   final int width, height;
   final double inferenceMs, processingMs;
+  final String modelName, modelVersion, modelHash;
 
   /// Shared DetectionResult wire contract, never a Safety Event or a trusted
   /// server observation. capturedAt remains the host callback receipt time.
@@ -266,7 +313,8 @@ class LocalObservation {
       throw const FormatException('잘못된 프레임 메타데이터');
     }
     final detections = boxes.map((b) {
-      if (!['bus', 'bus_door'].contains(b.classId) ||
+      final className = visionClassNames[b.classId];
+      if (className == null ||
           ![b.confidence, b.x, b.y, b.w, b.h].every((v) => v.isFinite) ||
           b.confidence < 0 ||
           b.confidence > 1 ||
@@ -280,7 +328,7 @@ class LocalObservation {
       }
       return <String, Object?>{
         'classId': b.classId,
-        'className': b.classId == 'bus' ? '버스' : '버스 문',
+        'className': className,
         'confidence': b.confidence,
         'bbox': {'x': b.x, 'y': b.y, 'w': b.w, 'h': b.h},
       };
@@ -294,9 +342,9 @@ class LocalObservation {
       'imageSize': {'width': width, 'height': height},
       'modelInfo': {
         'provider': 'tflite',
-        'name': 'yolo11n_bus_door_v1_float32',
-        'version': '0d2b911',
-        'identifier': 'sha256:$busDoorModelHash',
+        'name': modelName,
+        'version': modelVersion,
+        'identifier': 'sha256:$modelHash',
       },
       'detections': detections,
     };

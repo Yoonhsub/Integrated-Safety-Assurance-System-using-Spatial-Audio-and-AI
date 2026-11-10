@@ -39,7 +39,7 @@ class VisionObservationPanel extends StatefulWidget {
       if (observation.boxes.isEmpty) const Text('현재 검출 객체 없음 · 안전함을 의미하지 않음'),
       for (final b in observation.boxes)
         Text(
-            '${b.classId == 'bus' ? '버스' : '버스 문'} · ${b.confidence.toStringAsFixed(3)} · bbox [${b.x.toStringAsFixed(3)}, ${b.y.toStringAsFixed(3)}, ${b.w.toStringAsFixed(3)}, ${b.h.toStringAsFixed(3)}]'),
+            '${visionClassNames[b.classId] ?? b.classId} · ${b.confidence.toStringAsFixed(3)} · bbox [${b.x.toStringAsFixed(3)}, ${b.y.toStringAsFixed(3)}, ${b.w.toStringAsFixed(3)}, ${b.h.toStringAsFixed(3)}]'),
     ]);
   }
 

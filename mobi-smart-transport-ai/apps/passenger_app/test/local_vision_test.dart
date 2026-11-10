@@ -209,7 +209,11 @@ void main() {
         Uint8List(0),
         [
           const LocalBox('bus', .9, .1, .2, .3, .4),
-          const LocalBox('bus_door', .7, .5, .2, .1, .3)
+          const LocalBox('bus_door', .7, .5, .2, .1, .3),
+          const LocalBox('parked_pm', .8, .2, .3, .2, .2),
+          const LocalBox('pole', .75, .4, .1, .1, .5),
+          const LocalBox('tree_trunk', .82, .6, .1, .15, .6),
+          const LocalBox('bus_stop', .88, .1, .1, .4, .5),
         ],
         2,
         2,
@@ -219,11 +223,13 @@ void main() {
     expect(json['source'], 'android_camera');
     expect(json['status'], 'ok');
     expect(json['capturedAt'], f.receivedAt.toIso8601String());
-    expect(
-        (json['modelInfo'] as Map)['identifier'], 'sha256:$busDoorModelHash');
+    expect((json['modelInfo'] as Map)['identifier'],
+        'sha256:$unifiedV4ModelHash');
+    expect((json['modelInfo'] as Map)['name'],
+        'yolo11n_unified_bus_obstacle_stop_v4_float32');
     expect(json.containsKey('guidanceEligible'), false);
     expect((json['detections'] as List).map((d) => d['className']),
-        ['버스', '버스 문']);
+        ['버스', '버스 문', '방치 전동 킥보드', '보도 기둥', '나무 줄기', '버스 정류장']);
     final evidence = Platform.environment['MOBI_ANDROID_SCHEMA_EVIDENCE'];
     if (evidence != null) {
       File(evidence).writeAsStringSync(jsonEncode([
@@ -388,6 +394,33 @@ void main() {
         throwsFormatException);
     out[8] = double.nan;
     expect(() => decodeBoxes(out, p, candidates: 2), throwsFormatException);
+  });
+  test('unified v4 [1, 10, N] output decodes all 6 classes with thresholds',
+      () {
+    final p = prepareFrame(frame(0));
+    // 2 candidates: candidate 0 has all 6 classes above threshold; candidate 1 has bus_stop=0.58 (<0.60 threshold)
+    final out = Float32List.fromList([
+      .5, .5, // cx
+      .5, .5, // cy
+      .4, .4, // w
+      .4, .4, // h
+      .90, .80, // bus (>=0.50, suppressed by NMS)
+      .85, .50, // bus_door (>=0.55 for c0, <0.55 for c1)
+      .75, .54, // parked_pm (>=0.55 for c0)
+      .70, .00, // pole (>=0.55 for c0)
+      .65, .00, // tree_trunk (>=0.55 for c0)
+      .62, .58, // bus_stop (>=0.60 for c0, <0.60 for c1)
+    ]);
+    final boxes = decodeBoxes(out, p, candidates: 2);
+    expect(boxes.map((b) => b.classId), [
+      'bus',
+      'bus_door',
+      'parked_pm',
+      'pole',
+      'tree_trunk',
+      'bus_stop',
+    ]);
+    expect(boxes.first.confidence, closeTo(.90, 1e-6));
   });
   test('model pixel placement agrees with Python tie-to-even', () {
     expect(roundModelPixel(158.5), 158);

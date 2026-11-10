@@ -93,7 +93,13 @@ Future<void> _runWorker((SendPort, Uint8List) args) async {
   final port = ReceivePort();
   args.$1.send(port.sendPort);
   try {
-    verifyModel(args.$2);
+    final modelHash = verifyModel(args.$2);
+    final isUnifiedV4 = modelHash == unifiedV4ModelHash;
+    final expectedOutputShape = isUnifiedV4 ? '1,10,8400' : '1,6,8400';
+    final modelName = isUnifiedV4
+        ? 'yolo11n_unified_bus_obstacle_stop_v4_float32'
+        : 'yolo11n_bus_door_v1_float32';
+    final modelVersion = isUnifiedV4 ? 'v4' : '0d2b911';
     final watch = Stopwatch()..start();
     final options = InterpreterOptions()..threads = 2;
     try {
@@ -107,7 +113,7 @@ Future<void> _runWorker((SendPort, Uint8List) args) async {
     if (interpreter.getInputTensors().length != 1 ||
         interpreter.getOutputTensors().length != 1 ||
         input.shape.join(',') != '1,640,640,3' ||
-        output.shape.join(',') != '1,6,8400' ||
+        output.shape.join(',') != expectedOutputShape ||
         input.type != TensorType.float32 ||
         output.type != TensorType.float32) {
       throw StateError('지원하지 않는 모델 tensor 형식');
@@ -144,7 +150,10 @@ Future<void> _runWorker((SendPort, Uint8List) args) async {
             prepared.image.width,
             prepared.image.height,
             inference.elapsedMicroseconds / 1000,
-            watch.elapsedMicroseconds / 1000));
+            watch.elapsedMicroseconds / 1000,
+            modelName: modelName,
+            modelVersion: modelVersion,
+            modelHash: modelHash));
       } catch (_) {
         args.$1.send('프레임 변환 또는 TFLite 추론 실패');
       }
