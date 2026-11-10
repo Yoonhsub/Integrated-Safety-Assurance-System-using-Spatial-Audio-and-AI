@@ -738,6 +738,7 @@ apps/passenger_app/test/camera_backend_session_test.dart
 apps/passenger_app/android/app/src/debug/res/xml/passenger_debug_network.xml
 apps/passenger_app/android/app/src/main/kotlin/com/example/mobi_passenger_app/LocalStereoCue.kt
 apps/passenger_app/assets/models/yolo11n_bus_door_v1_float32.tflite
+apps/passenger_app/assets/models/yolo11n_unified_bus_obstacle_stop_v4_float32.tflite
 apps/passenger_app/config/android-usb.example.json
 apps/passenger_app/lib/src/pages/native_audio_page.dart
 apps/passenger_app/test/android_runtime_configuration_test.dart

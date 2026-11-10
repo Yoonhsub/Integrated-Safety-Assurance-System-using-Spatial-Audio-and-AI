@@ -1431,6 +1431,36 @@ def test_passenger_phone_start_send_read_stop_restart_without_admin(client, monk
     assert client.post(path + "/events", headers=headers("alice"), json=phone_payload(fresh)).status_code == 202
 
 
+@pytest.mark.parametrize("recognized", [True, False])
+def test_passenger_phone_v4_preserves_observation_details_without_guidance(client, recognized):
+    h = headers("alice")
+    sid = client.post("/guidance/session", headers=h, json={}).json()["sessionId"]
+    root = f"/ai-vision/v2/sessions/{sid}"
+    binding = client.post(root + "/phone-camera", headers=h).json()
+    payload = phone_payload(binding)
+    result = payload["detectionResult"]
+    result["modelInfo"].update(
+        provider="tflite", name="yolo11n_unified_bus_obstacle_stop_v4_float32", version="v4",
+        identifier=("sha256:3a469c2dadf78e760cba7c836b1d63ff95f5e5c28291293716f7225eea96df56"
+                    if recognized else "sha256:" + "0" * 64),
+    )
+    result["detections"] = [
+        dict(classId=cls, className=name, confidence=.8, bbox=dict(x=.1, y=.2, w=.2, h=.3))
+        for cls, name in (("parked_pm", "방치 전동 킥보드"), ("pole", "보도 기둥"), ("tree_trunk", "나무 줄기"))
+    ]
+    response = client.post(root + "/phone-camera/events", headers=h, json=payload)
+    assert response.status_code == 202, response.text
+    assert response.json()["guidanceEligible"] is False
+    duplicate = client.post(root + "/phone-camera/events", headers=h, json=payload)
+    assert duplicate.status_code == 202 and duplicate.json() == response.json()
+    observation = client.get(root + "/observations", headers=h).json()["observations"][0]
+    assert observation["frameId"] == payload["visionEventId"]
+    assert observation["detections"] == (result["detections"] if recognized else [])
+    assert observation["observedClasses"] == []
+    proof = client.get(root + "/observations?proofOnly=true", headers=h)
+    assert proof.status_code == 200 and not proof.json()["observations"]
+
+
 def test_passenger_phone_cannot_bind_other_user_or_survive_reset(client):
     sid = client.post("/guidance/session", headers=headers("alice"), json={}).json()["sessionId"]
     path = f"/ai-vision/v2/sessions/{sid}/phone-camera"
