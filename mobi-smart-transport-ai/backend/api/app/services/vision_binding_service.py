@@ -304,11 +304,19 @@ class VisionBindingService:
                 # Authenticated producer assertion, NOT model/capture attestation.
                 # Door display is restricted to the independently checked artifact profile.
                 model = result.get("modelInfo", {})
-                door_profile = (model.get("provider") == "tflite"
-                    and model.get("name") == "yolo11n_bus_door_v1_float32"
+                is_tflite = model.get("provider") == "tflite"
+                door_v1_profile = is_tflite and (
+                    model.get("name") == "yolo11n_bus_door_v1_float32"
                     and model.get("version") == "0d2b911"
-                    and model.get("identifier") == "sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85")
-                allowed = ("bus", "bus_door") if door_profile else ("bus",)
+                    and model.get("identifier") == "sha256:7178a76b3abaa83bfac0ad9c5b1ea40627560d6aa0e05587b335950a1bffaa85"
+                )
+                unified_v4_profile = is_tflite and (
+                    model.get("name") == "yolo11n_unified_bus_obstacle_stop_v4_float32"
+                    and model.get("version") == "v4"
+                    and model.get("identifier") == "sha256:3a469c2dadf78e760cba7c836b1d63ff95f5e5c28291293716f7225eea96df56"
+                )
+                allowed = ("bus", "bus_door") if door_v1_profile or unified_v4_profile else ("bus",)
+                detail_classes = (*allowed, "parked_pm", "pole", "tree_trunk", "bus_stop") if unified_v4_profile else allowed
                 classes = [c for c in allowed if status == "ok" and any(
                     d["classId"] == c for d in result["detections"])]
                 phrases = {"bus": "버스가 감지되었습니다", "bus_door": "버스 문이 감지되었습니다"}
@@ -322,7 +330,7 @@ class VisionBindingService:
                     observedClasses=classes,
                     frameId=result.get("frameId"), imageSize=result.get("imageSize"),
                     detections=[dict(d, bbox=dict(d["bbox"])) for d in result["detections"]
-                                if status == "ok" and d["classId"] in allowed],
+                                if status == "ok" and d["classId"] in detail_classes],
                     message=". ".join(phrases[c] for c in classes) if classes else "현재 관찰된 대상 객체가 없습니다",
                     inferenceStatus=status)
                 record = self.ledger.commit(principal.uid, request, candidate, validate_new,

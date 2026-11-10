@@ -6,7 +6,7 @@ wall-clock timestamp generation or taxonomy wording is imported.
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from ai_vision.pipelines.detection_result import ImageSize
 
 class VisionResultValidationError(ValueError):
@@ -30,6 +30,16 @@ DEFAULT_BUS_CONFIDENCE_THRESHOLD = 0.50
 DEFAULT_NMS_IOU_THRESHOLD = 0.45
 DEFAULT_MODEL_NAME = "yolov11n"
 DEFAULT_MODEL_VERSION = "coco-tflite-float32-baseline"
+
+UNIFIED_CLASS_IDS = ("bus", "bus_door", "parked_pm", "pole", "tree_trunk", "bus_stop")
+DEFAULT_UNIFIED_CONFIDENCE_THRESHOLDS = {
+    "bus": 0.50,
+    "bus_door": 0.55,
+    "parked_pm": 0.55,
+    "pole": 0.55,
+    "tree_trunk": 0.55,
+    "bus_stop": 0.60,
+}
 
 # 이 SavedModel 기반 export는 box 좌표도 640 pixel 값이 아니라 0~1 비율로 낸다.
 TFLITE_OUTPUT_COORDINATES_NORMALIZED = True
@@ -215,6 +225,54 @@ def decode_bus_door_detections(
     return [
         detection
         for class_id in ("bus", "bus_door")
+        for detection in non_maximum_suppression(by_class[class_id], iou_threshold=nms_iou_threshold)
+    ]
+
+
+def decode_unified_detections(
+    output: Sequence[Sequence[Sequence[float]]],
+    *,
+    transform: LetterboxTransform,
+    confidence_thresholds: Mapping[str, float] | None = None,
+    nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+) -> list[RawDetection]:
+    """통합 v4 모델의 ``[1, 10, 8400]`` 출력을 여섯 클래스로 해석한다."""
+    if len(output) != 1 or len(output[0]) != 4 + len(UNIFIED_CLASS_IDS):
+        raise VisionResultValidationError("expected unified TFLite output shape [1, 10, candidate_count]")
+
+    channels = output[0]
+    candidate_count = len(channels[0])
+    if candidate_count <= 0 or any(len(channel) != candidate_count for channel in channels):
+        raise VisionResultValidationError("TFLite output channels must have equal non-zero length")
+
+    thresholds = dict(DEFAULT_UNIFIED_CONFIDENCE_THRESHOLDS)
+    if confidence_thresholds is not None:
+        thresholds.update({class_id: float(value) for class_id, value in confidence_thresholds.items()})
+    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in thresholds.values()):
+        raise VisionResultValidationError("confidence thresholds must be in [0, 1]")
+
+    by_class: dict[str, list[RawDetection]] = {class_id: [] for class_id in UNIFIED_CLASS_IDS}
+    for index in range(candidate_count):
+        source_box = _model_box_to_source(
+            center_x=float(channels[0][index]),
+            center_y=float(channels[1][index]),
+            width=float(channels[2][index]),
+            height=float(channels[3][index]),
+            transform=transform,
+        )
+        if source_box is None:
+            continue
+        for class_offset, class_id in enumerate(UNIFIED_CLASS_IDS):
+            score = float(channels[4 + class_offset][index])
+            if not math.isfinite(score) or not 0 <= score <= 1:
+                raise VisionResultValidationError("invalid model confidence")
+            if score >= thresholds[class_id]:
+                by_class[class_id].append(
+                    RawDetection(class_id=class_id, score=score, x1=source_box[0], y1=source_box[1], x2=source_box[2], y2=source_box[3])
+                )
+    return [
+        detection
+        for class_id in UNIFIED_CLASS_IDS
         for detection in non_maximum_suppression(by_class[class_id], iou_threshold=nms_iou_threshold)
     ]
 

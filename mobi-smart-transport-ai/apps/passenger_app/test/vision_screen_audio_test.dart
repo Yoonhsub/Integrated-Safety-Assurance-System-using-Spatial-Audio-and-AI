@@ -465,4 +465,64 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      '3-frame consecutive confirmation and 70% door-in-bus overlap filter work as expected',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        confirmationFrames: 3,
+        requireDoorInBus: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // 1. Standalone bus_door (no bus overlap) should be filtered out even after 3 frames.
+    for (var i = 1; i <= 3; i++) {
+      now = i;
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus_door', .95, .4, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 0);
+    expect(port.active, isNull);
+
+    // 2. Jittering direction resets streak before reaching 3 frames.
+    a.observe(detection(10, x: .05).toDetectionResult(), age: Duration.zero);
+    a.observe(detection(11, x: .05).toDetectionResult(), age: Duration.zero);
+    a.observe(detection(12, x: .75).toDetectionResult(), age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 0);
+
+    // 3. Valid bus_door inside bus (>=70% overlap) confirmed for 3 consecutive frames admits cue.
+    for (var i = 20; i < 23; i++) {
+      now = i;
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus', .85, .1, .1, .8, .8),
+            const LocalBox('bus_door', .92, .4, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 1);
+    expect(a.diagnostic['className'], '버스 문');
+    expect(port.active?['direction'], 'CENTER');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }

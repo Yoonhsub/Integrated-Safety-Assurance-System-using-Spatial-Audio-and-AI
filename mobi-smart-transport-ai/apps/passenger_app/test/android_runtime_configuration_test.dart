@@ -46,9 +46,17 @@ void main() {
   });
   testWidgets('bundled approved model can be prepared without file selection',
       (tester) async {
+    final unified = await rootBundle.load(
+        'assets/models/yolo11n_unified_bus_obstacle_stop_v4_float32.tflite');
+    expect(
+        verifyModel(unified.buffer
+            .asUint8List(unified.offsetInBytes, unified.lengthInBytes)),
+        unifiedV4ModelHash);
     final data = await rootBundle
         .load('assets/models/yolo11n_bus_door_v1_float32.tflite');
-    verifyModel(
-        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+    expect(
+        verifyModel(
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes)),
+        busDoorModelHash);
   });
 }

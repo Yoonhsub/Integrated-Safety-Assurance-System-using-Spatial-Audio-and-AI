@@ -1,6 +1,6 @@
-"""버스·버스 문 탐지 결과를 화면 기준의 안내 정보로 해석한다.
+"""버스·버스 문·정류장·보행 장애물 탐지 결과를 화면 기준의 안내 정보로 해석한다.
 
-이 모듈은 실제 거리 측정기가 아니다. 단일 카메라 프레임에서 버스 bbox가
+이 모듈은 실제 거리 측정기가 아니다. 단일 카메라 프레임에서 객체 bbox가
 차지하는 비율을 사용해 ``FAR/MEDIUM/NEAR``라는 *상대적 화면 거리 단계*를
 만들고, 연속 프레임의 비율 변화를 사용해 접근 여부를 추정한다. 실제 미터
 거리나 충돌 위험도는 이후 Context/SAL 계층에서 별도 센서와 함께 판단해야 한다.
@@ -44,6 +44,11 @@ class MotionState(StrEnum):
 MEDIUM_AREA_THRESHOLD = 0.05
 NEAR_AREA_THRESHOLD = 0.20
 
+# 보행 장애물(전동 킥보드·기둥·나무 줄기)은 버스보다 작으므로 별도 면적 임계값을 쓴다.
+OBSTACLE_MEDIUM_AREA_THRESHOLD = 0.02
+OBSTACLE_NEAR_AREA_THRESHOLD = 0.08
+OBSTACLE_CLASS_IDS = ("parked_pm", "pole", "tree_trunk")
+
 # 이전 프레임보다 25% 이상 커지거나 20% 이상 작아질 때만 움직임으로 안내한다.
 # 작은 detector 흔들림으로 접근/이탈 안내가 반복되는 일을 줄이기 위한 여유값이다.
 APPROACHING_AREA_RATIO = 1.25
@@ -56,7 +61,7 @@ MIN_DOOR_IN_BUS_OVERLAP = 0.70
 
 @dataclass(frozen=True)
 class SpatialGuidance:
-    """한 프레임의 버스 대상 안내 후보.
+    """한 프레임의 대상 안내 후보.
 
     ``relative_distance``는 화면상 크기 단계이고, ``motion``은 이전 프레임과
     비교할 수 있을 때만 확정한다. 음성 모듈은 이 객체를 받아 문장화할 수 있다.
@@ -103,10 +108,15 @@ def _direction(detection: VisionDetection) -> ScreenDirection:
     return ScreenDirection.CENTER
 
 
-def _relative_distance(area: float) -> RelativeDistance:
-    if area >= NEAR_AREA_THRESHOLD:
+def _relative_distance(
+    area: float,
+    *,
+    medium_threshold: float = MEDIUM_AREA_THRESHOLD,
+    near_threshold: float = NEAR_AREA_THRESHOLD,
+) -> RelativeDistance:
+    if area >= near_threshold:
         return RelativeDistance.NEAR
-    if area >= MEDIUM_AREA_THRESHOLD:
+    if area >= medium_threshold:
         return RelativeDistance.MEDIUM
     return RelativeDistance.FAR
 
@@ -201,3 +211,56 @@ def interpret_bus_door_guidance(
             normalized_area=_area(door),
         )
     return None
+
+
+def interpret_bus_stop_guidance(
+    current: VisionResult,
+    previous: VisionResult | None = None,
+) -> SpatialGuidance | None:
+    """현재 프레임에서 가장 큰 버스 정류장(``bus_stop``)의 안내 후보를 만든다."""
+    current_stop = _largest_detection(current, "bus_stop")
+    if current_stop is None:
+        return None
+    previous_stop = _largest_detection(previous, "bus_stop") if previous is not None else None
+    current_area = _area(current_stop)
+    previous_area = _area(previous_stop) if previous_stop is not None else None
+    return SpatialGuidance(
+        frame_id=current.frame_id,
+        class_id=current_stop.class_id,
+        direction=_direction(current_stop),
+        relative_distance=_relative_distance(current_area),
+        motion=_motion(current_area, previous_area),
+        confidence=current_stop.score,
+        normalized_area=current_area,
+    )
+
+
+def interpret_obstacle_guidance(
+    current: VisionResult,
+    previous: VisionResult | None = None,
+) -> tuple[SpatialGuidance, ...]:
+    """보행 장애물 클래스(``parked_pm``, ``pole``, ``tree_trunk``)별 안내 후보를 만든다."""
+    candidates: list[SpatialGuidance] = []
+    for class_id in OBSTACLE_CLASS_IDS:
+        item = _largest_detection(current, class_id)
+        if item is None:
+            continue
+        prev_item = _largest_detection(previous, class_id) if previous is not None else None
+        current_area = _area(item)
+        previous_area = _area(prev_item) if prev_item is not None else None
+        candidates.append(
+            SpatialGuidance(
+                frame_id=current.frame_id,
+                class_id=item.class_id,
+                direction=_direction(item),
+                relative_distance=_relative_distance(
+                    current_area,
+                    medium_threshold=OBSTACLE_MEDIUM_AREA_THRESHOLD,
+                    near_threshold=OBSTACLE_NEAR_AREA_THRESHOLD,
+                ),
+                motion=_motion(current_area, previous_area),
+                confidence=item.score,
+                normalized_area=current_area,
+            )
+        )
+    return tuple(candidates)

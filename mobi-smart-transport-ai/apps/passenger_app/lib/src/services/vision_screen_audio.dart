@@ -18,11 +18,16 @@ class VisionScreenAudio extends ChangeNotifier {
     double? horizontalFovDegrees,
     int Function()? nowMicros,
     this.minimumInterval = const Duration(seconds: 8),
+    this.confirmationFrames = 1,
+    this.requireDoorInBus = false,
   }) : headTracking = headTracking ?? sharedHeadTrackingState,
        horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
        _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
     if (!identical(priority.engine, engine)) {
       throw ArgumentError('Audio owner mismatch');
+    }
+    if (confirmationFrames < 1) {
+      throw ArgumentError('confirmationFrames must be >= 1');
     }
     this.headTracking.resetForSession();
     priority.addListener(_priorityChanged);
@@ -34,11 +39,14 @@ class VisionScreenAudio extends ChangeNotifier {
         const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
       ) ??
       0;
+  static const double minDoorInBusOverlap = 0.70;
   final SpeechPriorityCoordinator priority;
   final SpatialVerificationEngine engine;
   final String sessionGeneration;
   final bool Function() isCurrent;
   final Duration minimumInterval;
+  final int confirmationFrames;
+  final bool requireDoorInBus;
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
   final int Function() _now;
@@ -51,8 +59,9 @@ class VisionScreenAudio extends ChangeNotifier {
       _activeHeadTracked = false,
       _disposed = false;
   int _revision = 0, admitted = 0, completed = 0, skippedBusy = 0;
+  int _streakCount = 0;
   String status = '카메라 화면 음향 시연 OFF';
-  String? _lastFrame, _lastMeaning;
+  String? _lastFrame, _lastMeaning, _streakMeaning;
   int? _lastStarted;
   PriorityLease? _hold;
   Map<String, Object?> diagnostic = const {};
@@ -74,6 +83,9 @@ class VisionScreenAudio extends ChangeNotifier {
     'bus': '버스',
     'bus_door': '버스 문',
     'bus_stop': '버스 정류장',
+    'parked_pm': '방치 전동 킥보드',
+    'pole': '보도 기둥',
+    'tree_trunk': '나무 줄기',
     'roadway': '차도',
     'sidewalk': '보도',
     'obstacle': '장애물',
@@ -84,6 +96,65 @@ class VisionScreenAudio extends ChangeNotifier {
       : centerX > 2 / 3
       ? TestDirection.right
       : TestDirection.center;
+
+  static bool _isValidBoxMap(Map b) {
+    if ([
+      'x',
+      'y',
+      'w',
+      'h',
+    ].any((k) => b[k] is! num || !(b[k] as num).isFinite)) {
+      return false;
+    }
+    final x = b['x'] as num,
+        y = b['y'] as num,
+        w = b['w'] as num,
+        h = b['h'] as num;
+    return x >= 0 &&
+        y >= 0 &&
+        w > 0 &&
+        h > 0 &&
+        x + w <= 1.000000001 &&
+        y + h <= 1.000000001;
+  }
+
+  static bool _doorInBusValid(Map doorBox, List rows) {
+    final dx1 = (doorBox['x'] as num).toDouble();
+    final dy1 = (doorBox['y'] as num).toDouble();
+    final dw = (doorBox['w'] as num).toDouble();
+    final dh = (doorBox['h'] as num).toDouble();
+    final doorArea = dw * dh;
+    if (doorArea <= 0) return false;
+    final dx2 = dx1 + dw, dy2 = dy1 + dh;
+    for (final row in rows) {
+      if (row is! Map || row['classId'] != 'bus' || row['className'] != '버스') {
+        continue;
+      }
+      final c = row['confidence'], b = row['bbox'];
+      if (c is! num ||
+          !c.isFinite ||
+          c < .5 ||
+          c > 1 ||
+          b is! Map ||
+          !_isValidBoxMap(b)) {
+        continue;
+      }
+      final bx1 = (b['x'] as num).toDouble();
+      final by1 = (b['y'] as num).toDouble();
+      final bx2 = bx1 + (b['w'] as num).toDouble();
+      final by2 = by1 + (b['h'] as num).toDouble();
+      final ix1 = dx1 > bx1 ? dx1 : bx1;
+      final iy1 = dy1 > by1 ? dy1 : by1;
+      final ix2 = dx2 < bx2 ? dx2 : bx2;
+      final iy2 = dy2 < by2 ? dy2 : by2;
+      if (ix2 > ix1 && iy2 > iy1) {
+        final interArea = (ix2 - ix1) * (iy2 - iy1);
+        if (interArea / doorArea >= minDoorInBusOverlap) return true;
+      }
+    }
+    return false;
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -101,6 +172,8 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     enabled = true;
     _lastMeaning = null;
+    _streakMeaning = null;
+    _streakCount = 0;
     status = '화면 기준 음향 시연 ON · 새 검출 대기';
     _notify();
   }
@@ -202,6 +275,8 @@ class VisionScreenAudio extends ChangeNotifier {
   Future<void> stop({bool notify = true}) {
     enabled = false;
     _revision++;
+    _streakMeaning = null;
+    _streakCount = 0;
     _hold?.release();
     _hold = null;
     status = '화면 음향 시연 STOP · 후속 TTS 없음';
@@ -265,24 +340,12 @@ class VisionScreenAudio extends ChangeNotifier {
           c < .5 ||
           c > 1 ||
           b is! Map ||
-          [
-            'x',
-            'y',
-            'w',
-            'h',
-          ].any((k) => b[k] is! num || !(b[k] as num).isFinite)) {
+          !_isValidBoxMap(b)) {
         continue;
       }
-      final x = b['x'] as num,
-          y = b['y'] as num,
-          w = b['w'] as num,
-          h = b['h'] as num;
-      if (x < 0 ||
-          y < 0 ||
-          w <= 0 ||
-          h <= 0 ||
-          x + w > 1.000000001 ||
-          y + h > 1.000000001) {
+      if (requireDoorInBus &&
+          row['classId'] == 'bus_door' &&
+          !_doorInBusValid(b, rows)) {
         continue;
       }
       if (c > best) {
@@ -291,13 +354,24 @@ class VisionScreenAudio extends ChangeNotifier {
       }
     }
     if (selected == null) {
+      _streakMeaning = null;
+      _streakCount = 0;
       if (rows.isEmpty) _lastMeaning = null;
       return;
     }
     final box = selected['bbox'] as Map;
     final cx = (box['x'] as num).toDouble() + (box['w'] as num).toDouble() / 2;
     final side = direction(cx),
-        meaning = '${selected['classId']}:${direction(cx).name}';
+        meaning = '${selected['classId']}:${side.name}';
+    if (_streakMeaning == meaning) {
+      _streakCount++;
+    } else {
+      _streakMeaning = meaning;
+      _streakCount = 1;
+    }
+    if (_streakCount < confirmationFrames) {
+      return;
+    }
     if (_lastMeaning == meaning ||
         (_lastStarted != null &&
             _now() - _lastStarted! < minimumInterval.inMicroseconds)) {

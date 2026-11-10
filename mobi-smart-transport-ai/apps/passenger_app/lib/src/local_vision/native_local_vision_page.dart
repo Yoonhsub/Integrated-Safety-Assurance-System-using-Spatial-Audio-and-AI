@@ -70,7 +70,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   bool _disposing = false, _ending = false;
   int _generation = 0;
   Future<void>? _stopping;
-  String _status = '버스·문 모델 파일을 선택해 주세요';
+  String _status = '통합 비전 모델 파일을 선택해 주세요';
 
   Future<bool> _ensureHeadTrackingReady() async {
     if (!Platform.isAndroid) return false;
@@ -98,6 +98,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           priority: widget.previewPriority!,
           engine: widget.previewEngine!,
           sessionGeneration: widget.previewScope,
+          confirmationFrames: 3,
+          requireDoorInBus: true,
           isCurrent: () =>
               mounted &&
               !_disposing &&
@@ -133,18 +135,18 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   Future<void> _loadBundledModel() async {
     setState(() {
       _picking = true;
-      _status = '버스 인식 모델 준비 중';
+      _status = '통합 비전 v4 모델 준비 중';
     });
     try {
-      final data = await rootBundle
-          .load('assets/models/yolo11n_bus_door_v1_float32.tflite');
+      final data = await rootBundle.load(
+          'assets/models/yolo11n_unified_bus_obstacle_stop_v4_float32.tflite');
       final bytes =
           data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
       await compute(verifyModel, bytes);
       if (mounted && !_disposing) {
         setState(() {
           _model = bytes;
-          _status = '준비 완료 · 카메라 시작을 눌러 주세요';
+          _status = '통합 비전 v4 모델 준비 완료 · 카메라 시작을 눌러 주세요';
         });
       }
     } catch (_) {
@@ -172,7 +174,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       if (mounted) {
         setState(() {
           _model = bytes;
-          _status = '버스·문 모델 SHA256 확인 완료';
+          _status = '비전 모델 SHA256 확인 완료';
         });
       }
     } on FormatException catch (e) {
@@ -412,7 +414,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 6),
                                 child: Text(
-                                    '${box.classId == 'bus' ? '버스' : box.classId} · ${(box.confidence * 100).round()}%',
+                                    '${visionClassNames[box.classId] ?? box.classId} · ${(box.confidence * 100).round()}%',
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleLarge)),
@@ -529,8 +531,12 @@ class _BoxPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (final b in boxes) {
-      final color =
-          b.classId == 'bus' ? Colors.greenAccent : Colors.orangeAccent;
+      final color = switch (b.classId) {
+        'bus' => Colors.greenAccent,
+        'bus_door' => Colors.orangeAccent,
+        'bus_stop' => Colors.cyanAccent,
+        _ => Colors.amberAccent,
+      };
       final rect = Rect.fromLTWH(b.x * size.width, b.y * size.height,
           b.w * size.width, b.h * size.height);
       canvas.drawRect(

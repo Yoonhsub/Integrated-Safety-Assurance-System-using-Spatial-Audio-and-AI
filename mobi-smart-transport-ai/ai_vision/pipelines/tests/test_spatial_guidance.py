@@ -18,6 +18,8 @@ from spatial_guidance import (  # noqa: E402
     RelativeDistance,
     ScreenDirection,
     interpret_bus_guidance,
+    interpret_bus_stop_guidance,
+    interpret_obstacle_guidance,
 )
 from vision_result import ImageSize, RawDetection, build_vision_result  # noqa: E402
 
@@ -31,7 +33,13 @@ class SpatialGuidanceTest(unittest.TestCase):
             raw_detections=detections,
             model_name="yolov11n",
             model_version="test",
-            thresholds={"bus": 0.50},
+            thresholds={
+                "bus": 0.50,
+                "bus_stop": 0.60,
+                "parked_pm": 0.55,
+                "pole": 0.55,
+                "tree_trunk": 0.55,
+            },
         )
 
     def test_interprets_left_far_bus_without_previous_frame(self) -> None:
@@ -77,6 +85,25 @@ class SpatialGuidanceTest(unittest.TestCase):
         current = self.result([])
 
         self.assertIsNone(interpret_bus_guidance(current))
+
+    def test_interprets_obstacles_and_bus_stop(self) -> None:
+        current = self.result(
+            [
+                RawDetection("parked_pm", 0.85, 350, 500, 650, 800),
+                RawDetection("pole", 0.80, 50, 100, 150, 400),
+                RawDetection("bus_stop", 0.75, 700, 100, 950, 600),
+            ]
+        )
+        obstacles = interpret_obstacle_guidance(current)
+        stop = interpret_bus_stop_guidance(current)
+
+        self.assertEqual([item.class_id for item in obstacles], ["parked_pm", "pole"])
+        self.assertEqual(obstacles[0].direction, ScreenDirection.CENTER)
+        self.assertEqual(obstacles[0].relative_distance, RelativeDistance.NEAR)
+        self.assertEqual(obstacles[1].direction, ScreenDirection.LEFT)
+        self.assertEqual(obstacles[1].relative_distance, RelativeDistance.MEDIUM)
+        assert stop is not None
+        self.assertEqual(stop.direction, ScreenDirection.RIGHT)
 
 
 if __name__ == "__main__":

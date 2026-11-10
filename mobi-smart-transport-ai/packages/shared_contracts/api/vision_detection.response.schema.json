@@ -100,6 +100,9 @@
               "bus",
               "bus_door",
               "bus_stop",
+              "parked_pm",
+              "pole",
+              "tree_trunk",
               "roadway",
               "sidewalk",
               "obstacle",
@@ -203,6 +206,63 @@
               "properties": {
                 "className": {
                   "const": "버스 정류장"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "parked_pm"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "방치 전동 킥보드"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "pole"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "보도 기둥"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "classId": {
+                  "const": "tree_trunk"
+                }
+              },
+              "required": [
+                "classId"
+              ]
+            },
+            "then": {
+              "properties": {
+                "className": {
+                  "const": "나무 줄기"
                 }
               }
             }

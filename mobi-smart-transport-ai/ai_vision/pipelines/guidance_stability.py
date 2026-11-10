@@ -22,7 +22,7 @@ class GuidanceStabilityPolicy:
     confirmation_frames: int = 3
     cooldown_seconds: float = 3.0
     max_candidates_per_frame: int = 1
-    priority: tuple[str, ...] = ("bus_door", "bus", "bus_stop")
+    priority: tuple[str, ...] = ("bus_door", "bus", "parked_pm", "pole", "tree_trunk", "bus_stop")
 
     def __post_init__(self) -> None:
         if self.confirmation_frames < 1:
