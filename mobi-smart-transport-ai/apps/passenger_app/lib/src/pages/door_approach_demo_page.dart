@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../services/door_approach_guard.dart';
 import '../services/door_input_adapter.dart';
@@ -436,6 +437,26 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
         ExpansionTile(title: const Text('AI 탐지 JSON 한 프레임 재생'), children: [
           const Text(
               '입력: 기록 재생 · 위험도: 아래에서 선택한 모의 값. 원본 capturedAt은 보존하며 실시간 카메라로 표시하지 않습니다. 각 클릭은 1회 재생이고 2초 뒤 만료됩니다.'),
+          OutlinedButton(
+              onPressed: _failed || _cameraEnabled
+                  ? null
+                  : () async {
+                      final text = await rootBundle
+                          .loadString('assets/replay/recorded_left_tree.json');
+                      if (!mounted || _closed || _failed || _cameraEnabled) {
+                        return;
+                      }
+                      setState(() {
+                        _perceptionReplay = false;
+                        _risk = DoorRisk.caution;
+                        _visionJson.text = text;
+                        _visionStatus =
+                            '불러오기 완료 · 기록 영상 15초의 왼쪽 나무 · 위험도 모의 caution · 아직 재생하지 않음';
+                      });
+                    },
+              child: const Text('기록 영상 15초 · 왼쪽 나무 불러오기')),
+          const Text(
+              '입력: 앱 화면 녹화의 탐지 결과 · 촬영 시각 미상 · 실시간 카메라 아님. 불러온 뒤 아래 1회 재생을 누르세요.'),
           TextField(
               controller: _visionJson,
               maxLines: 5,

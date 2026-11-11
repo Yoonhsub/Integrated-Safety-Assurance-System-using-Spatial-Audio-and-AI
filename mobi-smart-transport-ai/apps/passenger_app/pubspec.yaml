@@ -38,6 +38,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/mock_voice/
+    - assets/replay/recorded_left_tree.json
     - assets/models/yolo11n_bus_door_v1_float32.tflite
     - assets/models/yolo11n_unified_bus_obstacle_stop_v4_float32.tflite
   shaders:
