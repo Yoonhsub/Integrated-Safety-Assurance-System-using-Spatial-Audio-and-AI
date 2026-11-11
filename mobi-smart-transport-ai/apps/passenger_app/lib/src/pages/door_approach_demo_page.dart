@@ -1,18 +1,32 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../services/door_approach_guard.dart';
 import '../services/door_input_adapter.dart';
 import '../services/directional_guidance.dart';
 import '../services/spatial_verification_engine.dart';
 import '../services/speech_priority_coordinator.dart';
 
-/// Explicit replay harness. No BLE receiver, AI detector or vehicle registry.
+/// Explicit local demo. Native BLE is optional; risk remains mock/replayed.
 class DoorApproachDemoPage extends StatefulWidget {
   const DoorApproachDemoPage(
-      {super.key, required this.output, required this.tts, this.sessionNow});
+      {super.key,
+      required this.output,
+      required this.tts,
+      this.sessionNow,
+      this.targetId = 'DEMO_DOOR_A',
+      this.scannerFactory,
+      this.prepareScanner,
+      this.transportStops,
+      this.wallNow});
   final SpatialTestOutput output;
   final SpeechEngine tts;
   final Duration Function()? sessionNow;
+  final String targetId;
+  final BeaconScanner Function()? scannerFactory;
+  final Future<bool> Function()? prepareScanner;
+  final Stream<void>? transportStops;
+  final DateTime Function()? wallNow;
   @override
   State<DoorApproachDemoPage> createState() => _DoorDemoState();
 }
@@ -23,7 +37,15 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   final _visionJson = TextEditingController();
   String _visionStatus = '기록 탐지 입력 없음';
   Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
-  final _guard = DoorApproachGuard(targetId: 'DEMO_DOOR_A');
+  late final DoorApproachGuard _guard;
+  late final DoorBeaconInput _beaconInput;
+  BeaconScanner? _scanner;
+  StreamSubscription<BeaconSignal>? _scanSubscription;
+  StreamSubscription<void>? _transportSubscription;
+  bool _scanning = false, _scanBusy = false, _scanStopping = false;
+  int _scanEpoch = 0;
+  String _scanStatus = '스캔 미실행';
+  bool get _realBle => widget.scannerFactory != null;
   final _owner = Object();
   late final SpatialVerificationEngine _engine;
   late final SpeechPriorityCoordinator _speech;
@@ -41,10 +63,80 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   @override
   void initState() {
     super.initState();
+    _guard = DoorApproachGuard(targetId: widget.targetId);
+    _beaconInput = DoorBeaconInput(_guard);
+    _transportSubscription = widget.transportStops?.listen((_) {
+      unawaited(_endScan('Bluetooth 상태 변경 · 안내 중지'));
+    }, onError: (Object error) {
+      unawaited(_endScan('Bluetooth 상태 확인 실패 · 안내 중지'));
+    });
     WidgetsBinding.instance.addObserver(this);
     _engine = SpatialVerificationEngine(widget.output, widget.tts);
     _speech = SpeechPriorityCoordinator(_engine);
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) => _tick());
+  }
+
+  Future<void> _startScan() async {
+    if (_closed || _failed || _scanBusy || _scanning || _scanStopping) return;
+    final epoch = ++_scanEpoch;
+    setState(() => _scanBusy = true);
+    try {
+      if (!(await widget.prepareScanner?.call() ?? false)) {
+        if (epoch == _scanEpoch) {
+          _scanStatus = '주변 기기·정확한 위치 권한, Bluetooth와 위치 기능을 확인해주세요';
+        }
+        return;
+      }
+      if (_closed || _failed || epoch != _scanEpoch) return;
+      final scanner = widget.scannerFactory!();
+      _scanner = scanner;
+      _scanning = true;
+      _scanStatus = '실측 스캔 중 · 서버 전송 미실행';
+      _scanSubscription = scanner.scan().listen((signal) {
+        if (_closed || epoch != _scanEpoch || !_scanning) return;
+        final accepted = _beaconInput.observe(signal,
+            wallNow: widget.wallNow?.call() ?? DateTime.now(), now: _now);
+        if (accepted) {
+          _scanStatus =
+              '실측 ${signal.beaconId} · 평활 RSSI ${signal.rssi} · ${signal.signalLevel.name} · 원본 관측 ${signal.lastDetectedAt.toUtc().toIso8601String()}';
+        }
+        _tick();
+      }, onError: (Object error) {
+        if (epoch == _scanEpoch) unawaited(_endScan('스캔 실패 · 안내 중지: $error'));
+      }, onDone: () {
+        if (epoch == _scanEpoch) unawaited(_endScan('스캔 종료 · 안내 중지'));
+      });
+    } catch (error) {
+      if (epoch == _scanEpoch) await _endScan('스캔 시작 실패: $error');
+    } finally {
+      if (!_closed && mounted) setState(() => _scanBusy = false);
+    }
+  }
+
+  Future<void> _endScan(String reason) async {
+    if (_scanStopping) return;
+    _scanStopping = true;
+    ++_scanEpoch;
+    ++_gestureEpoch;
+    _scanning = false;
+    _targetReplay = _perceptionReplay = false;
+    _scanStatus = reason;
+    final scanner = _scanner, subscription = _scanSubscription;
+    _scanner = null;
+    _scanSubscription = null;
+    if (!_closed) {
+      _guard.stop(_now);
+      _tick(); // Retire audio immediately, before waiting for the BLE transport.
+    }
+    try {
+      await scanner?.stop().timeout(const Duration(seconds: 3));
+      await subscription?.cancel().timeout(const Duration(seconds: 3));
+    } catch (error) {
+      _fault(error);
+    } finally {
+      _scanStopping = false;
+      if (!_closed && mounted) setState(() {});
+    }
   }
 
   void _tick() {
@@ -60,7 +152,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     }
     if (_targetReplay) {
       _guard.observeTarget(
-          id: 'DEMO_DOOR_A',
+          id: widget.targetId,
           at: now,
           now: now,
           proximity: _near ? DoorProximity.near : DoorProximity.approaching);
@@ -68,6 +160,10 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     final frame = _guard.tick(now);
     if (frame.key != _lastKey) {
       _lastKey = frame.key;
+      if (_realBle) {
+        debugPrint(
+            'MOBI_DOOR_STATE at_us=${now.inMicroseconds} target=${widget.targetId} phase=${frame.phase.name} risk=MOCK_OR_REPLAY text=${frame.text}');
+      }
       _render(frame);
     }
     if (mounted) setState(() {});
@@ -135,6 +231,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     ++_revision;
     _guard.stop(_now);
     _outputStatus = '출력 실패 · 안내 중지 · 페이지를 다시 열어주세요';
+    if (_realBle) unawaited(_endScan('출력 실패 · 스캔 중지'));
     unawaited(_engine.stop().catchError((Object _) {}));
     if (mounted) setState(() {});
   }
@@ -145,6 +242,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
       ++_gestureEpoch;
       _guard.stop(_now);
       _targetReplay = _perceptionReplay = false;
+      if (_realBle) unawaited(_endScan('화면 이탈 · 재시작 필요'));
       _tick();
     }
   }
@@ -153,8 +251,18 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('탑승문 접근 · 중단 조건 리플레이')),
       body: ListView(padding: const EdgeInsets.all(20), children: [
-        const Text('목표 버스 선택 완료 · 목표 문 DEMO_DOOR_A'),
-        const Text('입력: 모의 · 실제 BLE/AI/머리 추적 연결은 아직 없습니다. 서버 판정 미실행.'),
+        Text('목표 버스 선택 완료 · 목표 문 ${widget.targetId}'),
+        Text(_realBle
+            ? '비콘: 실측 · 위험도: 모의/기록 재생 · 머리 추적 미사용 · 서버 판정 미실행'
+            : '입력: 모의 · 실제 BLE/AI/머리 추적 연결은 아직 없습니다. 서버 판정 미실행.'),
+        if (_realBle) ...[
+          Text(_scanStatus),
+          OutlinedButton(
+              onPressed: _failed || _scanning || _scanBusy || _scanStopping
+                  ? null
+                  : _startScan,
+              child: const Text('실측 BLE 스캔 시작 (5분)')),
+        ],
         const Text('방향은 화면 기준 좌우 스테레오입니다. 비콘으로 문 방향·문 열림·발밑 안전을 판단하지 않습니다.'),
         const SizedBox(height: 16),
         Text(_guard.current.text,
@@ -163,7 +271,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
         Text(_outputStatus),
         Wrap(spacing: 8, children: [
           FilledButton(
-              onPressed: _failed
+              onPressed: _failed || (_realBle && !_scanning)
                   ? null
                   : () async {
                       final gesture = ++_gestureEpoch;
@@ -182,27 +290,33 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
               onPressed: () {
                 ++_gestureEpoch;
                 _guard.stop(_now);
+                _targetReplay = _perceptionReplay = false;
+                if (_realBle) unawaited(_endScan('사용자 STOP · 재시작 필요'));
                 _tick();
               },
               child: const Text('STOP')),
         ]),
-        SwitchListTile(
-            title: const Text('새 목표 비콘 관측 모의 재생'),
-            value: _targetReplay,
-            onChanged: _failed
-                ? null
-                : (v) {
-                    setState(() => _targetReplay = v);
-                    _tick();
-                  }),
-        const Text('재생을 끄면 마지막 관측 시각을 갱신하지 않습니다. 3초 후 접근 안내가 중단됩니다.'),
-        SwitchListTile(
-            title: const Text('모의 근접 구간: 가까움'),
-            value: _near,
-            onChanged: (v) {
-              setState(() => _near = v);
-              _tick();
-            }),
+        if (!_realBle)
+          SwitchListTile(
+              title: const Text('새 목표 비콘 관측 모의 재생'),
+              value: _targetReplay,
+              onChanged: _failed
+                  ? null
+                  : (v) {
+                      setState(() => _targetReplay = v);
+                      _tick();
+                    }),
+        Text(_realBle
+            ? '3초간 새 목표 관측이 없으면 접근 안내를 중단합니다. 다른 비콘은 목표를 갱신하지 않습니다.'
+            : '재생을 끄면 마지막 관측 시각을 갱신하지 않습니다. 3초 후 접근 안내가 중단됩니다.'),
+        if (!_realBle)
+          SwitchListTile(
+              title: const Text('모의 근접 구간: 가까움'),
+              value: _near,
+              onChanged: (v) {
+                setState(() => _near = v);
+                _tick();
+              }),
         SwitchListTile(
             title: const Text('새 장애물 전체 스냅샷 모의 재생'),
             value: _perceptionReplay,
@@ -287,6 +401,8 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   @override
   void dispose() {
     _closed = true;
+    unawaited(_endScan('페이지 종료'));
+    unawaited(_transportSubscription?.cancel());
     ++_gestureEpoch;
     ++_revision;
     _timer?.cancel();

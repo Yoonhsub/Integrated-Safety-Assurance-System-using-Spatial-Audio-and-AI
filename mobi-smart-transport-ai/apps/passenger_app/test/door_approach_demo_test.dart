@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/pages/door_approach_demo_page.dart';
@@ -57,7 +58,110 @@ class Voice implements SpeechEngine {
   }
 }
 
+class ScanPort implements BeaconScanner {
+  final samples = StreamController<BeaconSignal>.broadcast();
+  bool active = false;
+  int starts = 0, stops = 0;
+  @override
+  bool get isScanning => active;
+  @override
+  Stream<BeaconSignal> scan({String? targetBeaconId}) {
+    starts++;
+    active = true;
+    return samples.stream;
+  }
+
+  @override
+  Future<void> stop() async {
+    stops++;
+    active = false;
+  }
+}
+
 void main() {
+  for (final latePermission in [false, true]) {
+    testWidgets(
+        latePermission
+            ? 'STOP invalidates pending BLE permission'
+            : 'native BLE expires voice and transport loss stops all guidance without auto resume',
+        (t) async {
+      t.view.physicalSize = const Size(1800, 3200);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      final output = CuePort(), voice = Voice(), scanner = ScanPort();
+      final stops = StreamController<void>();
+      final permission = Completer<bool>();
+      var now = const Duration(seconds: 1);
+      final wall = DateTime.utc(2026, 11, 11);
+      Future<void> flush([int milliseconds = 100]) async {
+        now += Duration(milliseconds: milliseconds);
+        await t.pump(Duration(milliseconds: milliseconds));
+        for (var i = 0; i < 12; i++) {
+          await t.pump();
+        }
+      }
+
+      await t.pumpWidget(MaterialApp(
+          home: DoorApproachDemoPage(
+              output: output,
+              tts: voice,
+              sessionNow: () => now,
+              wallNow: () => wall.add(now),
+              targetId: 'A',
+              scannerFactory: () => scanner,
+              transportStops: stops.stream,
+              prepareScanner: () =>
+                  latePermission ? permission.future : Future.value(true))));
+      expect(find.text('새 목표 비콘 관측 모의 재생'), findsNothing);
+      await t.tap(find.text('실측 BLE 스캔 시작 (5분)'));
+      await flush();
+      if (latePermission) {
+        await t.tap(find.text('STOP'));
+        permission.complete(true);
+        await flush();
+        expect(scanner.starts, 0);
+        expect(voice.spoken, isEmpty);
+      } else {
+        await t.tap(find.text('새 장애물 전체 스냅샷 모의 재생'));
+        await flush();
+        await t.tap(find.text('안내 시작'));
+        await flush();
+        void sample(String id) {
+          now += const Duration(milliseconds: 1);
+          scanner.samples.add(BeaconSignal(
+              beaconId: id,
+              rssi: -55,
+              estimatedDistanceMeters: null,
+              signalLevel: BeaconSignalLevel.close,
+              lastDetectedAt: wall.add(now)));
+        }
+
+        sample('A');
+        await flush();
+        expect(voice.spoken.last, contains('문과 발밑'));
+        sample('B');
+        await flush(3100);
+        expect(voice.spoken.last, contains('탑승 위치를 다시 확인'));
+        sample('A');
+        await flush();
+        expect(voice.spoken.last, contains('문과 발밑'));
+        stops.add(null);
+        await flush();
+        expect(find.text('상태: stopped'), findsOneWidget);
+        expect(scanner.stops, greaterThan(0));
+        final count = voice.spoken.length;
+        sample('A');
+        await flush();
+        expect(voice.spoken.length, count);
+      }
+      await t.pumpWidget(const SizedBox());
+      await t.pump();
+      unawaited(scanner.samples.close());
+      unawaited(stops.close());
+      await t.pump();
+    });
+  }
   testWidgets(
       'recorded detection reaches left warning and invalid JSON stops output',
       (t) async {

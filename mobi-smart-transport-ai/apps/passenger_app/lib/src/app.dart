@@ -6,6 +6,7 @@ import 'pages/data_mode_selection_page.dart';
 import 'pages/home_page.dart';
 import 'pages/v3_guidance_page.dart';
 import 'pages/native_audio_page.dart';
+import 'pages/native_door_approach_page.dart';
 import 'services/agent_name_store.dart';
 import 'local_vision/local_vision_page.dart';
 import 'pages/standalone_vision_page.dart';
@@ -174,6 +175,7 @@ class _MobiAppState extends State<MobiApp> {
         // Local hardware diagnostics carry no server identity or Guidance authority.
         '/device-check': (_) => const DeviceCheckPage(),
         '/hardware-bus': (_) => const HardwareBusPage(),
+        '/door-approach': (_) => const NativeDoorApproachPage(),
         '/standalone-vision': (_) => const StandaloneVisionPage(),
         '/native-audio': (_) => AuthGate(
               configurationReady: _firebaseReady,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 const mobiInk = Color(0xFF173550);
 const mobiBlue = Color(0xFF2378F3);
@@ -144,5 +145,12 @@ class DeviceCheckPage extends StatelessWidget {
         OutlinedButton(
             onPressed: () => Navigator.of(context).pushNamed('/hardware-bus'),
             child: const Text('실기기 연동확인 · BLE/WT901/HRTF')),
+        if (kDebugMode &&
+            !kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.android)
+          OutlinedButton(
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/door-approach'),
+              child: const Text('탑승문 접근·중단 시연 (실측 BLE)')),
       ])));
 }
