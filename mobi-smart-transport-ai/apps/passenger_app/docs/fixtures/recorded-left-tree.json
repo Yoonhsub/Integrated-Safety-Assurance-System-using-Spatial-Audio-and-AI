@@ -1,0 +1,1 @@
+{"schemaVersion":"1.0.0","status":"ok","frameId":"recording-15s","capturedAt":null,"source":"recorded_screen_video","detections":[{"classId":"tree_trunk","confidence":0.6155319213867188,"bbox":{"x":0.031823292011167945,"y":0.27181311472595504,"w":0.05227611316898005,"h":0.15669082321775693}}],"videoOffsetSeconds":15}
