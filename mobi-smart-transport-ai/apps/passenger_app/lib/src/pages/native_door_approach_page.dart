@@ -7,6 +7,7 @@ import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../services/native_directional_cue_output.dart';
 import '../services/speech_priority_coordinator.dart';
 import 'door_approach_demo_page.dart';
+import '../local_vision/local_vision_page.dart';
 
 /// Isolated Android debug rehearsal. No RSSI direction, server or head tracker.
 class NativeDoorApproachPage extends StatefulWidget {
@@ -58,20 +59,31 @@ class _NativeDoorState extends State<NativeDoorApproachPage> {
   }
 
   @override
-  Widget build(
-          BuildContext context) =>
-      !_allowed || _output == null || _tts == null
-          ? const Scaffold(body: Center(child: Text('Android debug 전용 시연입니다.')))
-          : DoorApproachDemoPage(
-              output: _output!,
-              tts: _tts!,
-              targetId: 'C3:00:00:5C:B9:47',
-              transportStops: _stops.stream,
-              prepareScanner: _prepareScanner,
-              scannerFactory: () => FlutterBlueBeaconScanner(
-                  scanTimeout: const Duration(minutes: 5),
-                  beaconIdResolver: (result) =>
-                      result.device.remoteId.str.toUpperCase()));
+  Widget build(BuildContext context) => !_allowed ||
+          _output == null ||
+          _tts == null
+      ? const Scaffold(body: Center(child: Text('Android debug 전용 시연입니다.')))
+      : DoorApproachDemoPage(
+          output: _output!,
+          tts: _tts!,
+          targetId: 'C3:00:00:5C:B9:47',
+          transportStops: _stops.stream,
+          prepareScanner: _prepareScanner,
+          cameraBuilder: (input) => LocalVisionPage(
+              embedded: true,
+              rearCameraOnly: true,
+              bundledModel: true,
+              sessionNow: input.now,
+              sessionCurrent: input.isCurrent,
+              onInputUnavailable: input.onUnavailable,
+              onResult: (observation) async {
+                input.onFrame(observation.toDetectionResult(),
+                    Duration(microseconds: observation.frame.receivedMicros));
+              }),
+          scannerFactory: () => FlutterBlueBeaconScanner(
+              scanTimeout: const Duration(minutes: 5),
+              beaconIdResolver: (result) =>
+                  result.device.remoteId.str.toUpperCase()));
   @override
   void dispose() {
     unawaited(_adapter?.cancel());

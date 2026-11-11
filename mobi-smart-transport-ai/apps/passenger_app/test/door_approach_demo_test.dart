@@ -79,6 +79,80 @@ class ScanPort implements BeaconScanner {
 }
 
 void main() {
+  testWidgets(
+      'live camera frame drives warning, loss holds and retired callback stays silent',
+      (t) async {
+    t.view.physicalSize = const Size(1800, 4000);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
+    var now = const Duration(seconds: 1);
+    final output = CuePort(), voice = Voice();
+    DoorCameraInput? camera;
+    Future<void> flush([int ms = 100]) async {
+      now += Duration(milliseconds: ms);
+      await t.pump(Duration(milliseconds: ms));
+      for (var i = 0; i < 12; i++) {
+        await t.pump();
+      }
+    }
+
+    await t.pumpWidget(MaterialApp(
+        home: DoorApproachDemoPage(
+            output: output,
+            tts: voice,
+            sessionNow: () => now,
+            cameraBuilder: (input) {
+              camera = input;
+              return const Text('가짜 카메라');
+            })));
+    await t.tap(find.text('새 목표 비콘 관측 모의 재생'));
+    await flush();
+    await t.tap(find.text('실측 카메라 장애물 규칙 사용'));
+    await flush();
+    await t.tap(find.text('안내 시작'));
+    await flush();
+    Map<String, Object?> frame(String id, bool obstacle) => {
+          'schemaVersion': '1.0.0',
+          'source': 'android_camera',
+          'status': 'ok',
+          'frameId': id,
+          'capturedAt': '2026-11-11T00:00:00Z',
+          'detections': obstacle
+              ? [
+                  {
+                    'classId': 'pole',
+                    'confidence': .9,
+                    'bbox': {'x': .1, 'y': .1, 'w': .1, 'h': .5}
+                  }
+                ]
+              : []
+        };
+    now += const Duration(milliseconds: 1);
+    camera!.onFrame(frame('one', true), now);
+    await flush();
+    expect(output.directions.last, TestDirection.left);
+    expect(voice.spoken.last, contains('주의'));
+    camera!.onUnavailable();
+    await flush();
+    expect(voice.spoken.last, contains('주변 위험 정보를 다시 확인'));
+    now += const Duration(milliseconds: 1);
+    camera!.onFrame(frame('clear', false), now);
+    await flush();
+    expect(voice.spoken.last, contains('접근 중'));
+    await flush(2100);
+    expect(voice.spoken.last, contains('주변 위험 정보를 다시 확인'));
+    final retired = camera!;
+    await t.tap(find.text('실측 카메라 장애물 규칙 사용'));
+    await flush();
+    final count = output.directions.length;
+    retired.onFrame(frame('late', true), now);
+    await flush();
+    expect(output.directions.length, count);
+    expect(retired.isCurrent(), false);
+    await t.pumpWidget(const SizedBox());
+    await t.pump();
+  });
   for (final latePermission in [false, true]) {
     testWidgets(
         latePermission

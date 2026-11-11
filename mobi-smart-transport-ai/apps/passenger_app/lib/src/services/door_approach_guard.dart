@@ -81,6 +81,14 @@ class DoorApproachGuard {
     tick(now);
   }
 
+  void invalidatePerception(Duration now) {
+    if (!_clock(now)) return;
+    _invalidPerception = true;
+    _interrupted = true;
+    _resumeAfter = now;
+    tick(now);
+  }
+
   bool observeTarget(
       {required String id,
       required Duration at,

@@ -28,8 +28,12 @@ class LocalVisionPage extends StatefulWidget {
       this.beforeStart,
       this.onResult,
       this.onStop,
+      this.onInputUnavailable,
       this.sessionCurrent,
       this.authChanges,
+      this.sessionNow,
+      this.embedded = false,
+      this.rearCameraOnly = false,
       this.remoteSessionId,
       this.bundledModel = false,
       this.previewPriority,
@@ -42,10 +46,13 @@ class LocalVisionPage extends StatefulWidget {
   final Future<void> Function()? beforeStart;
   final Future<void> Function(LocalObservation)? onResult;
   final Future<void> Function()? onStop;
+  final VoidCallback? onInputUnavailable;
   final bool Function()? sessionCurrent;
   final Stream<String?>? authChanges;
   final String? remoteSessionId;
   final bool bundledModel;
+  final Duration Function()? sessionNow;
+  final bool embedded, rearCameraOnly;
   final SpeechPriorityCoordinator? previewPriority;
   final SpatialVerificationEngine? previewEngine;
   final String previewScope;
@@ -59,6 +66,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       MethodChannel('mobi.passenger/hardware-permissions');
   StreamSubscription<String?>? _authSubscription;
   final _clock = Stopwatch()..start();
+  int get _nowMicros =>
+      widget.sessionNow?.call().inMicroseconds ?? _clock.elapsedMicroseconds;
   final _runTime = Stopwatch();
   late final FramePump _pump;
   VisionScreenAudio? _previewAudio;
@@ -83,8 +92,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _pump = FramePump(
-        (frame) => _worker!.infer(frame), () => _clock.elapsedMicroseconds,
+    _pump = FramePump((frame) => _worker!.infer(frame), () => _nowMicros,
         onResult: widget.onResult ?? widget.producer?.submit);
     _authSubscription = widget.authChanges?.listen((_) {
       if (widget.sessionCurrent?.call() == false) {
@@ -116,9 +124,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     final item = _pump.observation;
     if (item != null && _pump.active && _pump.error == null) {
       _previewAudio?.observe(item.toDetectionResult(),
-          age: Duration(
-              microseconds:
-                  _clock.elapsedMicroseconds - item.frame.receivedMicros));
+          age: Duration(microseconds: _nowMicros - item.frame.receivedMicros));
     }
     if (_pump.error != null && _camera != null) {
       unawaited(_stop(reason: _pump.error!));
@@ -306,10 +312,11 @@ class _LocalVisionPageState extends State<LocalVisionPage>
             description.lensDirection == CameraLensDirection.front),
         mirror: description.lensDirection == CameraLensDirection.front,
         receivedAt: DateTime.now().toUtc(),
-        receivedMicros: _clock.elapsedMicroseconds));
+        receivedMicros: _nowMicros));
   }
 
   Future<void> _stop({String reason = '카메라 중지됨'}) {
+    widget.onInputUnavailable?.call();
     final previewStop = _previewAudio?.stop(notify: !_disposing);
     if (_stopping != null) return _stopping!;
     _generation++;
@@ -369,7 +376,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     final item = _pump.observation;
     final busy = _starting || _picking || _stopping != null || _ending;
     return Scaffold(
-        appBar: AppBar(title: const Text('카메라 인식')),
+        appBar: widget.embedded ? null : AppBar(title: const Text('카메라 인식')),
         bottomNavigationBar: SafeArea(
             child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -490,12 +497,13 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                         }
                       },
                 child: const Text('세션 종료 · 카메라/전송 중지')),
-          SwitchListTile(
-              title: const Text('전면 카메라 사용'),
-              value: _front,
-              onChanged: busy || _camera != null
-                  ? null
-                  : (v) => setState(() => _front = v)),
+          if (!widget.rearCameraOnly)
+            SwitchListTile(
+                title: const Text('전면 카메라 사용'),
+                value: _front,
+                onChanged: busy || _camera != null
+                    ? null
+                    : (v) => setState(() => _front = v)),
           if (_worker != null)
             Text(
                 'TFLite 로드 ${_worker!.loadMs.toStringAsFixed(1)}ms · warm-up ${_worker!.warmUpMs.toStringAsFixed(1)}ms'),

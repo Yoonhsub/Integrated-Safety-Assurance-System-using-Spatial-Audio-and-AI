@@ -3,11 +3,24 @@ import 'package:flutter/material.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../services/door_approach_guard.dart';
 import '../services/door_input_adapter.dart';
+import '../services/door_vision_policy.dart';
 import '../services/directional_guidance.dart';
 import '../services/spatial_verification_engine.dart';
 import '../services/speech_priority_coordinator.dart';
 
-/// Explicit local demo. Native BLE is optional; risk remains mock/replayed.
+class DoorCameraInput {
+  const DoorCameraInput(
+      {required this.onFrame,
+      required this.onUnavailable,
+      required this.now,
+      required this.isCurrent});
+  final void Function(Map<String, Object?> result, Duration capturedAt) onFrame;
+  final VoidCallback onUnavailable;
+  final Duration Function() now;
+  final bool Function() isCurrent;
+}
+
+/// Explicit local demo. Native camera risk is an opt-in rehearsal caution rule.
 class DoorApproachDemoPage extends StatefulWidget {
   const DoorApproachDemoPage(
       {super.key,
@@ -18,6 +31,7 @@ class DoorApproachDemoPage extends StatefulWidget {
       this.scannerFactory,
       this.prepareScanner,
       this.transportStops,
+      this.cameraBuilder,
       this.wallNow});
   final SpatialTestOutput output;
   final SpeechEngine tts;
@@ -27,6 +41,7 @@ class DoorApproachDemoPage extends StatefulWidget {
   final Future<bool> Function()? prepareScanner;
   final Stream<void>? transportStops;
   final DateTime Function()? wallNow;
+  final Widget Function(DoorCameraInput input)? cameraBuilder;
   @override
   State<DoorApproachDemoPage> createState() => _DoorDemoState();
 }
@@ -36,6 +51,56 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   final _clock = Stopwatch()..start();
   final _visionJson = TextEditingController();
   String _visionStatus = '기록 탐지 입력 없음';
+  DoorVisionPolicy _cameraPolicy = DoorVisionPolicy();
+  bool _cameraEnabled = false;
+  int _cameraEpoch = 0;
+  String _cameraStatus = '카메라 입력 없음';
+
+  void _setCamera(bool enabled) {
+    ++_cameraEpoch;
+    _cameraEnabled = enabled;
+    _perceptionReplay = false;
+    _cameraPolicy = DoorVisionPolicy();
+    _guard.invalidatePerception(_now);
+    _cameraStatus = enabled ? '새 실측 카메라 프레임 대기' : '카메라 미사용';
+    _tick();
+  }
+
+  Widget _camera() {
+    final epoch = _cameraEpoch;
+    bool current() =>
+        !_closed && !_failed && _cameraEnabled && epoch == _cameraEpoch;
+    return SizedBox(
+        height: 560,
+        child: KeyedSubtree(
+            key: ValueKey(epoch),
+            child: widget.cameraBuilder!(DoorCameraInput(
+                now: () => _now,
+                isCurrent: current,
+                onUnavailable: () {
+                  if (!current()) return;
+                  _guard.invalidatePerception(_now);
+                  _cameraStatus = '카메라 중지/사용 불가 · 접근 보류';
+                  _tick();
+                },
+                onFrame: (result, capture) {
+                  if (!current()) return;
+                  final now = _now;
+                  try {
+                    final obstacles = _cameraPolicy.evaluate(result,
+                        capturedAt: capture, now: now);
+                    _guard.observeObstacles(
+                        at: capture, now: now, obstacles: obstacles);
+                    _cameraStatus =
+                        '탐지: 실측 · 위험도: 시연 주의 규칙 · frame=${result['frameId']} · capture_us=${capture.inMicroseconds} · 장애물 ${obstacles.length}개';
+                  } catch (error) {
+                    _guard.invalidatePerception(now);
+                    _cameraStatus = '카메라 입력 거부 · 접근 보류: $error';
+                  }
+                  _tick();
+                }))));
+  }
+
   Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
   late final DoorApproachGuard _guard;
   late final DoorBeaconInput _beaconInput;
@@ -119,6 +184,8 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     ++_scanEpoch;
     ++_gestureEpoch;
     _scanning = false;
+    _cameraEnabled = false;
+    ++_cameraEpoch;
     _targetReplay = _perceptionReplay = false;
     _scanStatus = reason;
     final scanner = _scanner, subscription = _scanSubscription;
@@ -162,7 +229,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
       _lastKey = frame.key;
       if (_realBle) {
         debugPrint(
-            'MOBI_DOOR_STATE at_us=${now.inMicroseconds} target=${widget.targetId} phase=${frame.phase.name} risk=MOCK_OR_REPLAY text=${frame.text}');
+            'MOBI_DOOR_STATE at_us=${now.inMicroseconds} target=${widget.targetId} phase=${frame.phase.name} risk=${_cameraEnabled ? "CAMERA_DEMO_CAUTION" : "MOCK_OR_REPLAY"} text=${frame.text}');
       }
       _render(frame);
     }
@@ -253,7 +320,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
       body: ListView(padding: const EdgeInsets.all(20), children: [
         Text('목표 버스 선택 완료 · 목표 문 ${widget.targetId}'),
         Text(_realBle
-            ? '비콘: 실측 · 위험도: 모의/기록 재생 · 머리 추적 미사용 · 서버 판정 미실행'
+            ? '비콘: 실측 · 위험도: ${_cameraEnabled ? "카메라 탐지 기반 시연 주의 규칙" : "모의/기록 재생"} · 머리 추적 미사용 · 서버 판정 미실행'
             : '입력: 모의 · 실제 BLE/AI/머리 추적 연결은 아직 없습니다. 서버 판정 미실행.'),
         if (_realBle) ...[
           Text(_scanStatus),
@@ -317,10 +384,19 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
                 setState(() => _near = v);
                 _tick();
               }),
+        if (widget.cameraBuilder != null) ...[
+          SwitchListTile(
+              title: const Text('실측 카메라 장애물 규칙 사용'),
+              subtitle: const Text('킥보드·기둥·나무 → 시연 주의. 충돌 위험도·거리·경로 안전 미측정.'),
+              value: _cameraEnabled,
+              onChanged: _failed ? null : _setCamera),
+          Text(_cameraStatus),
+          if (_cameraEnabled) _camera(),
+        ],
         SwitchListTile(
             title: const Text('새 장애물 전체 스냅샷 모의 재생'),
             value: _perceptionReplay,
-            onChanged: _failed
+            onChanged: _failed || _cameraEnabled
                 ? null
                 : (v) {
                     setState(() => _perceptionReplay = v);
@@ -336,7 +412,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
               decoration:
                   const InputDecoration(labelText: 'vision_detection 응답 JSON')),
           OutlinedButton(
-              onPressed: _failed
+              onPressed: _failed || _cameraEnabled
                   ? null
                   : () {
                       _perceptionReplay = false;
@@ -369,12 +445,14 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
                 .map((v) =>
                     DropdownMenuItem(value: v, child: Text('모의 위험: ${v.name}')))
                 .toList(),
-            onChanged: (v) {
-              if (v != null) {
-                setState(() => _risk = v);
-                _tick();
-              }
-            }),
+            onChanged: _cameraEnabled
+                ? null
+                : (v) {
+                    if (v != null) {
+                      setState(() => _risk = v);
+                      _tick();
+                    }
+                  }),
         DropdownButton<double>(
             value: _pan ?? 2,
             items: const [
@@ -383,10 +461,12 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
               DropdownMenuItem(value: 1, child: Text('모의 장애물: 오른쪽')),
               DropdownMenuItem(value: 2, child: Text('방향 불명 → 중앙 경고')),
             ],
-            onChanged: (v) {
-              setState(() => _pan = v == 2 ? null : v);
-              _tick();
-            }),
+            onChanged: _cameraEnabled
+                ? null
+                : (v) {
+                    setState(() => _pan = v == 2 ? null : v);
+                    _tick();
+                  }),
         OutlinedButton(
             onPressed: _guard.current.phase != DoorPhase.near
                 ? null
