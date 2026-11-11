@@ -84,13 +84,15 @@ class VisionScreenAudio extends ChangeNotifier {
 
   TestDirection? _lastDoorSide;
   int? _lastDoorRank;
+  bool _lastDoorWasUltraNear = false;
   int? _lastDoorSeenMicros;
   bool _doorExitHandled = false;
   int _doorMissingFrames = 0;
 
-  static const doorHandoffPrompt = '출입문이 바로 앞에 있습니다. 흰지팡이로 계단을 확인해 주세요.';
+  static const doorHandoffPrompt =
+      '출입문 근처입니다. 버스가 완전히 멈췄는지 소리를 확인하시고, 흰지팡이로 전방의 계단이나 문을 조심스럽게 탐색해 주세요.';
   static String doorRecoveryPrompt(TestDirection side) =>
-      '출입문이 마지막으로 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}에서 확인되었습니다. 몸을 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}으로 돌려주세요.';
+      '출입문이 마지막으로 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}에서 확인되었습니다. 몸을 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}으로 천천히 돌려주세요.';
 
   static const classNames = {
     'bus': '버스',
@@ -142,6 +144,16 @@ class VisionScreenAudio extends ChangeNotifier {
     if (area >= 0.25 || bottomY >= 0.85) return 0;
     if (area >= 0.08 || bottomY >= 0.65) return 1;
     return 2;
+  }
+
+  /// Strict doorstep proximity check for center door handoff:
+  /// Requires large screen area (>= 0.20) or vertical span reaching ground (bottomY >= 0.88, y <= 0.15).
+  static bool isDoorUltraNear(Map b) {
+    final w = (b['w'] as num).toDouble(),
+        h = (b['h'] as num).toDouble(),
+        y = (b['y'] as num).toDouble();
+    final area = w * h, bottomY = y + h;
+    return area >= 0.20 || (bottomY >= 0.88 && y <= 0.15);
   }
 
   static double proximityScore(Map b) {
@@ -230,6 +242,7 @@ class VisionScreenAudio extends ChangeNotifier {
     _streakCount = 0;
     _lastDoorSide = null;
     _lastDoorRank = null;
+    _lastDoorWasUltraNear = false;
     _lastDoorSeenMicros = null;
     _doorExitHandled = false;
     _doorMissingFrames = 0;
@@ -338,6 +351,7 @@ class VisionScreenAudio extends ChangeNotifier {
     _streakCount = 0;
     _lastDoorSide = null;
     _lastDoorRank = null;
+    _lastDoorWasUltraNear = false;
     _lastDoorSeenMicros = null;
     _doorExitHandled = false;
     _doorMissingFrames = 0;
@@ -459,6 +473,7 @@ class VisionScreenAudio extends ChangeNotifier {
           (doorBox['w'] as num).toDouble() / 2;
       _lastDoorSide = direction(doorCx);
       _lastDoorRank = currentDoorRank;
+      _lastDoorWasUltraNear = isDoorUltraNear(doorBox);
       _lastDoorSeenMicros = _now();
       _doorExitHandled = false;
       _doorMissingFrames = 0;
@@ -472,7 +487,7 @@ class VisionScreenAudio extends ChangeNotifier {
       if (!_doorExitHandled && elapsed <= maxExitGraceMicros) {
         final requiredMissing = confirmationFrames > 1 ? 2 : 1;
         if (_doorMissingFrames >= requiredMissing) {
-          if ((_lastDoorSide == TestDirection.center && _lastDoorRank == 0) ||
+          if ((_lastDoorSide == TestDirection.center && _lastDoorWasUltraNear) ||
               _lastDoorSide == TestDirection.left ||
               _lastDoorSide == TestDirection.right) {
             shouldHandleDoorExit = true;
@@ -481,6 +496,7 @@ class VisionScreenAudio extends ChangeNotifier {
       } else if (elapsed > maxExitGraceMicros) {
         _lastDoorSide = null;
         _lastDoorRank = null;
+        _lastDoorWasUltraNear = false;
         _lastDoorSeenMicros = null;
         _doorExitHandled = false;
         _doorMissingFrames = 0;
@@ -491,7 +507,7 @@ class VisionScreenAudio extends ChangeNotifier {
       _doorExitHandled = true;
       final exitSide = _lastDoorSide!;
       final bool isCenterHandoff =
-          exitSide == TestDirection.center && _lastDoorRank == 0;
+          exitSide == TestDirection.center && _lastDoorWasUltraNear;
       final text = isCenterHandoff
           ? doorHandoffPrompt
           : doorRecoveryPrompt(exitSide);

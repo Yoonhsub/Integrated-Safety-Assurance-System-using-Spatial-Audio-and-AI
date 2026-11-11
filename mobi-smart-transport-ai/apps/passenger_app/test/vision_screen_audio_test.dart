@@ -566,7 +566,7 @@ void main() {
   });
 
   testWidgets(
-      'bus_door in center at NEAR distance disappears triggers cane step handoff guidance',
+      'bus_door in center at ultra-near doorstep proximity disappears triggers defensive cane handoff',
       (t) async {
     final port = native.Port(), tts = speech.FakeTts();
     final engine =
@@ -582,11 +582,12 @@ void main() {
         nowMicros: () => now);
     a.setEnabled(true);
 
-    // 1. Frame 1: Bus door detected in center with NEAR distance rank (area >= 0.06).
+    // 1. Frame 1: Bus door detected in center spanning entire height and large area (ultra-near doorstep).
+    // Box: x=0.35, y=0.10, w=0.4, h=0.8 -> area=0.32 >= 0.20, bottomY=0.90 >= 0.88, y=0.10 <= 0.15.
     now = 1000;
     a.observe(
         detection(now, boxes: [
-          const LocalBox('bus_door', .90, .4, .3, .3, .3),
+          const LocalBox('bus_door', .90, .35, .1, .4, .8),
         ]).toDetectionResult(),
         age: Duration.zero);
     await flush(t);
@@ -598,7 +599,7 @@ void main() {
     await flush(t);
     expect(a.completed, 1);
 
-    // 2. Frame 2: Bus door disappears (user reaches the door and it exits FOV).
+    // 2. Frame 2: Bus door disappears (user reaches the doorstep and it exits FOV).
     now = 2000000;
     a.observe(
         detection(now, boxes: []).toDetectionResult(),
@@ -612,7 +613,8 @@ void main() {
     port.finish();
     await flush(t);
     expect(tts.spoken.last, VisionScreenAudio.doorHandoffPrompt);
-    expect(tts.spoken.last, contains('흰지팡이로 계단을 확인'));
+    expect(tts.spoken.last, contains('버스가 완전히 멈췄는지'));
+    expect(tts.spoken.last, contains('조심스럽게 탐색'));
 
     // 3. Subsequent empty frames do not re-trigger handoff cue.
     now = 2500000;
@@ -621,6 +623,55 @@ void main() {
         age: Duration.zero);
     await flush(t);
     expect(a.admitted, 2);
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door in center at 1.5m-2m (not ultra-near) disappears due to occlusion does not trigger false doorstep handoff',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Frame 1: Bus door in center, but at 1.5m~2m (area=0.0625, bottomY=0.55 < 0.88, NOT ultra-near).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus_door', .90, .4, .3, .25, .25),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.completed, 1);
+
+    // Frame 2: Disappears (e.g. pedestrian walks in front or user tilts camera).
+    now = 2000000;
+    a.observe(
+        detection(now, boxes: []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    // Should NOT trigger false doorstep handoff!
+    expect(a.admitted, 1);
 
     await a.stop();
     a.dispose();
@@ -676,7 +727,7 @@ void main() {
     await flush(t);
     expect(tts.spoken.last, VisionScreenAudio.doorRecoveryPrompt(TestDirection.right));
     expect(tts.spoken.last, contains('마지막으로 오른쪽에서 확인되었습니다'));
-    expect(tts.spoken.last, contains('몸을 오른쪽으로'));
+    expect(tts.spoken.last, contains('몸을 오른쪽으로 천천히'));
 
     await a.stop();
     a.dispose();
