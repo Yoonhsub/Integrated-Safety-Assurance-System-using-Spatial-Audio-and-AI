@@ -95,7 +95,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.mobi_passenger_app"
+        applicationId = "com.example.mobi_passenger_app.handoff"
         if (offlineCamera) applicationIdSuffix = ".offlinevision"
         if (localBackend) applicationIdSuffix = ".localbackend"
         if (localAudio) applicationIdSuffix = ".localaudio"

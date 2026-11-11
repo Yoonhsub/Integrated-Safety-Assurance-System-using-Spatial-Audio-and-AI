@@ -26,6 +26,7 @@ void main() {
       home: LocalSpatialVerificationPage(
           enabled: true,
           nativeStereoOnly: true,
+          mockBusControls: true,
           stopOnBackground: true,
           output: output,
           tts: tts)));

@@ -79,7 +79,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   String get _playingMessage => _externalWarning
       ? '장애물 공간 경고음 · 센서 방향 보정 중'
       : _manualWarning
-          ? '예시 경고음 재생 중'
+          ? '비선택 시험 비콘 경고음 재생 중'
           : '실제 비콘 간격 · 센서 방향 보정 중';
   CueSelection? get _preview {
     final now = _now;
@@ -319,7 +319,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           Text(
             _proximity
                 ? (_beaconFresh
-                    ? '비콘 ${widget.beaconName}: ${widget.beaconRssi} dBm · 간격 ${(_interval / 1000).toStringAsFixed(2)}초'
+                    ? '${widget.warning ? '비선택 시험 비콘 신호' : '비콘 ${widget.beaconName}'}: ${widget.beaconRssi} dBm · 간격 ${(_interval / 1000).toStringAsFixed(2)}초'
                     : '버스 비콘 수신 대기 · 버스 탐색을 시작해주세요')
                 : '간격 조절 꺼짐 · 고정 간격 1초',
           ),

@@ -8,6 +8,7 @@ import '../services/session_guidance_audio.dart';
 import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/audio_shutdown.dart';
+import '../models/v3_guidance_models.dart';
 
 /// Local explicit debug page. No Backend, Firebase, sensors or automatic sound.
 class LocalSpatialVerificationPage extends StatefulWidget {
@@ -16,11 +17,12 @@ class LocalSpatialVerificationPage extends StatefulWidget {
       this.enabled = false,
       this.nativeStereoOnly = false,
       this.stopOnBackground = false,
+      this.mockBusControls = false,
       required this.output,
       required this.tts,
       this.cuesFactory,
       this.onLogout});
-  final bool enabled, nativeStereoOnly, stopOnBackground;
+  final bool enabled, nativeStereoOnly, stopOnBackground, mockBusControls;
   final Future<void> Function()? onLogout;
   final SpatialTestOutput output;
   final SpeechEngine tts;
@@ -49,6 +51,8 @@ class _SpatialState extends State<LocalSpatialVerificationPage>
   int _guidanceNumber = 0;
   DirectionalGuidance? _lastGuidance;
   bool get _allowed => kDebugMode && widget.enabled;
+  bool get _mockBusAllowed =>
+      _allowed && widget.nativeStereoOnly && widget.mockBusControls;
   bool _valid(int epoch, int request) =>
       mounted &&
       !_disposed &&
@@ -225,6 +229,47 @@ class _SpatialState extends State<LocalSpatialVerificationPage>
     }
   }
 
+  // Explicit local test inputs only. No bus identity or AI detection assertion.
+  Future<void> _mockBusSpeech() async {
+    if (!_mockBusAllowed || !_current || _failed || _stopping || _hold) return;
+    final epoch = _epoch, request = ++_request;
+    _record('SYNTHETIC_BUS_TTS_REQUEST');
+    try {
+      await _priority.speakObservation(
+          _owner,
+          '모의 버스 안내입니다. 선택한 버스의 접근을 안내하는 시험입니다. '
+          '실제 차량 확인이나 탑승 허가는 아닙니다. 정류장 안에서 다음 안내를 기다려 주세요.',
+          () => _valid(epoch, request));
+      if (_valid(epoch, request)) _record('SYNTHETIC_BUS_TTS_COMPLETED');
+    } on SpeechCancelled {
+      if (mounted && epoch == _epoch) _record('SYNTHETIC_BUS_TTS_CANCELLED');
+    } catch (_) {
+      if (_valid(epoch, request)) {
+        _failed = true;
+        _record('SYNTHETIC_BUS_TTS_BLOCKED');
+      }
+    }
+  }
+
+  Future<void> _mockObstacleDanger() async {
+    if (!_mockBusAllowed || !_current || _failed || _stopping || _hold) return;
+    setState(() => _hold = true);
+    _request++;
+    _record('SYNTHETIC_OBSTACLE_DANGER_REQUEST');
+    try {
+      await _cues.playCue(const V3Cue(
+          type: 'DANGER',
+          ttsMode: 'SAFETY_LOCAL',
+          shouldVibrate: true,
+          shouldBeep: true,
+          message: '모의 장애물 경고입니다. 멈춰 주세요.'));
+      if (mounted && !_disposed) _record('SYNTHETIC_DANGER_DISPATCHED');
+    } catch (_) {
+      if (mounted && !_disposed) _record('SYNTHETIC_DANGER_OUTPUT_FAILED');
+    }
+    // Keep the warning lease until the existing STOP/session cleanup is used.
+  }
+
   Future<void> _stop(String reason,
       {bool end = false, bool reset = false}) async {
     if (!_allowed || _stopping) return;
@@ -344,6 +389,18 @@ class _SpatialState extends State<LocalSpatialVerificationPage>
                       Text(widget.nativeStereoOnly
                           ? 'Android Stereo PCM Cue → 한국어 로컬 TTS · HRTF/실기기 청취 미검증'
                           : '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
+                      if (_mockBusAllowed) ...[
+                        const Text('수동 모의 입력 · 실제 버스/장애물 감지가 아닙니다. '
+                            '버스 음성 도중 장애물 경고를 눌러 선점을 확인하고 STOP으로 종료하세요.'),
+                        Wrap(spacing: 8, children: [
+                          ElevatedButton(
+                              onPressed: ready ? _mockBusSpeech : null,
+                              child: const Text('모의 버스 안내')),
+                          ElevatedButton(
+                              onPressed: ready ? _mockObstacleDanger : null,
+                              child: const Text('모의 장애물 경고')),
+                        ]),
+                      ],
                       if (widget.nativeStereoOnly)
                         ExpansionTile(
                             title: const Text('Native 출력 경로·TTS 상태'),

@@ -26,7 +26,9 @@ class LocalAudioActivity : FlutterActivity() {
     private var audio: LocalStereoCue? = null
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
-        check(packageName == "com.example.mobi_passenger_app.localaudio" &&
+        check(packageName in setOf(
+            "com.example.mobi_passenger_app.localaudio",
+            "com.example.mobi_passenger_app.handoff.localaudio") &&
             (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0)
         audio = LocalStereoCue(this, MethodChannel(engine.dartExecutor.binaryMessenger, "mobi/local_android_audio"))
     }
