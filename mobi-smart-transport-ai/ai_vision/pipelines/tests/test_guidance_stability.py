@@ -14,7 +14,11 @@ if str(_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(_PIPELINES_DIR))
 
 from guidance_stability import GuidanceStabilityPolicy, GuidanceStabilizer  # noqa: E402
-from spatial_guidance import interpret_bus_door_guidance, interpret_bus_guidance  # noqa: E402
+from spatial_guidance import (  # noqa: E402
+    interpret_bus_door_guidance,
+    interpret_bus_guidance,
+    interpret_obstacle_guidance,
+)
 from vision_result import ImageSize, RawDetection, build_vision_result  # noqa: E402
 
 
@@ -31,7 +35,7 @@ class GuidanceStabilityTest(unittest.TestCase):
             raw_detections=detections,
             model_name="yolov11n",
             model_version="test",
-            thresholds={"bus": 0.50, "bus_door": 0.55},
+            thresholds={"bus": 0.50, "bus_door": 0.55, "parked_pm": 0.45, "pole": 0.45},
         )
 
     def bus_candidate(self, seconds: int, *, left: int = 350, right: int = 650):
@@ -82,6 +86,22 @@ class GuidanceStabilityTest(unittest.TestCase):
         assert bus is not None and door is not None
         selected = stabilizer.filter((bus, door), captured_at=result.captured_at)
         self.assertEqual([item.class_id for item in selected], ["bus_door"])
+
+    def test_prioritizes_nearer_obstacle_over_distant_bus(self) -> None:
+        stabilizer = GuidanceStabilizer(GuidanceStabilityPolicy(confirmation_frames=1))
+        result = self.result(
+            0,
+            [
+                RawDetection("bus", 0.96, 100, 100, 300, 300),  # area 0.04 -> FAR
+                RawDetection("parked_pm", 0.78, 350, 500, 650, 900),  # area 0.12 -> NEAR
+            ],
+        )
+        bus = interpret_bus_guidance(result)
+        obstacles = interpret_obstacle_guidance(result)
+        assert bus is not None and len(obstacles) == 1
+        selected = stabilizer.filter((bus, *obstacles), captured_at=result.captured_at)
+        self.assertEqual([item.class_id for item in selected], ["parked_pm"])
+        self.assertEqual(selected[0].relative_distance.value, "NEAR")
 
 
 if __name__ == "__main__":

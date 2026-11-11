@@ -20,6 +20,7 @@ class VisionScreenAudio extends ChangeNotifier {
     this.minimumInterval = const Duration(seconds: 8),
     this.confirmationFrames = 1,
     this.requireDoorInBus = false,
+    this.prioritizeByDistance = false,
   }) : headTracking = headTracking ?? sharedHeadTrackingState,
        horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
        _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
@@ -47,6 +48,7 @@ class VisionScreenAudio extends ChangeNotifier {
   final Duration minimumInterval;
   final int confirmationFrames;
   final bool requireDoorInBus;
+  final bool prioritizeByDistance;
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
   final int Function() _now;
@@ -91,11 +93,52 @@ class VisionScreenAudio extends ChangeNotifier {
     'obstacle': '장애물',
     'tactile_paving': '점자블록',
   };
+  static const _classPriority = <String, int>{
+    'bus_door': 0,
+    'bus': 1,
+    'parked_pm': 2,
+    'pole': 3,
+    'tree_trunk': 4,
+    'obstacle': 5,
+    'bus_stop': 6,
+  };
   static TestDirection direction(double centerX) => centerX < 1 / 3
       ? TestDirection.left
       : centerX > 2 / 3
       ? TestDirection.right
       : TestDirection.center;
+
+  /// Relative distance rank based on normalized bbox area and vertical ground
+  /// position (bottomY = y + h). Returns 0 for NEAR, 1 for MEDIUM, 2 for FAR.
+  static int distanceRank(String classId, Map b) {
+    final w = (b['w'] as num).toDouble(),
+        h = (b['h'] as num).toDouble(),
+        y = (b['y'] as num).toDouble();
+    final area = w * h, bottomY = y + h;
+    if (classId == 'bus_door') {
+      if (area >= 0.06 || bottomY >= 0.85) return 0;
+      if (area >= 0.015 || bottomY >= 0.65) return 1;
+      return 2;
+    }
+    if (classId == 'parked_pm' ||
+        classId == 'pole' ||
+        classId == 'tree_trunk' ||
+        classId == 'obstacle') {
+      if (area >= 0.08 || bottomY >= 0.80) return 0;
+      if (area >= 0.02 || bottomY >= 0.60) return 1;
+      return 2;
+    }
+    if (area >= 0.25 || bottomY >= 0.85) return 0;
+    if (area >= 0.08 || bottomY >= 0.65) return 1;
+    return 2;
+  }
+
+  static double proximityScore(Map b) {
+    final w = (b['w'] as num).toDouble(),
+        h = (b['h'] as num).toDouble(),
+        y = (b['y'] as num).toDouble();
+    return (y + h) * 0.6 + (w * h) * 0.4;
+  }
 
   static bool _isValidBoxMap(Map b) {
     if ([
@@ -328,6 +371,9 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     Map? selected;
     double best = -1;
+    int bestRank = 99;
+    int bestPriority = 99;
+    double bestProximity = -1;
     for (final row in rows) {
       if (row is! Map ||
           !classNames.containsKey(row['classId']) ||
@@ -343,12 +389,35 @@ class VisionScreenAudio extends ChangeNotifier {
           !_isValidBoxMap(b)) {
         continue;
       }
+      final classId = row['classId'] as String;
       if (requireDoorInBus &&
-          row['classId'] == 'bus_door' &&
+          classId == 'bus_door' &&
           !_doorInBusValid(b, rows)) {
         continue;
       }
-      if (c > best) {
+      if (prioritizeByDistance) {
+        final rank = distanceRank(classId, b);
+        final prio = _classPriority[classId] ?? 99;
+        final prox = proximityScore(b);
+        final better =
+            selected == null ||
+            rank < bestRank ||
+            (rank == bestRank && prio < bestPriority) ||
+            (rank == bestRank &&
+                prio == bestPriority &&
+                prox > bestProximity) ||
+            (rank == bestRank &&
+                prio == bestPriority &&
+                prox == bestProximity &&
+                c > best);
+        if (better) {
+          selected = row;
+          best = c.toDouble();
+          bestRank = rank;
+          bestPriority = prio;
+          bestProximity = prox;
+        }
+      } else if (c > best) {
         selected = row;
         best = c.toDouble();
       }
@@ -468,6 +537,12 @@ class VisionScreenAudio extends ChangeNotifier {
       'bbox': Map<String, Object?>.from(box),
       'screenCenterX': cx,
       'screenDirection': side.name.toUpperCase(),
+      if (prioritizeByDistance)
+        'relativeDistance': switch (bestRank) {
+          0 => 'NEAR',
+          1 => 'MEDIUM',
+          _ => 'FAR',
+        },
       'headTrackingStatus': headTracking.snapshot.status.name,
       'headTrackingEnabled': correctedAngle != null,
       'headTrackingMount': mountCalibration.mount.name,

@@ -525,4 +525,42 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      'prioritizeByDistance selects nearer obstacle over distant bus with higher confidence',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Distant bus (confidence 0.96, FAR) vs near kickboard obstacle (confidence 0.75, NEAR).
+    a.observe(
+        detection(1, boxes: [
+          const LocalBox('bus', .96, .05, .1, .15, .15),
+          const LocalBox('parked_pm', .75, .70, .55, .25, .35),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'parked_pm');
+    expect(a.diagnostic['className'], '방치 전동 킥보드');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }
