@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/main.dart' as app;
@@ -6,8 +7,54 @@ import 'package:mobi_passenger_app/src/app.dart';
 import 'auth_only_app_test.dart' as auth;
 import 'package:mobi_passenger_app/src/services/api_base_url.dart';
 import 'package:mobi_passenger_app/src/local_vision/vision_codec.dart';
+import 'package:mobi_passenger_app/src/pages/passenger_presentation.dart';
+import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
+import 'vision_observation_tts_test.dart' show FakeTts;
 
 void main() {
+  testWidgets('Android home describes on tap and opens on a matching second tap',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final engine = FakeTts();
+    final speech = SpeechPriorityCoordinator(engine);
+    addTearDown(speech.dispose);
+    var opened = 0;
+    try {
+      await tester.pumpWidget(MaterialApp(
+        home: PassengerLanding(speech: speech, onOnline: () => opened++),
+      ));
+      final route = find.text('노선 정보 질문');
+      await tester.tap(route);
+      await tester.pump();
+      expect(engine.spoken.single, contains('도착 정보'));
+      expect(opened, 0);
+      await tester.pump(const Duration(milliseconds: 501));
+      await tester.tap(route);
+      await tester.pump();
+      expect(opened, 0);
+      await tester.tap(find.text('AI 비전 · 공간음향'));
+      await tester.pump();
+      await tester.tap(route);
+      await tester.pump();
+      expect(opened, 0);
+      await tester.tap(route);
+      await tester.pump();
+      expect(opened, 1);
+      expect(engine.playing!.isCompleted, isTrue);
+      final accessibleButton = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) => widget is Semantics && widget.properties.label == '노선 정보 질문',
+        ),
+      );
+      accessibleButton.properties.onTap!();
+      expect(opened, 2);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   test('normal Android defaults to USB reverse loopback', () {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
