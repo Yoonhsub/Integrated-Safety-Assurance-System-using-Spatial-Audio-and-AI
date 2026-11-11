@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/pages/door_approach_demo_page.dart';
@@ -57,6 +58,69 @@ class Voice implements SpeechEngine {
 }
 
 void main() {
+  testWidgets(
+      'recorded detection reaches left warning and invalid JSON stops output',
+      (t) async {
+    t.view.physicalSize = const Size(1800, 3200);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
+    var now = const Duration(seconds: 1);
+    final output = CuePort(), voice = Voice();
+    Future<void> flush() async {
+      now += const Duration(milliseconds: 100);
+      await t.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 12; i++) {
+        await t.pump();
+      }
+    }
+
+    await t.pumpWidget(MaterialApp(
+        home: DoorApproachDemoPage(
+            output: output, tts: voice, sessionNow: () => now)));
+    await t.tap(find.text('안내 시작'));
+    await flush();
+    await t.tap(find.text('모의 위험: none'));
+    await t.pump();
+    await t.tap(find.text('모의 위험: danger').last);
+    await flush();
+    await t.tap(find.text('AI 탐지 JSON 한 프레임 재생'));
+    await t.pump(const Duration(milliseconds: 300));
+    final json = jsonEncode({
+      'schemaVersion': '1.0.0',
+      'status': 'ok',
+      'source': 'android_camera',
+      'frameId': 'recorded-frame',
+      'capturedAt': '2026-11-10T00:00:00Z',
+      'detections': [
+        {
+          'classId': 'pole',
+          'confidence': .9,
+          'bbox': {'x': .1, 'y': .1, 'w': .1, 'h': .5}
+        }
+      ]
+    });
+    await t.enterText(find.byType(TextField), json);
+    await t.pumpAndSettle();
+    await t.ensureVisible(find.text('탐지 스냅샷 1회 재생'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('탐지 스냅샷 1회 재생'));
+    await flush();
+    expect(output.directions.last, TestDirection.left);
+    expect(voice.spoken.last, contains('위험'));
+    expect(find.textContaining('위험도 모의 danger'), findsOneWidget);
+    final stops = voice.stops;
+    await t.enterText(find.byType(TextField), '{broken');
+    await t.pumpAndSettle();
+    await t.ensureVisible(find.text('탐지 스냅샷 1회 재생'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('탐지 스냅샷 1회 재생'));
+    await flush();
+    expect(find.text('상태: stopped'), findsOneWidget);
+    expect(voice.stops, greaterThan(stops));
+    await t.pumpWidget(const SizedBox());
+    await t.pump();
+  });
   for (final scenario in ['flow', 'late', 'stopFailure']) {
     final lateStart = scenario == 'late';
     final stopFailure = scenario == 'stopFailure';

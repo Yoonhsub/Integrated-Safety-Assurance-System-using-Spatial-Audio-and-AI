@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/door_approach_guard.dart';
+import '../services/door_input_adapter.dart';
 import '../services/directional_guidance.dart';
 import '../services/spatial_verification_engine.dart';
 import '../services/speech_priority_coordinator.dart';
@@ -19,6 +20,8 @@ class DoorApproachDemoPage extends StatefulWidget {
 class _DoorDemoState extends State<DoorApproachDemoPage>
     with WidgetsBindingObserver {
   final _clock = Stopwatch()..start();
+  final _visionJson = TextEditingController();
+  String _visionStatus = '기록 탐지 입력 없음';
   Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
   final _guard = DoorApproachGuard(targetId: 'DEMO_DOOR_A');
   final _owner = Object();
@@ -210,6 +213,42 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
                     _tick();
                   }),
         const Text('위험 정보도 2초간 새 관측이 없으면 안내를 중단합니다.'),
+        ExpansionTile(title: const Text('AI 탐지 JSON 한 프레임 재생'), children: [
+          const Text(
+              '입력: 기록 재생 · 위험도: 아래에서 선택한 모의 값. 원본 capturedAt은 보존하며 실시간 카메라로 표시하지 않습니다. 각 클릭은 1회 재생이고 2초 뒤 만료됩니다.'),
+          TextField(
+              controller: _visionJson,
+              maxLines: 5,
+              decoration:
+                  const InputDecoration(labelText: 'vision_detection 응답 JSON')),
+          OutlinedButton(
+              onPressed: _failed
+                  ? null
+                  : () {
+                      _perceptionReplay = false;
+                      final now = _now;
+                      try {
+                        final replay = DoorVisionReplay.parse(_visionJson.text,
+                            testRisk: _risk);
+                        _guard.observeObstacles(
+                            at: now, now: now, obstacles: replay.obstacles);
+                        _visionStatus =
+                            '기록 재생: ${replay.frameId} · 원본 ${replay.originalSource} · 촬영 ${replay.capturedAt ?? "미상"} · 위험도 모의 ${_risk.name}';
+                      } catch (error) {
+                        _guard.observeObstacles(
+                            at: now,
+                            now: now,
+                            obstacles: const [
+                              DoorObstacle('invalid', DoorRisk.danger, pan: 2)
+                            ]);
+                        _guard.stop(now);
+                        _visionStatus = '입력 거부 · 접근 중단: $error';
+                      }
+                      _tick();
+                    },
+              child: const Text('탐지 스냅샷 1회 재생')),
+          Text(_visionStatus),
+        ]),
         DropdownButton<DoorRisk>(
             value: _risk,
             items: DoorRisk.values
@@ -251,6 +290,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     ++_gestureEpoch;
     ++_revision;
     _timer?.cancel();
+    _visionJson.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_engine.dispose().catchError((Object _) {}).whenComplete(() {
       _lease?.release();

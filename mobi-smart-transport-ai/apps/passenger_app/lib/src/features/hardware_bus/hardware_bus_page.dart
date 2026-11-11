@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import 'continuous_beacon_scanner.dart';
 import 'wit_sensor_panel.dart';
+import '../../services/door_approach_guard.dart';
+import '../../services/door_input_adapter.dart';
 
 const beaconA = 'C3:00:00:5C:B9:47';
 const beaconB = 'C3:00:00:5C:B9:48';
@@ -36,6 +38,8 @@ class _HardwareBusPageState extends State<HardwareBusPage>
   Duration _scanDuration = const Duration(seconds: 15);
   String _toneBeaconMac = beaconA;
   final _clock = Stopwatch()..start();
+  DoorApproachGuard _doorGuard = DoorApproachGuard(targetId: beaconA);
+  late DoorBeaconInput _doorInput;
   final _passages = {beaconA: BusPassage(), beaconB: BusPassage()};
 
   bool _fresh(String mac) {
@@ -63,8 +67,10 @@ class _HardwareBusPageState extends State<HardwareBusPage>
   @override
   void initState() {
     super.initState();
+    _doorInput = DoorBeaconInput(_doorGuard);
     WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      _doorGuard.tick(_clock.elapsed);
       if (mounted) setState(() {});
     });
   }
@@ -147,6 +153,8 @@ class _HardwareBusPageState extends State<HardwareBusPage>
           if (!mounted || epoch != _epoch) return;
           setState(() {
             _signals[signal.beaconId] = signal;
+            _doorInput.observe(signal,
+                wallNow: DateTime.now(), now: _clock.elapsed);
             _radioTimes[signal.beaconId] = signal.lastDetectedAt;
             _passages[signal.beaconId]?.observe(signal.rssi, _clock.elapsed);
           });
@@ -181,6 +189,7 @@ class _HardwareBusPageState extends State<HardwareBusPage>
   Future<void> _stop(String message) async {
     if (_stopping) return;
     _stopping = true;
+    _doorGuard.stop(_clock.elapsed);
     ++_epoch;
     _deadline?.cancel();
     final scanner = _scanner;
@@ -202,6 +211,7 @@ class _HardwareBusPageState extends State<HardwareBusPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _doorGuard.stop(_clock.elapsed);
     if (state == AppLifecycleState.paused && _running) {
       unawaited(_stop('화면을 벗어나 스캔을 중지했습니다. 다시 시작해주세요.'));
     }
@@ -297,6 +307,9 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                     if (value != null) {
                       setState(() {
                         _toneBeaconMac = value;
+                        _doorGuard.stop(_clock.elapsed);
+                        _doorGuard = DoorApproachGuard(targetId: value);
+                        _doorInput = DoorBeaconInput(_doorGuard);
                         _passages[value]!.reset();
                       });
                     }
@@ -304,6 +317,56 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                 ),
               ],
             ),
+            Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('탑승문 중단 조건 · 상태 확인 전용'),
+                          const Text(
+                              '비콘: 실측 / 위험 정보: 미연결 또는 버튼 모의 / 서버 판정: 미실행. 이 패널은 소리를 재생하거나 아래 기존 시험음을 제어하지 않습니다.'),
+                          Text(
+                              '목표 $_toneBeaconMac · ${_doorGuard.current.phase.name}'),
+                          Text(_doorGuard.current.text),
+                          Wrap(spacing: 8, children: [
+                            OutlinedButton(
+                                onPressed: !_running
+                                    ? null
+                                    : () => setState(() {
+                                          _doorGuard.start(_clock.elapsed);
+                                        }),
+                                child: const Text('중단 상태 확인 시작')),
+                            OutlinedButton(
+                                onPressed: () => setState(() {
+                                      _doorGuard.stop(_clock.elapsed);
+                                    }),
+                                child: const Text('상태 확인 중지')),
+                            OutlinedButton(
+                                onPressed: () => setState(() {
+                                      final now = _clock.elapsed;
+                                      _doorGuard.observeObstacles(
+                                          at: now,
+                                          now: now,
+                                          obstacles: const []);
+                                    }),
+                                child: const Text('모의 위험 해제 1회 (2초)')),
+                            OutlinedButton(
+                                onPressed: () => setState(() {
+                                      final now = _clock.elapsed;
+                                      _doorGuard.observeObstacles(
+                                          at: now,
+                                          now: now,
+                                          obstacles: const [
+                                            DoorObstacle(
+                                                '모의 장애물', DoorRisk.danger)
+                                          ]);
+                                    }),
+                                child: const Text('모의 긴급 위험 1회')),
+                          ]),
+                          const Text(
+                              '위험 해제 뒤 새 목표 관측만 재개에 사용합니다. 비콘 RSSI에서 방향을 만들지 않습니다.'),
+                        ]))),
             WitSensorPanel(
               key: const ValueKey('wit-sensor-panel'),
               ensureReady: _ready,
