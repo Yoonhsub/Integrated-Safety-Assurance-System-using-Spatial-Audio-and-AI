@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioDeviceCallback
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -28,6 +29,7 @@ internal class LocalStereoCue(private val context: Context, private val channel:
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
     private val prepared = mutableSetOf<String>()
+    private val headphoneOnly = mutableSetOf<String>()
     private val retired = mutableSetOf<String>()
     private var current: Run? = null
     private var closed = false
@@ -39,7 +41,31 @@ internal class LocalStereoCue(private val context: Context, private val channel:
         var focus: AudioFocusRequest? = null
         var watchdog: Runnable? = null
     }
-    init { channel.setMethodCallHandler(::call) }
+    private fun isHeadphone(device: AudioDeviceInfo) = device.isSink && device.type in setOf(
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_USB_HEADSET)
+    private fun headphonesAvailable() = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any(::isHeadphone)
+    private fun headphoneEvent(available: Boolean) {
+        if (closed) return
+        if (!available) current?.takeIf { it.owner in headphoneOnly }?.let { finish(it, false, "HEADPHONE_LOST") }
+        record("HEADPHONE_STATE", mapOf("available" to available))
+        channel.invokeMethod("headphonesChanged", mapOf("available" to available))
+    }
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesRemoved(devices: Array<out AudioDeviceInfo>) {
+            // Losing any headphone endpoint disarms this local rehearsal even if
+            // another endpoint remains. Reconnection is never an auto-start.
+            if (devices.any(::isHeadphone)) headphoneEvent(false)
+        }
+        override fun onAudioDevicesAdded(devices: Array<out AudioDeviceInfo>) {
+            headphoneEvent(headphonesAvailable())
+        }
+    }
+    init {
+        channel.setMethodCallHandler(::call)
+        manager.registerAudioDeviceCallback(deviceCallback, handler)
+    }
     private fun record(phase: String, extra: Map<String, Any?> = emptyMap()) {
         Log.i("MobiLocalAudio", JSONObject(mapOf("phase" to phase, "activeTracks" to (if (current == null) 0 else 1)) + extra).toString())
     }
@@ -49,6 +75,7 @@ internal class LocalStereoCue(private val context: Context, private val channel:
         "sampleRate" to 48000, "channels" to 2, "cueDurationMs" to 600, "pcmPeak" to 0.10,
         "availableOutputs" to manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.isSink }.map(::route),
         "cueRoutedDevice" to lastRoute, "ttsRoute" to "NOT_VERIFIED",
+        "headphonesAvailable" to headphonesAvailable(),
         "musicVolume" to manager.getStreamVolume(AudioManager.STREAM_MUSIC),
         "ttsEngines" to context.packageManager.queryIntentServices(Intent("android.intent.action.TTS_SERVICE"), 0).map { it.serviceInfo.packageName },
         "bluetoothDeviceModel" to "NOT_VERIFIED", "hrtf" to false)
@@ -62,7 +89,12 @@ internal class LocalStereoCue(private val context: Context, private val channel:
             check(!closed) { "Activity closed" }
             val owner = owner(call)
             when (call.method) {
+                "headphones" -> result.success(mapOf("available" to headphonesAvailable()))
                 "prepare" -> {
+                    if (call.argument<Boolean>("headphonesOnly") == true) {
+                        check(headphonesAvailable()) { "Headphones required" }
+                        headphoneOnly.add(owner)
+                    }
                     check(!poisoned && owner !in retired && retired.size < 128)
                     check(current == null || current?.owner == owner)
                     prepared.add(owner)
@@ -70,6 +102,7 @@ internal class LocalStereoCue(private val context: Context, private val channel:
                     result.success(snapshot())
                 }
                 "play" -> {
+                    if (owner in headphoneOnly) check(headphonesAvailable()) { "Headphones required" }
                     check(!poisoned && owner in prepared && owner !in retired && current == null)
                     val id = call.argument<Int>("id") ?: error("Run id required")
                     val direction = call.argument<String>("direction") ?: error("Direction required")
@@ -78,7 +111,7 @@ internal class LocalStereoCue(private val context: Context, private val channel:
                     result.success(snapshot())
                 }
                 "stop", "dispose" -> {
-                    if (call.method == "dispose") { prepared.remove(owner); retired.add(owner) }
+                    if (call.method == "dispose") { prepared.remove(owner); headphoneOnly.remove(owner); retired.add(owner) }
                     val run = current
                     // A stale page is never allowed to stop a new owner's track.
                     if (run != null && run.owner == owner) finish(run, false, "USER_STOP")
@@ -174,7 +207,9 @@ internal class LocalStereoCue(private val context: Context, private val channel:
         if (closed) return
         current?.let { finish(it, false, "ACTIVITY_DESTROY") }
         closed = true
+        manager.unregisterAudioDeviceCallback(deviceCallback)
         prepared.clear()
+        headphoneOnly.clear()
         channel.setMethodCallHandler(null)
         record("ACTIVITY_CLOSED")
     }

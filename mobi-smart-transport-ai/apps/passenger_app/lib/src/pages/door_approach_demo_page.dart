@@ -31,6 +31,8 @@ class DoorApproachDemoPage extends StatefulWidget {
       this.scannerFactory,
       this.prepareScanner,
       this.transportStops,
+      this.audioStops,
+      this.beforeGuidanceStart,
       this.cameraBuilder,
       this.wallNow});
   final SpatialTestOutput output;
@@ -40,6 +42,8 @@ class DoorApproachDemoPage extends StatefulWidget {
   final BeaconScanner Function()? scannerFactory;
   final Future<bool> Function()? prepareScanner;
   final Stream<void>? transportStops;
+  final Stream<void>? audioStops;
+  final Future<bool> Function()? beforeGuidanceStart;
   final DateTime Function()? wallNow;
   final Widget Function(DoorCameraInput input)? cameraBuilder;
   @override
@@ -107,6 +111,8 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
   BeaconScanner? _scanner;
   StreamSubscription<BeaconSignal>? _scanSubscription;
   StreamSubscription<void>? _transportSubscription;
+  StreamSubscription<void>? _audioSubscription;
+  String _startIssue = '';
   bool _scanning = false, _scanBusy = false, _scanStopping = false;
   int _scanEpoch = 0;
   String _scanStatus = '스캔 미실행';
@@ -130,6 +136,11 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     super.initState();
     _guard = DoorApproachGuard(targetId: widget.targetId);
     _beaconInput = DoorBeaconInput(_guard);
+    _audioSubscription = widget.audioStops?.listen((_) {
+      unawaited(_endScan('이어폰 연결 해제 · 안내 중지 · 재연결 후 수동 시작 필요'));
+    }, onError: (Object _) {
+      unawaited(_endScan('이어폰 상태 확인 실패 · 안내 중지'));
+    });
     _transportSubscription = widget.transportStops?.listen((_) {
       unawaited(_endScan('Bluetooth 상태 변경 · 안내 중지'));
     }, onError: (Object error) {
@@ -336,6 +347,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
             style: Theme.of(context).textTheme.headlineSmall),
         Text('상태: ${_guard.current.phase.name}'),
         Text(_outputStatus),
+        if (_startIssue.isNotEmpty) Text(_startIssue),
         Wrap(spacing: 8, children: [
           FilledButton(
               onPressed: _failed || (_realBle && !_scanning)
@@ -343,6 +355,19 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
                   : () async {
                       final gesture = ++_gestureEpoch;
                       try {
+                        final ready =
+                            await widget.beforeGuidanceStart?.call() ?? true;
+                        if (_closed || _failed || gesture != _gestureEpoch) {
+                          return;
+                        }
+                        if (!ready) {
+                          _startIssue =
+                              '이어폰 미디어 연결 필요 · 안내 중지. 연결 후 안내 시작을 다시 눌러주세요.';
+                          _guard.stop(_now);
+                          _tick();
+                          return;
+                        }
+                        _startIssue = '';
                         await widget.output.prepareFromGesture();
                         if (!_closed && !_failed && gesture == _gestureEpoch) {
                           _guard.start(_now);
@@ -483,6 +508,7 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
     _closed = true;
     unawaited(_endScan('페이지 종료'));
     unawaited(_transportSubscription?.cancel());
+    unawaited(_audioSubscription?.cancel());
     ++_gestureEpoch;
     ++_revision;
     _timer?.cancel();

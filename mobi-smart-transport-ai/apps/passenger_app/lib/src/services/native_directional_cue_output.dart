@@ -32,6 +32,11 @@ class _AndroidCuePort implements NativeCuePort {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'cueFinished' && call.arguments is Map) {
         _events.add(Map<String, dynamic>.from(call.arguments as Map));
+      } else if (call.method == 'headphonesChanged' && call.arguments is Map) {
+        _events.add({
+          ...Map<String, dynamic>.from(call.arguments as Map),
+          'event': 'headphonesChanged'
+        });
       }
     });
   }
@@ -56,7 +61,9 @@ class _AndroidCuePort implements NativeCuePort {
 class NativeDirectionalCueOutput
     implements SpatialTestOutput, DirectionalCueOutput, HeadTrackedCueOutput {
   NativeDirectionalCueOutput(
-      {NativeCuePort? port, HeadTrackedCuePort? headTrackedPort})
+      {NativeCuePort? port,
+      HeadTrackedCuePort? headTrackedPort,
+      this.requireHeadphones = false})
       : _port = port ?? _AndroidCuePort.instance,
         _headTrackedPort =
             headTrackedPort ?? _AndroidHeadTrackedCuePort.instance,
@@ -64,6 +71,16 @@ class NativeDirectionalCueOutput
     _subscription = _port.events.listen(_event);
   }
   static int _owners = 0;
+  final bool requireHeadphones;
+  Stream<bool> get headphoneChanges => _port.events
+      .where((event) => event['event'] == 'headphonesChanged')
+      .map((event) => event['available'] == true);
+  Future<bool> headphonesAvailable() async {
+    if (_closed) return false;
+    final state = await _port.invoke('headphones', _args());
+    return !_closed && state['available'] == true;
+  }
+
   final NativeCuePort _port;
   final HeadTrackedCuePort _headTrackedPort;
   final String _owner;
@@ -95,7 +112,8 @@ class NativeDirectionalCueOutput
   @override
   Future<void> prepareFromGesture() async {
     _ensureOpen();
-    final data = await _port.invoke('prepare', _args());
+    final data = await _port.invoke('prepare',
+        _args(requireHeadphones ? {'headphonesOnly': true} : const {}));
     _ensureOpen();
     _ready = true;
     _probe = {..._probe, ...data, 'phase': 'ready'};

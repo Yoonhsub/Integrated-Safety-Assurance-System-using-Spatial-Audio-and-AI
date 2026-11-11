@@ -80,6 +80,56 @@ class ScanPort implements BeaconScanner {
 
 void main() {
   testWidgets(
+      'headphone preflight blocks output and loss disarms page until manual restart',
+      (t) async {
+    t.view.physicalSize = const Size(1800, 3200);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
+    final output = CuePort(), voice = Voice();
+    final losses = StreamController<void>.broadcast(sync: true);
+    var connected = false, now = Duration.zero;
+    Future<void> flush() async {
+      now += const Duration(milliseconds: 100);
+      await t.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 12; i++) {
+        await t.pump();
+      }
+    }
+
+    await t.pumpWidget(MaterialApp(
+        home: DoorApproachDemoPage(
+            output: output,
+            tts: voice,
+            sessionNow: () => now,
+            audioStops: losses.stream,
+            beforeGuidanceStart: () async => connected)));
+    await t.tap(find.text('새 장애물 전체 스냅샷 모의 재생'));
+    await flush();
+    await t.tap(find.text('새 목표 비콘 관측 모의 재생'));
+    await flush();
+    await t.tap(find.text('안내 시작'));
+    await flush();
+    expect(voice.spoken, isEmpty);
+    expect(find.textContaining('이어폰 미디어 연결 필요'), findsOneWidget);
+    connected = true;
+    await flush();
+    expect(voice.spoken, isEmpty);
+    await t.tap(find.text('안내 시작'));
+    await flush();
+    expect(voice.spoken.last, contains('접근 중'));
+    final count = voice.spoken.length, stopped = voice.stops;
+    losses.add(null);
+    await flush();
+    expect(find.text('상태: stopped'), findsOneWidget);
+    expect(voice.stops, greaterThan(stopped));
+    await flush();
+    expect(voice.spoken.length, count);
+    await t.pumpWidget(const SizedBox());
+    unawaited(losses.close());
+    await t.pump();
+  });
+  testWidgets(
       'live camera frame drives warning, loss holds and retired callback stays silent',
       (t) async {
     t.view.physicalSize = const Size(1800, 4000);

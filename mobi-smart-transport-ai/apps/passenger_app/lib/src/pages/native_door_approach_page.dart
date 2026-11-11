@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../services/native_directional_cue_output.dart';
+import '../services/headphone_audio_gate.dart';
 import '../services/speech_priority_coordinator.dart';
 import 'door_approach_demo_page.dart';
 import '../local_vision/local_vision_page.dart';
@@ -22,19 +23,24 @@ class _NativeDoorState extends State<NativeDoorApproachPage> {
   final _stops = StreamController<void>.broadcast();
   StreamSubscription<BluetoothAdapterState>? _adapter;
   NativeDirectionalCueOutput? _output;
-  FlutterSpeechEngine? _tts;
+  HeadphoneAudioGate? _audio;
   bool get _allowed =>
       kDebugMode && !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   @override
   void initState() {
     super.initState();
     if (!_allowed) return;
-    final output = NativeDirectionalCueOutput();
+    final output = NativeDirectionalCueOutput(requireHeadphones: true);
     _output = output;
-    _tts = FlutterSpeechEngine.platform(
+    final voice = FlutterSpeechEngine.platform(
         requireOfflineKoreanVoice: true,
         requestNativeFocus: true,
         diagnostic: output.recordTtsEvent);
+    _audio = HeadphoneAudioGate(
+        output: output,
+        voice: voice,
+        available: output.headphonesAvailable,
+        changes: output.headphoneChanges);
     _adapter = FlutterBluePlus.adapterState.listen((state) {
       if ([
         BluetoothAdapterState.off,
@@ -61,11 +67,13 @@ class _NativeDoorState extends State<NativeDoorApproachPage> {
   @override
   Widget build(BuildContext context) => !_allowed ||
           _output == null ||
-          _tts == null
+          _audio == null
       ? const Scaffold(body: Center(child: Text('Android debug 전용 시연입니다.')))
       : DoorApproachDemoPage(
-          output: _output!,
-          tts: _tts!,
+          output: _audio!,
+          tts: _audio!,
+          beforeGuidanceStart: _audio!.arm,
+          audioStops: _audio!.losses,
           targetId: 'C3:00:00:5C:B9:47',
           transportStops: _stops.stream,
           prepareScanner: _prepareScanner,
