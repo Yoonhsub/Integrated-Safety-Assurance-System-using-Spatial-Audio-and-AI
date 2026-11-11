@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'pages/passenger_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
@@ -141,6 +142,25 @@ class _MobiAppState extends State<MobiApp> {
       );
     }
 
+    final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    Widget protectAndroid(Widget child) {
+      if (!android) return child;
+      final issue = widget.onlineConfigurationIssue;
+      if (issue != null) {
+        return Scaffold(body: Center(child: Text('UNAVAILABLE · $issue')));
+      }
+      if (_firebasePreparing) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      return AuthGate(
+        configurationReady: _firebaseReady,
+        requiredRole: 'passenger',
+        session: widget.authSession,
+        appLabel: 'MOBI',
+        builder: (context, account) => child,
+      );
+    }
+
     return MaterialApp(
       title: 'MOBI Passenger App',
       theme: passengerTheme(),
@@ -168,13 +188,13 @@ class _MobiAppState extends State<MobiApp> {
                           builder: (context, account) => home,
                         ),
             )
-          : PassengerLanding(
-              onOnline: () => setState(() => _onlineSelected = true)),
+          : protectAndroid(PassengerLanding(
+              onOnline: () => setState(() => _onlineSelected = true))),
       routes: <String, WidgetBuilder>{
         // Local hardware diagnostics carry no server identity or Guidance authority.
-        '/device-check': (_) => const DeviceCheckPage(),
-        '/hardware-bus': (_) => const HardwareBusPage(),
-        '/standalone-vision': (_) => const StandaloneVisionPage(),
+        '/device-check': (_) => protectAndroid(const DeviceCheckPage()),
+        '/hardware-bus': (_) => protectAndroid(const HardwareBusPage()),
+        '/standalone-vision': (_) => protectAndroid(const StandaloneVisionPage()),
         '/native-audio': (_) => AuthGate(
               configurationReady: _firebaseReady,
               requiredRole: 'passenger',

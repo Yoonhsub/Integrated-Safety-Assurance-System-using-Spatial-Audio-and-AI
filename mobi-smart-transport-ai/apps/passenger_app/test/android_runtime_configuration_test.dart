@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/main.dart' as app;
+import 'package:mobi_passenger_app/src/app.dart';
+import 'auth_only_app_test.dart' as auth;
 import 'package:mobi_passenger_app/src/services/api_base_url.dart';
 import 'package:mobi_passenger_app/src/local_vision/vision_codec.dart';
 
@@ -28,18 +30,31 @@ void main() {
             release: false),
         isNotNull);
   });
-  testWidgets(
-      'unconfigured Android offers local entry and keeps online configuration blocked',
-      (tester) async {
+  testWidgets('unconfigured Android keeps both features blocked', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     try {
       await app.main();
       await tester.pump();
-      expect(find.text('카메라 인식 시작'), findsOneWidget);
-      await tester.tap(find.text('온라인 서비스 연결'));
-      await tester.pump();
+      expect(find.text('AI 비전 · 공간음향'), findsNothing);
+      expect(find.text('노선 정보 질문'), findsNothing);
       expect(find.textContaining('UNAVAILABLE'), findsOneWidget);
       expect(find.textContaining('Android 로그인 설정'), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('verified Android passenger sees the two feature entries', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final session = auth.Session('passenger');
+    addTearDown(session.events.close);
+    try {
+      await tester.pumpWidget(MobiApp(firebaseConfigured: true, authSession: session));
+      await tester.pumpAndSettle();
+      expect(find.text('AI 비전 · 공간음향'), findsOneWidget);
+      expect(find.text('노선 정보 질문'), findsOneWidget);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

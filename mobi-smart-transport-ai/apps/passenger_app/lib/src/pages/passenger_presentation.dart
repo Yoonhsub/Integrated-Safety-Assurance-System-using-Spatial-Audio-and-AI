@@ -37,56 +37,23 @@ class PassengerLanding extends StatelessWidget {
                     TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2))),
         body: SafeArea(
             child: ListView(padding: const EdgeInsets.all(24), children: [
-          const Text('당신의 이동을 더 편하게',
-              style: TextStyle(color: mobiBlue, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          Text('주변을 인식하고,\n소리로 확인하세요.',
+          Text('무엇을 도와드릴까요?',
               style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 12),
-          const Text('카메라 화면에 보이는 객체와 화면 속 위치를 안내합니다.',
-              style: TextStyle(height: 1.7)),
           const SizedBox(height: 24),
-          Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                  color: mobiInk, borderRadius: BorderRadius.circular(24)),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.center_focus_strong,
-                        color: Colors.white, size: 42),
-                    const SizedBox(height: 18),
-                    const Text('카메라로 주변 확인',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 23,
-                            fontWeight: FontWeight.bold)),
-                    const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                        child: Text('휴대폰 단독 모드 · 로그인이나 PC 연결 없이 사용할 수 있습니다.',
-                            style: TextStyle(
-                                color: Color(0xFFCDDFEF), height: 1.7))),
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                            onPressed: () => Navigator.of(context)
-                                .pushNamed('/standalone-vision'),
-                            icon: const Icon(Icons.camera_alt_outlined),
-                            label: const Text('카메라 인식 시작'))),
-                  ])),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
+          FilledButton.icon(
               onPressed: onOnline,
-              icon: const Icon(Icons.cloud_outlined),
-              label: const Text('온라인 서비스 연결')),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).pushNamed('/device-check'),
-              icon: const Icon(Icons.headphones_outlined),
-              label: const Text('이어폰·BLE 기기 점검')),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('노선 정보 질문')),
+          const SizedBox(height: 8),
+          const Text('채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.'),
           const SizedBox(height: 24),
-          const Text('화면 기준의 정보성 시연입니다. 실제 거리·출입문·승차 가능 여부는 판단하지 않습니다.',
-              style: TextStyle(color: Color(0xFF617087), height: 1.7)),
+          OutlinedButton.icon(
+              onPressed: () => Navigator.of(context)
+                  .pushNamed('/standalone-vision'),
+              icon: const Icon(Icons.camera_alt_outlined),
+              label: const Text('AI 비전 · 공간음향')),
+          const SizedBox(height: 8),
+          const Text('카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.'),
         ])),
       );
 }

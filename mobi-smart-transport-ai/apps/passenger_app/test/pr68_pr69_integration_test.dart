@@ -34,10 +34,10 @@ void main() {
     try {
       await t.pumpWidget(MobiApp(firebaseInitialization: initializing.future));
       await t.pumpAndSettle();
-      expect(find.text('카메라 인식 시작'), findsOneWidget);
-      await t.ensureVisible(find.text('이어폰·BLE 기기 점검'));
+      expect(find.text('AI 비전 · 공간음향'), findsOneWidget);
+      await t.tap(find.text('AI 비전 · 공간음향'));
       await t.pumpAndSettle();
-      await t.tap(find.text('이어폰·BLE 기기 점검'));
+      await t.tap(find.byTooltip('이어폰·BLE 기기 점검'));
       await t.pumpAndSettle();
       await t.scrollUntilVisible(find.text('실기기 연동확인 · BLE/WT901/HRTF'), 180);
       await t.pumpAndSettle();
@@ -49,10 +49,6 @@ void main() {
       Navigator.of(t.element(find.byType(HardwareBusPage))).pop();
       await t.pumpAndSettle();
       Navigator.of(t.element(find.byType(DeviceCheckPage))).pop();
-      await t.pumpAndSettle();
-      await t.ensureVisible(find.text('카메라 인식 시작'));
-      await t.pumpAndSettle();
-      await t.tap(find.text('카메라 인식 시작'));
       await t.pumpAndSettle();
       expect(find.byType(StandaloneVisionPage), findsOneWidget);
       expect(noNetwork.attempts, 0);

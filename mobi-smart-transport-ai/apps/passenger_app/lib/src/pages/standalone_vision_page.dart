@@ -123,9 +123,19 @@ class _StandaloneVisionPageState extends State<StandaloneVisionPage>
 
   @override
   Widget build(BuildContext context) {
+    final appBar = AppBar(
+      title: const Text('AI 비전 · 공간음향'),
+      actions: [
+        IconButton(
+          tooltip: '이어폰·BLE 기기 점검',
+          icon: const Icon(Icons.headphones_outlined),
+          onPressed: () => Navigator.of(context).pushNamed('/device-check'),
+        ),
+      ],
+    );
     if (!_supported) {
       return Scaffold(
-        appBar: AppBar(title: const Text('LOCAL_DEMO')),
+        appBar: appBar,
         body: const Center(child: Text('휴대폰 단독 카메라·음향은 Android에서 지원합니다.')),
       );
     }
@@ -136,9 +146,9 @@ class _StandaloneVisionPageState extends State<StandaloneVisionPage>
     }
     final target = targets[_target];
     return Scaffold(
-      appBar: AppBar(title: const Text('휴대폰 단독 모드')),
+      appBar: appBar,
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('Backend 미연결 · 휴대폰에서만 실행합니다. 로그인·PC·USB 연결이 필요하지 않습니다.'),
+        const Text('Backend 미연결 · 카메라와 음향은 휴대폰에서 실행합니다. PC·USB 연결이 필요하지 않습니다.'),
         const SizedBox(height: 16),
         Text('카메라로 주변 확인', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
