@@ -1,5 +1,6 @@
-param([Parameter(Mandatory=$true)][string]$OutputPath, [switch]$GuidanceRuntime)
+param([Parameter(Mandatory=$true)][string]$OutputPath, [switch]$GuidanceRuntime, [switch]$DoorApproach)
 $ErrorActionPreference='Stop'
+if($GuidanceRuntime -and $DoorApproach){throw 'Choose only one verification entry'}
 $repository=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $target=[IO.Path]::GetFullPath($OutputPath)
 if($target.StartsWith($repository+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or $target -eq $repository){throw 'Output must be outside the repository'}
@@ -13,6 +14,10 @@ if($GuidanceRuntime){
   $entry='lib/local_guidance_audio_main.dart'
   $define='MOBI_LOCAL_GUIDANCE_AUDIO=true'
   $connections="'self' http://127.0.0.1:8280"
+}
+if($DoorApproach){
+  $entry='lib/local_door_approach_main.dart'
+  $define='MOBI_LOCAL_DOOR_APPROACH=true'
 }
 Push-Location (Join-Path $repository 'apps/passenger_app')
 try {
