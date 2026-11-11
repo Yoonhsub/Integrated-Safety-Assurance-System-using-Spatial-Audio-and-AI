@@ -29,10 +29,20 @@
 | HP-RACE | Dart 자동 테스트 | 지연 응답 모의 | 준비/연결 조회 지연 중 연결 상실, 늦은 성공 수신 | 새 출력 없음 | headphone_audio_gate_test | 통과 | 실제 연결 재시험 |
 | HP-STOP-FAIL | Dart 자동 테스트 | 정지 실패 모의 | 정지 확인 실패 후 재연결 | 새 허용 차단 | headphone_audio_gate_test | 통과 | 오류 상태 관찰 |
 | HP-PAGE | Flutter 위젯 | 연결 준비·상실 모의 | 초기 차단→명시적 시작→상실 | 연결 문구·재생·stopped, 자동 재생 없음 | door_approach_demo_test | 통과 | 실제 장치 재시험 |
-| HP-LIVE-FIX | Android·실제 이어폰 | 실측 예정 | 위 절차 1~4 | 스피커 우회 출력 없음·중지·수동 복구 | 수정판 결과 아직 없음 | 미실행 | APK 설치·담당자 청취 |
+| HP-LIVE-FIX | SM-S942N·실제 이어폰 / 2c134bd | 연결 실측 / danger 모의 | 위 절차 1~4 및 OFF 상태 새 danger | 초기 차단·단절 stopped·자동 재생 없음·수동 복구 | 담당자 초기/OFF 새 위험 ‘안 들림’, 재연결 ‘자동 재생 없음’, 단절 ‘소리 멈춤’, 수동 중앙 ‘양쪽 비슷’. 네이티브 연결 이벤트·상태·cue 완료 로그 대조 | 통과 | 최종 APK 전체 시연 리허설 |
 
 자동 검증: Passenger App 전체 테스트 580개 통과·기존 조건부 9개 건너뜀. `flutter analyze --no-pub` 문제 없음. 실제 장치 차단 결과는 위 자동 테스트와 별도로 기록한다.
 
 Android main debug APK 빌드 성공(40.1초). 패키지는 기존과 같은 `com.example.mobi_passenger_app.handoff`이다. 이전 버전 실패 결과를 수정판 통과로 덮어쓰지 않는다.
 
 공통 페이지의 localhost 웹 빌드도 성공(41.2초). 웹 리플레이에 Android 이어폰 필수 정책을 적용한 것은 아니다.
+
+## 실기기 회귀 확인 (2026-11-11 KST)
+
+- 최초 이어폰 OFF: 21:14:29.391 `HEADPHONE_STATE available=false`, 안내 시작 시 `stopped`·연결 필요 문구, 소리 없음.
+- 연결 복구: 21:16:03.212 `available=true`, 담당자 자동 재생 없음 보고.
+- 최신 음성 재생/단절: 21:18:04.024 `near` → 21:18:07.511 `available=false` 및 `stopped`, 정지 확인 07.520/07.527. 담당자 소리 멈춤 보고.
+- OFF 뒤 새 모의 danger: 화면 `stopped`, danger·모의 재생 ON, 새 cue 시작 로그 없음, 담당자 스피커 안 들림 보고.
+- 수동 연결 복구/재생: 21:21:51.136 CENTER 시작 → 51.802 완료, cleanupErrors 없음, 담당자 양쪽 비슷 보고.
+
+이는 해당 장치·시험 조건의 회귀 통과이다. 일반 이어폰 전 모델·OS 미디어 경로 선택·음향 무음 지연 보장으로 확대하지 않는다. 전체 재시험 표는 `hardware_retest_2026_11_11.md`에 정리한다.
