@@ -90,8 +90,15 @@ class _NativeDoorState extends State<NativeDoorApproachPage> {
               }),
           scannerFactory: () => FlutterBlueBeaconScanner(
               scanTimeout: const Duration(minutes: 5),
-              beaconIdResolver: (result) =>
-                  result.device.remoteId.str.toUpperCase()));
+              beaconIdResolver: (result) {
+                final id = result.device.remoteId.str.toUpperCase();
+                if (const {'C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48'}
+                    .contains(id)) {
+                  debugPrint(
+                      'MOBI_DOOR_BLE_RAW id=$id raw_rssi=${result.rssi} captured_at=${result.timeStamp.toUtc().toIso8601String()}');
+                }
+                return id;
+              }));
   @override
   void dispose() {
     unawaited(_adapter?.cancel());

@@ -172,6 +172,11 @@ class _DoorDemoState extends State<DoorApproachDemoPage>
         if (_closed || epoch != _scanEpoch || !_scanning) return;
         final accepted = _beaconInput.observe(signal,
             wallNow: widget.wallNow?.call() ?? DateTime.now(), now: _now);
+        if (const {'C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48'}
+            .contains(signal.beaconId)) {
+          debugPrint(
+              'MOBI_DOOR_BLE_SIGNAL id=${signal.beaconId} smoothed_rssi=${signal.rssi} level=${signal.signalLevel.name} captured_at=${signal.lastDetectedAt.toUtc().toIso8601String()} target=${widget.targetId} target_accepted=$accepted');
+        }
         if (accepted) {
           _scanStatus =
               '실측 ${signal.beaconId} · 평활 RSSI ${signal.rssi} · ${signal.signalLevel.name} · 원본 관측 ${signal.lastDetectedAt.toUtc().toIso8601String()}';
