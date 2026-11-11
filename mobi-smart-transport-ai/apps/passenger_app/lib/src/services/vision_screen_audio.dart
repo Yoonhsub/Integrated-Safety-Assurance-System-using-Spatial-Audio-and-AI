@@ -81,6 +81,17 @@ class VisionScreenAudio extends ChangeNotifier {
       !priority.priorityActive &&
       !priority.outputUncertain &&
       headTracking.snapshot.usable(DateTime.now().toUtc());
+
+  TestDirection? _lastDoorSide;
+  int? _lastDoorRank;
+  int? _lastDoorSeenMicros;
+  bool _doorExitHandled = false;
+  int _doorMissingFrames = 0;
+
+  static const doorHandoffPrompt = '출입문이 바로 앞에 있습니다. 흰지팡이로 계단을 확인해 주세요.';
+  static String doorRecoveryPrompt(TestDirection side) =>
+      '출입문이 마지막으로 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}에서 확인되었습니다. 몸을 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}으로 돌려주세요.';
+
   static const classNames = {
     'bus': '버스',
     'bus_door': '버스 문',
@@ -217,6 +228,11 @@ class VisionScreenAudio extends ChangeNotifier {
     _lastMeaning = null;
     _streakMeaning = null;
     _streakCount = 0;
+    _lastDoorSide = null;
+    _lastDoorRank = null;
+    _lastDoorSeenMicros = null;
+    _doorExitHandled = false;
+    _doorMissingFrames = 0;
     status = '화면 기준 음향 시연 ON · 새 검출 대기';
     _notify();
   }
@@ -320,6 +336,11 @@ class VisionScreenAudio extends ChangeNotifier {
     _revision++;
     _streakMeaning = null;
     _streakCount = 0;
+    _lastDoorSide = null;
+    _lastDoorRank = null;
+    _lastDoorSeenMicros = null;
+    _doorExitHandled = false;
+    _doorMissingFrames = 0;
     _hold?.release();
     _hold = null;
     status = '화면 음향 시연 STOP · 후속 TTS 없음';
@@ -374,6 +395,8 @@ class VisionScreenAudio extends ChangeNotifier {
     int bestRank = 99;
     int bestPriority = 99;
     double bestProximity = -1;
+    Map? currentDoor;
+    int currentDoorRank = 99;
     for (final row in rows) {
       if (row is! Map ||
           !classNames.containsKey(row['classId']) ||
@@ -394,6 +417,13 @@ class VisionScreenAudio extends ChangeNotifier {
           classId == 'bus_door' &&
           !_doorInBusValid(b, rows)) {
         continue;
+      }
+      if (classId == 'bus_door') {
+        final dRank = distanceRank('bus_door', b);
+        if (currentDoor == null || dRank < currentDoorRank) {
+          currentDoor = row;
+          currentDoorRank = dRank;
+        }
       }
       if (prioritizeByDistance) {
         final rank = distanceRank(classId, b);
@@ -422,6 +452,152 @@ class VisionScreenAudio extends ChangeNotifier {
         best = c.toDouble();
       }
     }
+
+    if (currentDoor != null) {
+      final doorBox = currentDoor['bbox'] as Map;
+      final doorCx = (doorBox['x'] as num).toDouble() +
+          (doorBox['w'] as num).toDouble() / 2;
+      _lastDoorSide = direction(doorCx);
+      _lastDoorRank = currentDoorRank;
+      _lastDoorSeenMicros = _now();
+      _doorExitHandled = false;
+      _doorMissingFrames = 0;
+    }
+
+    bool shouldHandleDoorExit = false;
+    if (currentDoor == null && _lastDoorSeenMicros != null) {
+      _doorMissingFrames++;
+      final elapsed = _now() - _lastDoorSeenMicros!;
+      const maxExitGraceMicros = 4000000;
+      if (!_doorExitHandled && elapsed <= maxExitGraceMicros) {
+        final requiredMissing = confirmationFrames > 1 ? 2 : 1;
+        if (_doorMissingFrames >= requiredMissing) {
+          if ((_lastDoorSide == TestDirection.center && _lastDoorRank == 0) ||
+              _lastDoorSide == TestDirection.left ||
+              _lastDoorSide == TestDirection.right) {
+            shouldHandleDoorExit = true;
+          }
+        }
+      } else if (elapsed > maxExitGraceMicros) {
+        _lastDoorSide = null;
+        _lastDoorRank = null;
+        _lastDoorSeenMicros = null;
+        _doorExitHandled = false;
+        _doorMissingFrames = 0;
+      }
+    }
+
+    if (shouldHandleDoorExit) {
+      _doorExitHandled = true;
+      final exitSide = _lastDoorSide!;
+      final bool isCenterHandoff =
+          exitSide == TestDirection.center && _lastDoorRank == 0;
+      final text = isCenterHandoff
+          ? doorHandoffPrompt
+          : doorRecoveryPrompt(exitSide);
+      final exitMeaning = 'door_exit:${exitSide.name}:$isCenterHandoff';
+      final admission = ObservationAdmission(
+        deadlineMicros:
+            _now() +
+            const Duration(seconds: 2).inMicroseconds -
+            age.inMicroseconds,
+        nowMicros: _now,
+        eventId: '${result['frameId']}:door_exit',
+        sessionGeneration: sessionGeneration,
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        eventCreatedAt: result['capturedAt'],
+      );
+      final revision = _revision;
+      bool valid() =>
+          !_disposed &&
+          enabled &&
+          revision == _revision &&
+          isCurrent() &&
+          !priority.priorityActive;
+      bool admit() {
+        final already = admission.started;
+        if (!admission.admit()) return false;
+        if (!already) {
+          _lastMeaning = exitMeaning;
+          _lastStarted = _now();
+          admitted++;
+        }
+        return true;
+      }
+
+      final guidance = DirectionalGuidance(
+        guidanceId: '${result['frameId']}:door_exit',
+        sessionGeneration: sessionGeneration,
+        authEpoch: 0,
+        priority: GuidancePriority.observation,
+        text: text,
+        provenance: DirectionalGuidance.screenProvenance,
+        testDirection: exitSide,
+        directionEvidence: DirectionEvidence.cameraScreenBbox,
+      );
+      final command = engine.registerGuidance(
+        guidance,
+        valid,
+        admit: admit,
+        spokenText: text,
+        phase: (phase) {
+          if (valid()) {
+            status = phase;
+            diagnostic = {...diagnostic, 'phase': phase};
+            _notify();
+          }
+        },
+      );
+      if (command == null) return;
+      diagnostic = {
+        'frameId': result['frameId'],
+        'capturedAt': result['capturedAt'],
+        'classId': 'bus_door',
+        'className': '버스 문',
+        'doorExitEvent': isCenterHandoff ? 'center_handoff' : 'lateral_recovery',
+        'screenDirection': exitSide.name.toUpperCase(),
+        'provenance': DirectionalGuidance.screenProvenance,
+        'guidanceEligible': false,
+        'text': text,
+      };
+      busy = true;
+      _activeHeadTracked = false;
+      status = 'Cue → TTS 준비';
+      _notify();
+      unawaited(() async {
+        try {
+          final ok = await priority.speakObservation(
+            _owner,
+            command,
+            valid,
+            onDeadline: () => admission.cancel('PLAYBACK_WATCHDOG'),
+          );
+          admission.finish(ok);
+          if (ok) completed++;
+          if (revision == _revision && !_disposed) {
+            status = ok ? 'Cue → 문장 완료' : '취소 또는 시작 전 만료 · 새 검출 대기';
+          }
+        } catch (error) {
+          admission.cancel('AUDIO_FAILURE');
+          debugPrint('Camera screen audio failure: ${error.runtimeType}');
+          if (!_disposed && revision == _revision) {
+            if (error is SpeechCancelled && !priority.outputUncertain) {
+              status = '시작 전 만료 또는 취소 · 새 검출 대기';
+            } else {
+              enabled = false;
+              status = '음향 시연 오류 · 출력 상태를 확인해 주세요';
+            }
+          }
+        } finally {
+          engine.retireGuidance(command);
+          busy = false;
+          _activeHeadTracked = false;
+          _notify();
+        }
+      }());
+      return;
+    }
+
     if (selected == null) {
       _streakMeaning = null;
       _streakCount = 0;

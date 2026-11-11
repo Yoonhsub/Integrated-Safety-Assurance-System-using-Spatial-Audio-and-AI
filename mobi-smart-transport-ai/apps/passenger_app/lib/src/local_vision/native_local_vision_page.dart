@@ -128,7 +128,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
       unawaited(_stop(reason: '앱 비활성화 · 카메라 중지됨'));
     }
   }

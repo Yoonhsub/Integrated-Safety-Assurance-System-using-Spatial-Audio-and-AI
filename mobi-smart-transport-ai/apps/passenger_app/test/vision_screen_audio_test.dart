@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/local_vision/vision_codec.dart';
 import 'package:mobi_passenger_app/src/local_vision/frame_pump.dart';
+import 'package:mobi_passenger_app/src/services/directional_guidance.dart';
 import 'package:mobi_passenger_app/src/services/vision_screen_audio.dart';
 import 'package:mobi_passenger_app/src/services/head_tracking_direction.dart';
 import 'package:mobi_passenger_app/src/services/native_directional_cue_output.dart';
@@ -556,6 +557,175 @@ void main() {
     expect(a.diagnostic['className'], '방치 전동 킥보드');
     expect(a.diagnostic['relativeDistance'], 'NEAR');
     expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door in center at NEAR distance disappears triggers cane step handoff guidance',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // 1. Frame 1: Bus door detected in center with NEAR distance rank (area >= 0.06).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus_door', .90, .4, .3, .3, .3),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    expect(port.active?['direction'], 'CENTER');
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.completed, 1);
+
+    // 2. Frame 2: Bus door disappears (user reaches the door and it exits FOV).
+    now = 2000000;
+    a.observe(
+        detection(now, boxes: []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    // Hand-off cue should be admitted immediately!
+    expect(a.admitted, 2);
+    expect(port.active?['direction'], 'CENTER');
+    expect(a.diagnostic['doorExitEvent'], 'center_handoff');
+    port.finish();
+    await flush(t);
+    expect(tts.spoken.last, VisionScreenAudio.doorHandoffPrompt);
+    expect(tts.spoken.last, contains('흰지팡이로 계단을 확인'));
+
+    // 3. Subsequent empty frames do not re-trigger handoff cue.
+    now = 2500000;
+    a.observe(
+        detection(now, boxes: []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 2);
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door at lateral edge disappears triggers directional body turn guidance',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // 1. Frame 1: Bus door detected on the RIGHT (x = 0.75).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus_door', .90, .75, .3, .2, .3),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    expect(port.active?['direction'], 'RIGHT');
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.completed, 1);
+
+    // 2. Frame 2: Door slips out of view on the right.
+    now = 1500000;
+    a.observe(
+        detection(now, boxes: []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 2);
+    expect(port.active?['direction'], 'RIGHT');
+    expect(a.diagnostic['doorExitEvent'], 'lateral_recovery');
+    port.finish();
+    await flush(t);
+    expect(tts.spoken.last, VisionScreenAudio.doorRecoveryPrompt(TestDirection.right));
+    expect(tts.spoken.last, contains('마지막으로 오른쪽에서 확인되었습니다'));
+    expect(tts.spoken.last, contains('몸을 오른쪽으로'));
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door at FAR distance in center disappears does not trigger cane handoff',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Frame 1: Bus door detected in center, FAR (area < 0.015, bottomY < 0.65).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus_door', .90, .45, .2, .1, .1),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.completed, 1);
+
+    // Frame 2: Disappears (occluded or lost at distance).
+    now = 2000000;
+    a.observe(
+        detection(now, boxes: []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    // Should NOT admit handoff cue because it was FAR, not NEAR!
+    expect(a.admitted, 1);
 
     await a.stop();
     a.dispose();
