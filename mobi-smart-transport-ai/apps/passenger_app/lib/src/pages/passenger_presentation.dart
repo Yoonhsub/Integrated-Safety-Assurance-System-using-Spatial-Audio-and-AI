@@ -1,4 +1,9 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../services/speech_priority_coordinator.dart';
 
 const mobiInk = Color(0xFF173550);
 const mobiBlue = Color(0xFF2378F3);
@@ -26,9 +31,112 @@ ThemeData passengerTheme() => ThemeData(
           titleLarge: TextStyle(fontWeight: FontWeight.w700, color: mobiInk)),
     );
 
-class PassengerLanding extends StatelessWidget {
-  const PassengerLanding({super.key, required this.onOnline});
+class PassengerLanding extends StatefulWidget {
+  const PassengerLanding({super.key, required this.onOnline, this.speech});
   final VoidCallback onOnline;
+  final SpeechPriorityCoordinator? speech;
+
+  @override
+  State<PassengerLanding> createState() => _PassengerLandingState();
+}
+
+enum _LandingDestination { routeInfo, vision }
+
+class _PassengerLandingState extends State<PassengerLanding> {
+  final _speechOwner = Object();
+  Timer? _tapWindow;
+  _LandingDestination? _pending;
+  int _speechRequest = 0;
+  bool _opening = false;
+
+  SpeechPriorityCoordinator get _speech => widget.speech ?? sharedSpeechPriority;
+  bool get _usesTapConfirmation =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _describe(String description, int request) async {
+    try {
+      await _speech.speakObservation(
+        _speechOwner,
+        description,
+        () => mounted && request == _speechRequest && !_opening,
+      );
+    } catch (error) {
+      debugPrint('MOBI home description: ${error.runtimeType}');
+    }
+  }
+
+  Future<void> _stopDescription() async {
+    try {
+      await _speech.stopObservation(_speechOwner);
+    } catch (error) {
+      debugPrint('MOBI home description stop: ${error.runtimeType}');
+    }
+  }
+
+  Future<void> _open(_LandingDestination destination) async {
+    if (_opening) return;
+    _opening = true;
+    _pending = null;
+    _tapWindow?.cancel();
+    if (_speechRequest > 0) {
+      _speechRequest++;
+      unawaited(_stopDescription());
+    }
+    try {
+      if (destination == _LandingDestination.routeInfo) {
+        widget.onOnline();
+      } else {
+        await Navigator.of(context).pushNamed('/standalone-vision');
+      }
+    } finally {
+      _opening = false;
+    }
+  }
+
+  void _tap(_LandingDestination destination, String description) {
+    if (_opening) return;
+    if (!_usesTapConfirmation || _pending == destination) {
+      unawaited(_open(destination));
+      return;
+    }
+    _pending = destination;
+    _tapWindow?.cancel();
+    _tapWindow = Timer(const Duration(milliseconds: 500), () => _pending = null);
+    unawaited(_describe(description, ++_speechRequest));
+  }
+
+  Widget _screenReaderButton(
+    _LandingDestination destination,
+    String label,
+    String description,
+    Widget child,
+  ) =>
+      _usesTapConfirmation
+          ? Semantics(
+              excludeSemantics: true,
+              button: true,
+              label: label,
+              hint: description,
+              onTap: () => unawaited(_open(destination)),
+              child: child,
+            )
+          : child;
+
+  @override
+  void dispose() {
+    _tapWindow?.cancel();
+    if (_speechRequest > 0) {
+      _speechRequest++;
+      unawaited(_stopDescription());
+    }
+    super.dispose();
+  }
+
+  static const _routeLabel = '노선 정보 질문';
+  static const _routeDescription = '채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.';
+  static const _visionLabel = 'AI 비전 · 공간음향';
+  static const _visionDescription = '카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.';
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
@@ -40,20 +148,31 @@ class PassengerLanding extends StatelessWidget {
           Text('무엇을 도와드릴까요?',
               style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 24),
-          FilledButton.icon(
-              onPressed: onOnline,
+          if (_usesTapConfirmation) ...[
+            const Text('한 번 누르면 설명을 듣고, 같은 버튼을 빠르게 두 번 누르면 열립니다.'),
+            const SizedBox(height: 16),
+          ],
+          _screenReaderButton(
+            _LandingDestination.routeInfo, _routeLabel, _routeDescription,
+            FilledButton.icon(
+              onPressed: () => _tap(_LandingDestination.routeInfo, _routeDescription),
               icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('노선 정보 질문')),
+              label: const Text(_routeLabel),
+            ),
+          ),
           const SizedBox(height: 8),
-          const Text('채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.'),
+          const Text(_routeDescription),
           const SizedBox(height: 24),
-          OutlinedButton.icon(
-              onPressed: () => Navigator.of(context)
-                  .pushNamed('/standalone-vision'),
+          _screenReaderButton(
+            _LandingDestination.vision, _visionLabel, _visionDescription,
+            OutlinedButton.icon(
+              onPressed: () => _tap(_LandingDestination.vision, _visionDescription),
               icon: const Icon(Icons.camera_alt_outlined),
-              label: const Text('AI 비전 · 공간음향')),
+              label: const Text(_visionLabel),
+            ),
+          ),
           const SizedBox(height: 8),
-          const Text('카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.'),
+          const Text(_visionDescription),
         ])),
       );
 }

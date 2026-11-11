@@ -84,6 +84,7 @@ void main() {
     // hardware entry must remain directly reachable without a backend.
     expect(find.text('AI 비전 · 공간음향'), findsOneWidget);
     await tester.tap(find.text('AI 비전 · 공간음향'));
+    await tester.tap(find.text('AI 비전 · 공간음향'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('이어폰·BLE 기기 점검'));
     await tester.pumpAndSettle();
