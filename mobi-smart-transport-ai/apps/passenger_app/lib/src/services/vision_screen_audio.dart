@@ -102,17 +102,15 @@ class VisionScreenAudio extends ChangeNotifier {
     'tree_trunk': '나무 줄기',
     'roadway': '차도',
     'sidewalk': '보도',
-    'obstacle': '장애물',
     'tactile_paving': '점자블록',
   };
   static const _classPriority = <String, int>{
     'parked_pm': 0,
     'pole': 1,
     'tree_trunk': 2,
-    'obstacle': 3,
-    'bus_door': 4,
-    'bus': 5,
-    'bus_stop': 6,
+    'bus_door': 3,
+    'bus': 4,
+    'bus_stop': 5,
   };
   static TestDirection direction(double centerX) => centerX < 1 / 3
       ? TestDirection.left
@@ -134,8 +132,7 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     if (classId == 'parked_pm' ||
         classId == 'pole' ||
-        classId == 'tree_trunk' ||
-        classId == 'obstacle') {
+        classId == 'tree_trunk') {
       if (area >= 0.08 || bottomY >= 0.80) return 0;
       if (area >= 0.02 || bottomY >= 0.60) return 1;
       return 2;
