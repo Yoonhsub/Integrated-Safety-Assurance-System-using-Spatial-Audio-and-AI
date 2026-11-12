@@ -868,4 +868,47 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      'NEAR obstacle always takes priority over NEAR bus and bus_door',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Both bus/bus_door and tree_trunk obstacle are NEAR (rank 0):
+    // obstacle must take safety priority over bus/bus_door.
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .95, .05, .10, .85, .75),
+          const LocalBox('bus_door', .92, .65, .20, .20, .55),
+          const LocalBox('tree_trunk', .86, .40, .05, .16, .60),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'tree_trunk');
+    expect(a.diagnostic['className'], '나무 줄기');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'CENTER');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }

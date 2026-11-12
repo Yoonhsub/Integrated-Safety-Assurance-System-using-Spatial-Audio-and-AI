@@ -103,6 +103,24 @@ class GuidanceStabilityTest(unittest.TestCase):
         self.assertEqual([item.class_id for item in selected], ["parked_pm"])
         self.assertEqual(selected[0].relative_distance.value, "NEAR")
 
+    def test_prioritizes_near_obstacle_over_near_bus_door(self) -> None:
+        stabilizer = GuidanceStabilizer(GuidanceStabilityPolicy(confirmation_frames=1))
+        result = self.result(
+            0,
+            [
+                RawDetection("bus", 0.95, 50, 100, 900, 850),
+                RawDetection("bus_door", 0.92, 650, 200, 850, 750),
+                RawDetection("pole", 0.86, 400, 100, 560, 700),  # area 0.096 -> NEAR
+            ],
+        )
+        bus = interpret_bus_guidance(result)
+        door = interpret_bus_door_guidance(result)
+        obstacles = interpret_obstacle_guidance(result)
+        assert bus is not None and door is not None and len(obstacles) == 1
+        selected = stabilizer.filter((bus, door, *obstacles), captured_at=result.captured_at)
+        self.assertEqual([item.class_id for item in selected], ["pole"])
+        self.assertEqual(selected[0].relative_distance.value, "NEAR")
+
 
 if __name__ == "__main__":
     unittest.main()

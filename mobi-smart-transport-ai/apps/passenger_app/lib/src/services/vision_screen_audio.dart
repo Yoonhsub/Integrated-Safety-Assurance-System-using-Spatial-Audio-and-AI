@@ -106,12 +106,12 @@ class VisionScreenAudio extends ChangeNotifier {
     'tactile_paving': '점자블록',
   };
   static const _classPriority = <String, int>{
-    'bus_door': 0,
-    'bus': 1,
-    'parked_pm': 2,
-    'pole': 3,
-    'tree_trunk': 4,
-    'obstacle': 5,
+    'parked_pm': 0,
+    'pole': 1,
+    'tree_trunk': 2,
+    'obstacle': 3,
+    'bus_door': 4,
+    'bus': 5,
     'bus_stop': 6,
   };
   static TestDirection direction(double centerX) => centerX < 1 / 3
