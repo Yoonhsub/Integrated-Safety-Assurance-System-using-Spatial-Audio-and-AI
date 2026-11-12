@@ -83,7 +83,6 @@ class VisionScreenAudio extends ChangeNotifier {
       headTracking.snapshot.usable(DateTime.now().toUtc());
 
   TestDirection? _lastDoorSide;
-  int? _lastDoorRank;
   bool _lastDoorWasUltraNear = false;
   int? _lastDoorSeenMicros;
   bool _doorExitHandled = false;
@@ -184,14 +183,19 @@ class VisionScreenAudio extends ChangeNotifier {
         y + h <= 1.000000001;
   }
 
-  static bool _doorInBusValid(Map doorBox, List rows) {
+  /// Returns the bbox of the parent `bus` containing at least [minDoorInBusOverlap]
+  /// of [doorBox], preferring largest intersection area then largest bus area.
+  static Map? _parentBusBox(Map doorBox, List rows) {
     final dx1 = (doorBox['x'] as num).toDouble();
     final dy1 = (doorBox['y'] as num).toDouble();
     final dw = (doorBox['w'] as num).toDouble();
     final dh = (doorBox['h'] as num).toDouble();
     final doorArea = dw * dh;
-    if (doorArea <= 0) return false;
+    if (doorArea <= 0) return null;
     final dx2 = dx1 + dw, dy2 = dy1 + dh;
+    Map? bestBus;
+    double bestInterArea = -1;
+    double bestBusArea = -1;
     for (final row in rows) {
       if (row is! Map || row['classId'] != 'bus' || row['className'] != '버스') {
         continue;
@@ -207,18 +211,26 @@ class VisionScreenAudio extends ChangeNotifier {
       }
       final bx1 = (b['x'] as num).toDouble();
       final by1 = (b['y'] as num).toDouble();
-      final bx2 = bx1 + (b['w'] as num).toDouble();
-      final by2 = by1 + (b['h'] as num).toDouble();
+      final bw = (b['w'] as num).toDouble();
+      final bh = (b['h'] as num).toDouble();
+      final bx2 = bx1 + bw, by2 = by1 + bh;
       final ix1 = dx1 > bx1 ? dx1 : bx1;
       final iy1 = dy1 > by1 ? dy1 : by1;
       final ix2 = dx2 < bx2 ? dx2 : bx2;
       final iy2 = dy2 < by2 ? dy2 : by2;
       if (ix2 > ix1 && iy2 > iy1) {
         final interArea = (ix2 - ix1) * (iy2 - iy1);
-        if (interArea / doorArea >= minDoorInBusOverlap) return true;
+        final busArea = bw * bh;
+        if (interArea / doorArea >= minDoorInBusOverlap &&
+            (interArea > bestInterArea ||
+                (interArea == bestInterArea && busArea > bestBusArea))) {
+          bestBus = b;
+          bestInterArea = interArea;
+          bestBusArea = busArea;
+        }
       }
     }
-    return false;
+    return bestBus;
   }
 
   void _notify() {
@@ -241,7 +253,6 @@ class VisionScreenAudio extends ChangeNotifier {
     _streakMeaning = null;
     _streakCount = 0;
     _lastDoorSide = null;
-    _lastDoorRank = null;
     _lastDoorWasUltraNear = false;
     _lastDoorSeenMicros = null;
     _doorExitHandled = false;
@@ -350,7 +361,6 @@ class VisionScreenAudio extends ChangeNotifier {
     _streakMeaning = null;
     _streakCount = 0;
     _lastDoorSide = null;
-    _lastDoorRank = null;
     _lastDoorWasUltraNear = false;
     _lastDoorSeenMicros = null;
     _doorExitHandled = false;
@@ -427,37 +437,40 @@ class VisionScreenAudio extends ChangeNotifier {
         continue;
       }
       final classId = row['classId'] as String;
-      if (requireDoorInBus &&
-          classId == 'bus_door' &&
-          !_doorInBusValid(b, rows)) {
+      final Map? parentBus =
+          classId == 'bus_door' ? _parentBusBox(b, rows) : null;
+      if (requireDoorInBus && classId == 'bus_door' && parentBus == null) {
         continue;
       }
+      // Inherit distance rank from parent bus so a narrow door on a near bus
+      // is not outranked by its own bus body (matches Python spatial_guidance.py).
+      final int effectiveRank = parentBus != null
+          ? distanceRank('bus', parentBus)
+          : distanceRank(classId, b);
       if (classId == 'bus_door') {
-        final dRank = distanceRank('bus_door', b);
-        if (currentDoor == null || dRank < currentDoorRank) {
+        if (currentDoor == null || effectiveRank < currentDoorRank) {
           currentDoor = row;
-          currentDoorRank = dRank;
+          currentDoorRank = effectiveRank;
         }
       }
       if (prioritizeByDistance) {
-        final rank = distanceRank(classId, b);
         final prio = _classPriority[classId] ?? 99;
         final prox = proximityScore(b);
         final better =
             selected == null ||
-            rank < bestRank ||
-            (rank == bestRank && prio < bestPriority) ||
-            (rank == bestRank &&
+            effectiveRank < bestRank ||
+            (effectiveRank == bestRank && prio < bestPriority) ||
+            (effectiveRank == bestRank &&
                 prio == bestPriority &&
                 prox > bestProximity) ||
-            (rank == bestRank &&
+            (effectiveRank == bestRank &&
                 prio == bestPriority &&
                 prox == bestProximity &&
                 c > best);
         if (better) {
           selected = row;
           best = c.toDouble();
-          bestRank = rank;
+          bestRank = effectiveRank;
           bestPriority = prio;
           bestProximity = prox;
         }
@@ -472,7 +485,6 @@ class VisionScreenAudio extends ChangeNotifier {
       final doorCx = (doorBox['x'] as num).toDouble() +
           (doorBox['w'] as num).toDouble() / 2;
       _lastDoorSide = direction(doorCx);
-      _lastDoorRank = currentDoorRank;
       _lastDoorWasUltraNear = isDoorUltraNear(doorBox);
       _lastDoorSeenMicros = _now();
       _doorExitHandled = false;
@@ -495,7 +507,6 @@ class VisionScreenAudio extends ChangeNotifier {
         }
       } else if (elapsed > maxExitGraceMicros) {
         _lastDoorSide = null;
-        _lastDoorRank = null;
         _lastDoorWasUltraNear = false;
         _lastDoorSeenMicros = null;
         _doorExitHandled = false;

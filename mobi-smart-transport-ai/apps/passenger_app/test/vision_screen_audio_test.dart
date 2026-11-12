@@ -784,4 +784,88 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      'bus_door inherits NEAR distance rank from parent bus so bus body does not outrank narrow door',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Near large bus (area=0.6375 >= 0.25 -> NEAR rank 0) containing a small/narrow door
+    // (area=0.016, bottomY=0.45 -> standalone door rank would be MEDIUM rank 1).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .95, .05, .10, .85, .75),
+          const LocalBox('bus_door', .85, .45, .25, .08, .20),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'bus_door');
+    expect(a.diagnostic['className'], '버스 문');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'CENTER');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door inheriting MEDIUM rank from parent bus yields to NEAR obstacle',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Medium bus (area=0.1225 -> MEDIUM rank 1) containing a door whose own area=0.0625
+    // (>= 0.06, so standalone would be rank 0), alongside a genuinely NEAR obstacle.
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .92, .05, .20, .35, .35),
+          const LocalBox('bus_door', .90, .10, .22, .25, .25),
+          const LocalBox('parked_pm', .75, .70, .55, .25, .35),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'parked_pm');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }
