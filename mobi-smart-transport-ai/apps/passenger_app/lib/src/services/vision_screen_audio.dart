@@ -20,6 +20,8 @@ class VisionScreenAudio extends ChangeNotifier {
     this.minimumInterval = const Duration(seconds: 8),
     this.confirmationFrames = 1,
     this.requireDoorInBus = false,
+    this.minStandaloneDoorConfidence,
+    this.isTargetBusBeaconNear,
     this.prioritizeByDistance = false,
   }) : headTracking = headTracking ?? sharedHeadTrackingState,
        horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
@@ -29,6 +31,12 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     if (confirmationFrames < 1) {
       throw ArgumentError('confirmationFrames must be >= 1');
+    }
+    if (minStandaloneDoorConfidence != null &&
+        (!minStandaloneDoorConfidence!.isFinite ||
+            minStandaloneDoorConfidence! < 0.5 ||
+            minStandaloneDoorConfidence! > 1.0)) {
+      throw ArgumentError('minStandaloneDoorConfidence must be in [0.5, 1.0]');
     }
     this.headTracking.resetForSession();
     priority.addListener(_priorityChanged);
@@ -41,6 +49,7 @@ class VisionScreenAudio extends ChangeNotifier {
       ) ??
       0;
   static const double minDoorInBusOverlap = 0.70;
+  static const int maxExitGraceMicros = 8000000;
   final SpeechPriorityCoordinator priority;
   final SpatialVerificationEngine engine;
   final String sessionGeneration;
@@ -48,6 +57,8 @@ class VisionScreenAudio extends ChangeNotifier {
   final Duration minimumInterval;
   final int confirmationFrames;
   final bool requireDoorInBus;
+  final double? minStandaloneDoorConfidence;
+  final bool Function()? isTargetBusBeaconNear;
   final bool prioritizeByDistance;
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
@@ -230,6 +241,126 @@ class VisionScreenAudio extends ChangeNotifier {
     return bestBus;
   }
 
+  /// Allows a standalone `bus_door` when [requireDoorInBus] is disabled, when
+  /// contained by a parent `bus`, when the target bus BLE beacon is near, or
+  /// when confidence meets [minStandaloneDoorConfidence].
+  bool _isDoorAllowed(double confidence, Map? parentBus) {
+    if (!requireDoorInBus || parentBus != null) return true;
+    if (isTargetBusBeaconNear?.call() == true) return true;
+    final standaloneMin = minStandaloneDoorConfidence;
+    return standaloneMin != null && confidence >= standaloneMin;
+  }
+
+  ({
+    Map? selected,
+    double bestConfidence,
+    int bestRank,
+    Map? currentDoor,
+  }) _analyzeFrame(List rows) {
+    Map? selected;
+    double best = -1;
+    int bestRank = 99;
+    int bestPriority = 99;
+    double bestProximity = -1;
+    Map? currentDoor;
+    int currentDoorRank = 99;
+    for (final row in rows) {
+      if (row is! Map ||
+          !classNames.containsKey(row['classId']) ||
+          classNames[row['classId']] != row['className']) {
+        continue;
+      }
+      final c = row['confidence'], b = row['bbox'];
+      if (c is! num ||
+          !c.isFinite ||
+          c < .5 ||
+          c > 1 ||
+          b is! Map ||
+          !_isValidBoxMap(b)) {
+        continue;
+      }
+      final classId = row['classId'] as String;
+      final Map? parentBus =
+          classId == 'bus_door' ? _parentBusBox(b, rows) : null;
+      if (classId == 'bus_door' && !_isDoorAllowed(c.toDouble(), parentBus)) {
+        continue;
+      }
+      // Inherit distance rank from parent bus so a narrow door on a near bus
+      // is not outranked by its own bus body (matches Python spatial_guidance.py).
+      final int effectiveRank = parentBus != null
+          ? distanceRank('bus', parentBus)
+          : distanceRank(classId, b);
+      if (classId == 'bus_door') {
+        if (currentDoor == null || effectiveRank < currentDoorRank) {
+          currentDoor = row;
+          currentDoorRank = effectiveRank;
+        }
+      }
+      if (prioritizeByDistance) {
+        final prio = _classPriority[classId] ?? 99;
+        final prox = proximityScore(b);
+        final better =
+            selected == null ||
+            effectiveRank < bestRank ||
+            (effectiveRank == bestRank && prio < bestPriority) ||
+            (effectiveRank == bestRank &&
+                prio == bestPriority &&
+                prox > bestProximity) ||
+            (effectiveRank == bestRank &&
+                prio == bestPriority &&
+                prox == bestProximity &&
+                c > best);
+        if (better) {
+          selected = row;
+          best = c.toDouble();
+          bestRank = effectiveRank;
+          bestPriority = prio;
+          bestProximity = prox;
+        }
+      } else if (c > best) {
+        selected = row;
+        best = c.toDouble();
+      }
+    }
+    return (
+      selected: selected,
+      bestConfidence: best,
+      bestRank: bestRank,
+      currentDoor: currentDoor,
+    );
+  }
+
+  bool _updateDoorTracking(Map? currentDoor) {
+    if (currentDoor != null) {
+      final doorBox = currentDoor['bbox'] as Map;
+      final doorCx =
+          (doorBox['x'] as num).toDouble() + (doorBox['w'] as num).toDouble() / 2;
+      _lastDoorSide = direction(doorCx);
+      _lastDoorWasUltraNear = isDoorUltraNear(doorBox);
+      _lastDoorSeenMicros = _now();
+      _doorExitHandled = false;
+      _doorMissingFrames = 0;
+      return false;
+    }
+    if (_lastDoorSeenMicros == null) return false;
+    _doorMissingFrames++;
+    final elapsed = _now() - _lastDoorSeenMicros!;
+    if (elapsed > maxExitGraceMicros) {
+      _lastDoorSide = null;
+      _lastDoorWasUltraNear = false;
+      _lastDoorSeenMicros = null;
+      _doorExitHandled = false;
+      _doorMissingFrames = 0;
+      return false;
+    }
+    if (_doorExitHandled) return false;
+    final requiredMissing = confirmationFrames > 1 ? 2 : 1;
+    if (_doorMissingFrames < requiredMissing) return false;
+    return (_lastDoorSide == TestDirection.center && _lastDoorWasUltraNear) ||
+        _lastDoorSide == TestDirection.left ||
+        _lastDoorSide == TestDirection.right;
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -398,7 +529,7 @@ class VisionScreenAudio extends ChangeNotifier {
       return;
     }
     _lastFrame = result['frameId'] as String;
-    if (busy || priority.priorityActive) {
+    if (priority.priorityActive) {
       skippedBusy++;
       return;
     }
@@ -409,107 +540,20 @@ class VisionScreenAudio extends ChangeNotifier {
         size['width'] <= 0 ||
         size['height'] <= 0 ||
         rows is! List) {
+      if (busy) skippedBusy++;
       return;
     }
-    Map? selected;
-    double best = -1;
-    int bestRank = 99;
-    int bestPriority = 99;
-    double bestProximity = -1;
-    Map? currentDoor;
-    int currentDoorRank = 99;
-    for (final row in rows) {
-      if (row is! Map ||
-          !classNames.containsKey(row['classId']) ||
-          classNames[row['classId']] != row['className']) {
-        continue;
-      }
-      final c = row['confidence'], b = row['bbox'];
-      if (c is! num ||
-          !c.isFinite ||
-          c < .5 ||
-          c > 1 ||
-          b is! Map ||
-          !_isValidBoxMap(b)) {
-        continue;
-      }
-      final classId = row['classId'] as String;
-      final Map? parentBus =
-          classId == 'bus_door' ? _parentBusBox(b, rows) : null;
-      if (requireDoorInBus && classId == 'bus_door' && parentBus == null) {
-        continue;
-      }
-      // Inherit distance rank from parent bus so a narrow door on a near bus
-      // is not outranked by its own bus body (matches Python spatial_guidance.py).
-      final int effectiveRank = parentBus != null
-          ? distanceRank('bus', parentBus)
-          : distanceRank(classId, b);
-      if (classId == 'bus_door') {
-        if (currentDoor == null || effectiveRank < currentDoorRank) {
-          currentDoor = row;
-          currentDoorRank = effectiveRank;
-        }
-      }
-      if (prioritizeByDistance) {
-        final prio = _classPriority[classId] ?? 99;
-        final prox = proximityScore(b);
-        final better =
-            selected == null ||
-            effectiveRank < bestRank ||
-            (effectiveRank == bestRank && prio < bestPriority) ||
-            (effectiveRank == bestRank &&
-                prio == bestPriority &&
-                prox > bestProximity) ||
-            (effectiveRank == bestRank &&
-                prio == bestPriority &&
-                prox == bestProximity &&
-                c > best);
-        if (better) {
-          selected = row;
-          best = c.toDouble();
-          bestRank = effectiveRank;
-          bestPriority = prio;
-          bestProximity = prox;
-        }
-      } else if (c > best) {
-        selected = row;
-        best = c.toDouble();
-      }
+    final analysis = _analyzeFrame(rows);
+    final bool shouldHandleDoorExit = _updateDoorTracking(analysis.currentDoor);
+    if (busy) {
+      // Skip emitting new speech during active TTS playback, while still
+      // refreshing door exit state above so 4~5s utterances do not lose tracking.
+      skippedBusy++;
+      return;
     }
-
-    if (currentDoor != null) {
-      final doorBox = currentDoor['bbox'] as Map;
-      final doorCx = (doorBox['x'] as num).toDouble() +
-          (doorBox['w'] as num).toDouble() / 2;
-      _lastDoorSide = direction(doorCx);
-      _lastDoorWasUltraNear = isDoorUltraNear(doorBox);
-      _lastDoorSeenMicros = _now();
-      _doorExitHandled = false;
-      _doorMissingFrames = 0;
-    }
-
-    bool shouldHandleDoorExit = false;
-    if (currentDoor == null && _lastDoorSeenMicros != null) {
-      _doorMissingFrames++;
-      final elapsed = _now() - _lastDoorSeenMicros!;
-      const maxExitGraceMicros = 4000000;
-      if (!_doorExitHandled && elapsed <= maxExitGraceMicros) {
-        final requiredMissing = confirmationFrames > 1 ? 2 : 1;
-        if (_doorMissingFrames >= requiredMissing) {
-          if ((_lastDoorSide == TestDirection.center && _lastDoorWasUltraNear) ||
-              _lastDoorSide == TestDirection.left ||
-              _lastDoorSide == TestDirection.right) {
-            shouldHandleDoorExit = true;
-          }
-        }
-      } else if (elapsed > maxExitGraceMicros) {
-        _lastDoorSide = null;
-        _lastDoorWasUltraNear = false;
-        _lastDoorSeenMicros = null;
-        _doorExitHandled = false;
-        _doorMissingFrames = 0;
-      }
-    }
+    final selected = analysis.selected;
+    final best = analysis.bestConfidence;
+    final bestRank = analysis.bestRank;
 
     if (shouldHandleDoorExit) {
       _doorExitHandled = true;

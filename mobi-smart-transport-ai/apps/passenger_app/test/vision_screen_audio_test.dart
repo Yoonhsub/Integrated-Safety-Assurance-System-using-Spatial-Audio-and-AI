@@ -911,4 +911,152 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      'standalone bus_door without bus passes at minStandaloneDoorConfidence or when target BLE beacon is near',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    var beaconNear = false;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        confirmationFrames: 3,
+        requireDoorInBus: true,
+        minStandaloneDoorConfidence: 0.80,
+        isTargetBusBeaconNear: () => beaconNear,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // 1. Standalone door below 0.80 with beacon NOT near is filtered out.
+    for (var i = 1; i <= 3; i++) {
+      now = i;
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus_door', .75, .4, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 0);
+
+    // 2. When target bus BLE beacon is near, even 0.70 standalone door passes without bus body.
+    beaconNear = true;
+    for (var i = 10; i < 13; i++) {
+      now = i;
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus_door', .70, .4, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'bus_door');
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.completed, 1);
+
+    // 3. With beacon off, high-confidence (>= 0.80) standalone door passes (cropped bus close-up).
+    beaconNear = false;
+    now = 10000000;
+    for (var i = 0; i < 3; i++) {
+      now += 100000;
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus_door', .85, .72, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 2);
+    expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door exiting FOV during busy 5s TTS still triggers recovery immediately after TTS ends (within 8s)',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        confirmationFrames: 3,
+        requireDoorInBus: true,
+        minStandaloneDoorConfidence: 0.80,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Frame 1-3: Door detected on RIGHT, TTS starts speaking (busy = true).
+    for (var i = 1; i <= 3; i++) {
+      now = i * 100000; // 0.1s, 0.2s, 0.3s
+      a.observe(
+          detection(now, boxes: [
+            const LocalBox('bus_door', .88, .72, .2, .2, .3),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 1);
+    expect(a.busy, isTrue);
+    port.finish();
+    await flush(t);
+
+    // While TTS is speaking, door stays visible until 1.0s then disappears at 1.2s, 1.4s.
+    now = 1000000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus_door', .88, .75, .2, .2, .3),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    now = 1200000;
+    a.observe(detection(now, boxes: []).toDetectionResult(), age: Duration.zero);
+    now = 1400000;
+    a.observe(detection(now, boxes: []).toDetectionResult(), age: Duration.zero);
+    expect(a.admitted, 1);
+    expect(a.skippedBusy, 3);
+
+    // TTS finishes 5.5s later (elapsed = 5.5s - 1.0s = 4.5s > old 4s, <= new 8s).
+    tts.finish();
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    // Next frame with no door triggers recovery prompt immediately!
+    now = 5500000;
+    a.observe(detection(now, boxes: []).toDetectionResult(), age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 2);
+    expect(a.diagnostic['doorExitEvent'], 'lateral_recovery');
+    expect(port.active?['direction'], 'RIGHT');
+    port.finish();
+    await flush(t);
+    expect(tts.spoken.last, VisionScreenAudio.doorRecoveryPrompt(TestDirection.right));
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }
