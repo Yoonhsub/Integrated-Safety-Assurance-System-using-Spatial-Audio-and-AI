@@ -1,7 +1,7 @@
 # WT901 IMU 센서 연동 아키텍처 및 시스템 가이드
 
-> **문서 상태**: 공식 아키텍처 가이드  
-> **관련 모듈**: `packages/mobile_sensors`, `apps/passenger_app/lib/src/features/hardware_bus`, `apps/passenger_app/lib/src/services`  
+> **문서 상태**: 공식 아키텍처 가이드
+> **관련 모듈**: `packages/mobile_sensors`, `apps/passenger_app/lib/src/features/hardware_bus`, `apps/passenger_app/lib/src/services`
 > **기준 브랜치**: `feat/vision-distance-priority` (PR #74)
 
 ---
@@ -96,7 +96,7 @@ class HeadTrackingSnapshot {
   final double? referenceYaw;    // 정면 기준 각도
   final DateTime? receivedAt;    // 수신 시각 (UTC)
   final String message;
-  
+
   // 데이터가 2초 이내의 유효한 READY 상태인지 확인
   bool usable(DateTime now, {Duration maximumAge = const Duration(seconds: 2)});
 }
@@ -114,10 +114,10 @@ graph LR
     Mount -->|handheldPhone| Blocked[헤드 트래킹 강제 비활성화<br/>기존 스테레오 패닝 유지]
     Mount -->|fixedWorldCamera| VerifiedFixed{축 정렬 실측 완료?}
     Mount -->|headMountedCamera| VerifiedHead{축 정렬 실측 완료?}
-    
+
     VerifiedFixed -->|Yes| EnableFixed[HRTF 활성화<br/>cameraAngle + offset - headYaw]
     VerifiedFixed -->|No| Blocked
-    
+
     VerifiedHead -->|Yes| EnableHead[HRTF 활성화<br/>cameraAngle + offset]
     VerifiedHead -->|No| Blocked
 ```
@@ -125,7 +125,7 @@ graph LR
 ### 5.1 핸드헬드(손에 든 스마트폰) 배제 이유 (Crucial Safety Policy)
 > [!CAUTION]
 > **스마트폰을 손에 들고 사용하는 경우(`handheldPhone`), 헤드 트래킹은 엄격히 차단(Fail-Closed)됩니다.**
-> 
+>
 > - **원인**: 스마트폰을 손에 들고 있으면 팔의 흔들림, 손목 스냅, 이동 시 반동 등으로 인해 카메라 렌즈의 방향이 사용자의 머리(시선)와 완전히 분리되어 움직입니다.
 > - **위험성**: 머리는 정면을 보는데 손이 오른쪽으로 치우치면, 센서는 머리가 돈 것으로 오인하여 잘못된 가상의 각도로 3D 입체음향 핑을 쏩니다. 이는 시각장애인에게 **치명적인 방향 착각(위험 오인)**을 유발합니다.
 > - **해결책**: 핸드헬드 모드에서는 헤드 트래킹을 차단하고, 화면상의 Bbox 위치(좌/중/우)만을 정직하게 알려주는 3방향 스테레오 패닝(`playCue`)으로 안전하게 폴백합니다.
@@ -152,12 +152,11 @@ AI 비전 파이프라인에서 WT901은 다음과 같이 유기적으로 연동
 2. **헤드 트래킹 보정 및 입체음향 출력**:
    - `canActivateHeadTracking` 조건(수평 화각 확인 + 실측 축 정렬 완료 + `ready` 센서)이 충족되면, `headTrackedAngleForMount`를 통해 계산된 각도로 **HRTF 3D 핑(`playHeadTrackedCue(azimuth)`)**을 재생합니다.
    - 조건이 맞지 않거나 센서가 연결되지 않은 경우, 즉시 기본 좌/중/우 스테레오 패닝 핑(`playCue(direction)`)으로 매끄럽게 전환됩니다.
-3. **화각 이탈(FOV Exit) 시 음향 동작 (초밀착 판정 및 방어적 안전 안내)**:
-   - **가운데 초밀착 후 이탈**: 화면 상하/면적을 가득 채운 초근접 상태(`area >= 0.20` 또는 `bottomY >= 0.88 && y <= 0.15`)에서 문이 화면 밖으로 벗어났을 때만 방어적 확인형 음성 출력:
-     *"출입문 근처입니다. 버스가 완전히 멈췄는지 소리를 확인하시고, 흰지팡이로 전방의 계단이나 문을 조심스럽게 탐색해 주세요."* (정면 핑 + TTS)
-   - **원거리 단순 가림/틸트 억제**: 1.5~2m 거리에서 보행자 가림이나 카메라 각도 흔들림으로 문이 사라진 경우에는 오안내 방지를 위해 승차 인계 발화를 차단.
-   - **좌/우 측면 이탈**: 문의 마지막 방향을 기억하여 천천히 몸을 돌리도록 유도:
-     *"출입문이 마지막으로 [왼쪽/오른쪽]에서 확인되었습니다. 몸을 [왼쪽/오른쪽]으로 천천히 돌려주세요."* (좌/우 핑 + TTS)
+3. **화각 이탈 및 장애물 우선 처리**:
+   - 문이 사라졌다는 사실로 도착이나 이동 방향을 판단하지 않습니다. 과거 방향 회전 안내와 자동 인계 안내를 생성하지 않습니다.
+   - 현재 장애물 후보가 선택되면 기존 버스·문 Preview 음향을 중단합니다. 중단 후 새로운 유효 프레임에서 기존 연속 확인 조건을 만족해야 장애물 화면 방향을 재생합니다.
+   - 단독 문 허용 조건을 추가하지 않습니다. 카메라의 `requireDoorInBus=true` 및 70% 겹침 검증을 유지합니다.
+   - Preview는 `guidanceEligible=false`이며 실제 거리·고위험 판단·자동 승차 허가를 뜻하지 않습니다.
 
 ---
 
@@ -168,7 +167,7 @@ AI 비전 파이프라인에서 WT901은 다음과 같이 유기적으로 연동
 | **WT901 저수준 프로토콜** | ✅ 구현 완료 | `wit_sensor_protocol.dart` (안준환) |
 | **헤드 트래킹 버스 인터페이스** | ✅ 구현 완료 | `head_tracking_direction.dart` (윤현섭) |
 | **비전-헤드트래킹 브릿지** | ✅ 구현 완료 | `vision_screen_audio.dart` (김도성) |
-| **화각 이탈(FOV Exit) 인계 안내** | ✅ 구현 완료 | PR #74 포함 (김도성) |
+| **화각 이탈 안내** | 자동 안내 없음 | 최신 검출만 사용 |
 | **거리 기반 객체 우선순위** | ✅ 구현 완료 | PR #74 포함 (김도성) |
 | **실기기 하드웨어 장착 검증** | ⚠️ `NOT_VERIFIED` | 실물 기기 현장 검증 대기 중 |
 
