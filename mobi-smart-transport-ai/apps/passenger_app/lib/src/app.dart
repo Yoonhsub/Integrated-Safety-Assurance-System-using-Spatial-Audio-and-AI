@@ -194,7 +194,10 @@ class _MobiAppState extends State<MobiApp> {
         // Local hardware diagnostics carry no server identity or Guidance authority.
         '/device-check': (_) => protectAndroid(const DeviceCheckPage()),
         '/hardware-bus': (_) => protectAndroid(const HardwareBusPage()),
-        '/standalone-vision': (_) => protectAndroid(const StandaloneVisionPage()),
+        '/camera-bus-test': (_) =>
+            protectAndroid(const HardwareBusPage(cameraIntegrated: true)),
+        '/standalone-vision': (_) =>
+            protectAndroid(const StandaloneVisionPage()),
         '/native-audio': (_) => AuthGate(
               configurationReady: _firebaseReady,
               requiredRole: 'passenger',

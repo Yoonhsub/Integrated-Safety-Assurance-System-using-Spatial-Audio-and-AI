@@ -29,6 +29,7 @@ void main() {
     bool warning = false,
     bool enabled = true,
     String scope = 'radio',
+    bool relative = false,
     int rssi = -85,
     DateTime? seen,
   }) =>
@@ -38,6 +39,7 @@ void main() {
             child: DirectionAudioPanel(
               key: const ValueKey('tone'),
               z: z,
+              targetIsHeadRelative: relative,
               reference: 0,
               fresh: fresh,
               sensorAgeMs: 0,
@@ -57,6 +59,20 @@ void main() {
     await tester.tap(find.text('버스 소리 시작'));
     await tester.pump();
   }
+
+  testWidgets(
+      'camera supplied head-relative angle is not corrected by yaw twice',
+      (tester) async {
+    await tester.pumpWidget(panel(z: 90, angle: 45, relative: true));
+    await start(tester);
+    final output = calls.lastWhere((c) => c.method == 'start').arguments as Map;
+    expect(output['right'] as double, greaterThan(output['left'] as double));
+    await tester
+        .pumpWidget(panel(z: 90, angle: 45, relative: true, fresh: false));
+    await tester.pump();
+    expect(calls.last.method, 'stop');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('rotation and stronger RSSI update different output parameters', (
     tester,

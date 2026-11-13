@@ -32,6 +32,7 @@ class LocalVisionPage extends StatefulWidget {
       this.authChanges,
       this.remoteSessionId,
       this.bundledModel = false,
+      this.localConsumer = false,
       this.previewPriority,
       this.previewEngine,
       this.previewScope = 'camera-preview'});
@@ -46,6 +47,7 @@ class LocalVisionPage extends StatefulWidget {
   final Stream<String?>? authChanges;
   final String? remoteSessionId;
   final bool bundledModel;
+  final bool localConsumer;
   final SpeechPriorityCoordinator? previewPriority;
   final SpatialVerificationEngine? previewEngine;
   final String previewScope;
@@ -438,12 +440,14 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                       child: CameraPreview(_camera!)),
                 ],
               ]),
-          Text(widget.producer == null && widget.onResult == null
+          Text(widget.localConsumer ||
+                  (widget.producer == null && widget.onResult == null)
               ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
               : _pump.error != null
                   ? 'UNAVAILABLE · 온라인 전송 중지 · 로컬 시연은 앱 첫 화면에서 별도로 선택해 주세요'
                   : 'ONLINE 연결 경로 · 서버 수신 여부는 아래 서버 관찰에서 확인'),
-          Text(widget.producer == null && widget.onResult == null
+          Text(widget.localConsumer ||
+                  (widget.producer == null && widget.onResult == null)
               ? '휴대폰 내부 관찰 · 서버로 전송하지 않습니다. 승차 판단에 사용하지 않습니다.'
               : _previewAudio == null
                   ? '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·자동 음성 안내는 없습니다.'
@@ -493,7 +497,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           SwitchListTile(
               title: const Text('전면 카메라 사용'),
               value: _front,
-              onChanged: busy || _camera != null
+              onChanged: widget.localConsumer || busy || _camera != null
                   ? null
                   : (v) => setState(() => _front = v)),
           if (_worker != null)

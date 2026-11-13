@@ -49,7 +49,8 @@ class _PassengerLandingState extends State<PassengerLanding> {
   int _speechRequest = 0;
   bool _opening = false;
 
-  SpeechPriorityCoordinator get _speech => widget.speech ?? sharedSpeechPriority;
+  SpeechPriorityCoordinator get _speech =>
+      widget.speech ?? sharedSpeechPriority;
   bool get _usesTapConfirmation =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -101,7 +102,8 @@ class _PassengerLandingState extends State<PassengerLanding> {
     }
     _pending = destination;
     _tapWindow?.cancel();
-    _tapWindow = Timer(const Duration(milliseconds: 500), () => _pending = null);
+    _tapWindow =
+        Timer(const Duration(milliseconds: 500), () => _pending = null);
     unawaited(_describe(description, ++_speechRequest));
   }
 
@@ -153,9 +155,12 @@ class _PassengerLandingState extends State<PassengerLanding> {
             const SizedBox(height: 16),
           ],
           _screenReaderButton(
-            _LandingDestination.routeInfo, _routeLabel, _routeDescription,
+            _LandingDestination.routeInfo,
+            _routeLabel,
+            _routeDescription,
             FilledButton.icon(
-              onPressed: () => _tap(_LandingDestination.routeInfo, _routeDescription),
+              onPressed: () =>
+                  _tap(_LandingDestination.routeInfo, _routeDescription),
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text(_routeLabel),
             ),
@@ -164,9 +169,12 @@ class _PassengerLandingState extends State<PassengerLanding> {
           const Text(_routeDescription),
           const SizedBox(height: 24),
           _screenReaderButton(
-            _LandingDestination.vision, _visionLabel, _visionDescription,
+            _LandingDestination.vision,
+            _visionLabel,
+            _visionDescription,
             OutlinedButton.icon(
-              onPressed: () => _tap(_LandingDestination.vision, _visionDescription),
+              onPressed: () =>
+                  _tap(_LandingDestination.vision, _visionDescription),
               icon: const Icon(Icons.camera_alt_outlined),
               label: const Text(_visionLabel),
             ),
@@ -230,5 +238,9 @@ class DeviceCheckPage extends StatelessWidget {
         OutlinedButton(
             onPressed: () => Navigator.of(context).pushNamed('/hardware-bus'),
             child: const Text('실기기 연동확인 · BLE/WT901/HRTF')),
+        OutlinedButton(
+            onPressed: () =>
+                Navigator.of(context).pushNamed('/camera-bus-test'),
+            child: const Text('카메라·센서·비콘 통합 방향 시험')),
       ])));
 }

@@ -21,6 +21,7 @@ class DirectionAudioPanel extends StatefulWidget {
     this.warning = false,
     this.busEnabled = true,
     this.audioScope = '',
+    this.targetIsHeadRelative = false,
     this.obstacles,
     this.sessionNow,
   });
@@ -33,6 +34,7 @@ class DirectionAudioPanel extends StatefulWidget {
   final double busAngle;
   final bool warning, busEnabled;
   final String audioScope;
+  final bool targetIsHeadRelative;
 
   /// Optional producer snapshot; no detector or synthetic input is created here.
   final ObstacleCueSnapshot? obstacles;
@@ -87,9 +89,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         .tick(
           now: now,
           context: CueContext.walking,
-          headYaw: widget.z ?? double.nan,
-          reference: widget.reference ?? double.nan,
-          reverse: _reverse,
+          headYaw: widget.targetIsHeadRelative ? 0 : widget.z ?? double.nan,
+          reference:
+              widget.targetIsHeadRelative ? 0 : widget.reference ?? double.nan,
+          reverse: widget.targetIsHeadRelative ? false : _reverse,
           inputReady: _sensorReady,
           objects: _objects(now),
         )
@@ -102,8 +105,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       ? beaconToneIntervalMs(widget.beaconRssi!)
       : 1000;
   DirectionPan? get _rawPan => _sensorReady
-      ? DirectionPan.fromZ(widget.z!, widget.reference!,
-          reverse: _reverse, objectAngle: _objectAngle)
+      ? DirectionPan.fromZ(widget.targetIsHeadRelative ? 0 : widget.z!,
+          widget.targetIsHeadRelative ? 0 : widget.reference!,
+          reverse: widget.targetIsHeadRelative ? false : _reverse,
+          objectAngle: _objectAngle)
       : null;
   bool get _warningBehind => _manualWarning && _rawPan?.supported == false;
   DirectionPan? get _pan {
@@ -145,9 +150,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     return _controller.tick(
       now: now,
       context: CueContext.walking,
-      headYaw: widget.z ?? double.nan,
-      reference: widget.reference ?? double.nan,
-      reverse: _reverse,
+      headYaw: widget.targetIsHeadRelative ? 0 : widget.z ?? double.nan,
+      reference:
+          widget.targetIsHeadRelative ? 0 : widget.reference ?? double.nan,
+      reverse: widget.targetIsHeadRelative ? false : _reverse,
       inputReady: _sensorReady,
       objects: _objects(now),
     );
@@ -323,7 +329,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
                     : '버스 비콘 수신 대기 · 버스 탐색을 시작해주세요')
                 : '간격 조절 꺼짐 · 고정 간격 1초',
           ),
-        if (widget.busEnabled)
+        if (widget.busEnabled && !widget.targetIsHeadRelative)
           Text('도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
         if (pan != null)
           Text(spatial
@@ -348,7 +354,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           title: const Text('회전 방향 반대로'),
           subtitle: const Text('좌우 변화가 예상과 반대라면 중지 후 변경'),
           value: _reverse,
-          onChanged: _playing || _starting
+          onChanged: widget.targetIsHeadRelative || _playing || _starting
               ? null
               : (v) => setState(() {
                     _directionTracker.reset();
@@ -372,7 +378,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
             ),
           ],
         ),
-        if (widget.busEnabled)
+        if (widget.busEnabled && !widget.targetIsHeadRelative)
           const Text(
             '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다. 후방 목표는 중앙 근접음으로 계속 재생합니다.',
           ),

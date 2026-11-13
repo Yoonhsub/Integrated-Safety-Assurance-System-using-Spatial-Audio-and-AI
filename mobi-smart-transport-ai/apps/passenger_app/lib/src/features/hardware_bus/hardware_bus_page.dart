@@ -1,3 +1,4 @@
+import 'camera_bus_test_panel.dart';
 import 'obstacle_cue_input.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -13,9 +14,14 @@ const beaconB = 'C3:00:00:5C:B9:48';
 
 class HardwareBusPage extends StatefulWidget {
   const HardwareBusPage(
-      {super.key, this.scannerFactory, this.obstacles, this.sessionNow});
+      {super.key,
+      this.scannerFactory,
+      this.obstacles,
+      this.sessionNow,
+      this.cameraIntegrated = false});
   final ObstacleCueSnapshot? obstacles;
   final Duration Function()? sessionNow;
+  final bool cameraIntegrated;
   final BeaconScanner Function(BeaconIdResolver)? scannerFactory;
   @override
   State<HardwareBusPage> createState() => _HardwareBusPageState();
@@ -247,7 +253,9 @@ class _HardwareBusPageState extends State<HardwareBusPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('실기기 연동확인')),
+        appBar: AppBar(
+            title:
+                Text(widget.cameraIntegrated ? '카메라·센서·비콘 통합 시험' : '실기기 연동확인')),
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -304,25 +312,36 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                 ),
               ],
             ),
-            WitSensorPanel(
-              key: const ValueKey('wit-sensor-panel'),
-              ensureReady: _ready,
-              beaconRssi: _signals[_audioMac]?.rssi,
-              beaconSeenAt: _running ? _radioTimes[_audioMac] : null,
-              beaconName:
-                  _toneBeaconMac == beaconA ? '502번 역할 · A' : '511번 역할 · B',
-              busAngle: _busAngle,
-              warning: _warning,
-              audioScope: '$_toneBeaconMac/$_epoch',
-              obstacles: widget.obstacles,
-              sessionNow: widget.sessionNow,
-            ),
+            if (widget.cameraIntegrated)
+              CameraBusTestPanel(
+                  ensureReady: _ready,
+                  rssi: _signals[_toneBeaconMac]?.rssi,
+                  seenAt: _running ? _radioTimes[_toneBeaconMac] : null,
+                  beaconName:
+                      _toneBeaconMac == beaconA ? '502번 역할 · A' : '511번 역할 · B',
+                  scope: '$_toneBeaconMac/$_epoch')
+            else
+              WitSensorPanel(
+                key: const ValueKey('wit-sensor-panel'),
+                ensureReady: _ready,
+                beaconRssi: _signals[_audioMac]?.rssi,
+                beaconSeenAt: _running ? _radioTimes[_audioMac] : null,
+                beaconName:
+                    _toneBeaconMac == beaconA ? '502번 역할 · A' : '511번 역할 · B',
+                busAngle: _busAngle,
+                warning: _warning,
+                audioScope: '$_toneBeaconMac/$_epoch',
+                obstacles: widget.obstacles,
+                sessionNow: widget.sessionNow,
+              ),
             _card('A', beaconA),
             _card('B', beaconB),
             Text('이번 스캔에서 확인한 기기: ${_signals.length}개'),
             const SizedBox(height: 12),
-            const Text(
-              '비콘 A=502번/B=511번은 이 기기의 테스트 매핑입니다. RSSI는 정확한 거리나 차량 인증이 아닙니다. 방향은 왼쪽 접근·정면 정차·오른쪽 출발 가정이며 비콘의 실제 방위를 측정하지 않습니다. 실제 승차 완료는 자동 판정하지 않습니다.',
+            Text(
+              widget.cameraIntegrated
+                  ? '카메라·휴대폰 방향·머리 센서·선택 비콘을 사용하는 로컬 시험입니다. 비콘과 문 연결은 수동이며 실제 차량 인증이나 승차 판정이 아닙니다.'
+                  : '비콘 A=502번/B=511번은 이 기기의 테스트 매핑입니다. RSSI는 정확한 거리나 차량 인증이 아닙니다. 방향은 왼쪽 접근·정면 정차·오른쪽 출발 가정이며 비콘의 실제 방위를 측정하지 않습니다. 실제 승차 완료는 자동 판정하지 않습니다.',
             ),
           ],
         ),
