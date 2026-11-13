@@ -101,3 +101,18 @@ main 소스 변경 없이 기존 `lib/local_android_camera_backend_main.dart`를
 | 테스트 ID | 장비·환경 | 입력(실측/모의) | 재현 절차 | 기대 결과 | 실제 결과·증빙 | 통과/실패/미실행 | 다음 작업 |
 |---|---|---|---|---|---|---|---|
 | MAIN-CAM-RECONNECT-STOPPED | 기존 main APK·Shokz | 이어폰 재연결 실측 | 음성·카메라 명시적 중지 및 음향 OFF 확인 → 이어폰 켜서 미디어 연결 → 앱 버튼 없이 5초 대기 | 중지 상태에서 자동 음향 없음 | 사용자 ‘소리안남’. ADB UI에서 카메라 중지됨, 음향 checked=false, 화면 음향 시연 STOP 확인 | PASS(명시적 중지 후 재연결 범위) | 재생 중 연결 상실→재연결 전체 흐름과 구분. 새 경고의 스피커 출력 실패는 해소되지 않음 |
+
+## 후속 인계: 자동 확인 완료와 남은 차단 요인
+
+관련 기존 Flutter 테스트 6개 파일 실행 결과 **89 passed**. 실행: `flutter test --no-pub test/vision_screen_audio_test.dart test/native_android_audio_test.dart test/route_audio_lifecycle_test.dart test/hardware_bus_passage_test.dart test/hardware_cue_control_test.dart test/home_page_isolation_test.dart --reporter expanded`. 예외/타임아웃 메시지 일부는 의도적으로 실패를 주입하는 테스트의 출력이며 최종 exit code 0이다. 자동 테스트 결과는 실기기 실패를 대체하지 않는다.
+
+| 우선순위 | 남은 항목 | 현재 근거·상태 | 다음 작업 |
+|---|---|---|---|
+| 1 | 이어폰 OFF에서 새 카메라 음향의 스피커 출력 | 실기기 재현. LocalStereoCue.play는 기본 AudioTrack 출력이며 이어폰 연결 필수 검사가 없음. 별도 하드웨어 ToneTestEngine의 출력 선택과 다른 경로 | 이어폰 전용/스피커 허용 정책 확정 후 cue·TTS 양쪽에 일관된 차단 적용·실기기 재시험 |
+| 2 | 버스 문 간헐 무음·대상 전환 | 실기기 무음 실패 유지. vision_screen_audio.dart: requireDoorInBus(동시 bus·70% 겹침), 3프레임 확인, 최고 confidence 하나 선택, 같은 class+side 재안내 억제 및 최소 8초 간격 확인. 기존 테스트도 이 정책을 검증함. 특정 무음의 직접 원인은 미확정 | 프레임별 제외 이유/후보 선택 로그 수집 후 시연에 맞는 정책 검토 |
+| 3 | main의 카메라 위험→BLE 접근음 선점 통합 | app.dart의 HardwareBusPage() 진입은 obstacles 미주입. 독립 spatial_warning_check_panel은 busEnabled=false. 이전 ajh_test 결과로 main 통합 통과를 대체할 수 없음 | 별도 구현·빌드·통합 실기기 재시험 필요 |
+| 4 | 실제 장애물 환경·착용 헤드트래킹 | 실물 대상 및 머리 장착 불가. 카메라는 노트북 사진을 실측 추론한 범위만 통과 | 장비·환경 준비 후 실행 |
+| 5 | 실제 Firebase 영속 Ledger·휴대폰 송신 원문 재전송 | 격리 fake-auth/memory 수신 및 기록 재생 검증 완료. production/실제 Firebase 저장과 동일하지 않음 | 담당자 격리 Firebase 환경·접근 준비 후 원문/응답/저장 증빙 확인 |
+| 6 | 목적지 검색 | 사용자 지정으로 FAIL 유지·조사 중단 | 담당 기능 개발자 후속 처리. TAGO 실데이터 검증 별도 |
+
+현재 main 기준 전체 탑승 안전 안내는 통과로 선언하지 않는다. main 644d199 대비 Git 변경은 이 검증 문서뿐이며 APK 재빌드나 소스 수정 없이 추가 확인을 마쳤다. ajh_test(PR #76)와 ajh_main_test의 결과를 분리한다.
