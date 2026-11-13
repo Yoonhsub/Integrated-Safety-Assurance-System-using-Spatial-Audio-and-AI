@@ -43,12 +43,7 @@ class CameraBusTargetTracker {
   }
 
   bool calibrate(double yaw, DateTime now) {
-    if (_phone.isEmpty ||
-        !_phone.last.fresh(now) ||
-        !yaw.isFinite ||
-        !fov.isFinite ||
-        fov < 20 ||
-        fov > 130) {
+    if (_phone.isEmpty || !_phone.last.fresh(now) || !yaw.isFinite) {
       return false;
     }
     _phoneZero = _phone.last.degrees;
@@ -62,6 +57,9 @@ class CameraBusTargetTracker {
     final at = frame.frame.receivedAt.toUtc();
     final age = now.difference(at);
     if (!calibrated ||
+        !fov.isFinite ||
+        fov < 20 ||
+        fov > 130 ||
         age.isNegative ||
         age >= const Duration(seconds: 1) ||
         frame.frame.mirror ||

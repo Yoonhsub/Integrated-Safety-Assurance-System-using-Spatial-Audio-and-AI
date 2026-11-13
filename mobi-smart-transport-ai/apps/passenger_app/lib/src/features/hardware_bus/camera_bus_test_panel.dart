@@ -39,7 +39,6 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   static const _geometryChannel = MethodChannel('mobi/camera_geometry');
   String? _geometryKey;
   int _geometryGeneration = 0;
-  double? _cameraFov;
   String _geometryStatus = '카메라 정보 자동 확인 대기';
   HeadTrackingSnapshot get _head => sharedHeadTrackingState.snapshot;
   bool _beaconFresh(DateTime now) =>
@@ -110,9 +109,10 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   void _readGeometry(String id, int width, int height, int rotation) {
     final key = '$id/$width/$height/$rotation';
     if (_disposed || key == _geometryKey) return;
+    if (_geometryKey != null) _tracker.reset();
     _geometryKey = key;
-    _cameraFov = null;
-    _tracker.reset();
+    _tracker.fov = double.nan;
+    _tracker.clear('카메라 정보 확인 대기');
     final generation = ++_geometryGeneration;
     _geometryStatus = '카메라 정보 자동 확인 중';
     unawaited(() async {
@@ -129,13 +129,12 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
         if (value == null || !value.isFinite || value < 20 || value > 130) {
           throw const FormatException();
         }
-        _cameraFov = value;
         _tracker.fov = value;
         _geometryStatus = '카메라 정보 자동 적용 완료 · 기본 줌 사용';
       } catch (_) {
         if (_disposed || generation != _geometryGeneration) return;
-        _cameraFov = null;
-        _tracker.reset();
+        _tracker.fov = double.nan;
+        _tracker.clear('카메라 정보 확인 불가');
         _geometryStatus = '카메라 정보 확인 불가 · 방향 시험 중지';
       }
       _refresh();
@@ -144,21 +143,18 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
 
   void _calibrate() {
     final now = DateTime.now().toUtc();
-    final fov = _cameraFov;
-    if (!_associated ||
-        !_head.usable(now, maximumAge: const Duration(seconds: 1)) ||
-        fov == null ||
-        fov < 20 ||
-        fov > 130) {
+    if (!_head.usable(now, maximumAge: const Duration(seconds: 1))) {
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('단일 대상 확인·센서 정면 설정·카메라 시작이 필요합니다.')));
+          const SnackBar(content: Text('머리 센서를 연결하고 센서 정면 기준을 먼저 설정하세요.')));
       return;
     }
-    _tracker.fov = fov;
     _reference = _head.referenceYaw;
     if (!_tracker.calibrate(_head.filteredYaw!, now)) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('최신 휴대폰 방향을 수신한 뒤 다시 설정하세요.')));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('정면 기준 저장 완료 · 버스나 문이 보이지 않아도 설정됩니다.')));
     }
     _refresh();
   }
@@ -178,9 +174,8 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   Future<void> _cameraStopped() async {
     _geometryGeneration++;
     _geometryKey = null;
-    _cameraFov = null;
+    _tracker.fov = double.nan;
     _geometryStatus = '카메라 정보 자동 확인 대기';
-    _tracker.reset();
     _tracker.clear('카메라 중지 · 방향 안내 중지');
     _refresh();
   }
@@ -189,7 +184,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   void didUpdateWidget(covariant CameraBusTestPanel old) {
     super.didUpdateWidget(old);
     if (old.scope != widget.scope) {
-      _tracker.reset();
+      _tracker.clear('목표 비콘 변경 · 새 문 확인 대기');
       _associated = false;
     }
   }
@@ -238,7 +233,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
           onChanged: (v) {
             setState(() {
               _associated = v == true;
-              _tracker.reset();
+              _tracker.clear('시험 대상 선택 변경 · 새 문 확인 대기');
             });
           }),
       SwitchListTile(
@@ -255,6 +250,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       const Text(
           '머리와 카메라를 같은 정면 표식에 맞추세요. WT901 정면 설정 후 아래 기준을 설정합니다. 설정 중에는 휴대폰을 세우고 수평 방향을 유지하세요.'),
       FilledButton(onPressed: _calibrate, child: const Text('머리·카메라 동일 정면 설정')),
+      Text(_tracker.calibrated ? '정면 기준: 설정 완료' : '정면 기준: 설정 필요'),
       Text(
           '방향 상태: ${angle == null ? "중지 · ${_tracker.reason}" : "문 상대각 ${angle.toStringAsFixed(1)}°"}'),
       const Text(
