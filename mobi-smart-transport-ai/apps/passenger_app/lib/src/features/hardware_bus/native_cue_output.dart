@@ -2,7 +2,9 @@ import 'package:flutter/services.dart';
 import 'cue_control.dart';
 
 class ToneInput {
-  const ToneInput(this.sensorAgeMs, this.beaconAgeMs, this.targetIntervalMs);
+  const ToneInput(this.sensorAgeMs, this.beaconAgeMs, this.targetIntervalMs,
+      {this.sensorRequired = true});
+  final bool sensorRequired;
   final int sensorAgeMs, beaconAgeMs, targetIntervalMs;
 }
 
@@ -21,6 +23,7 @@ class NativeCueOutput implements CueOutput, CueSilenceOutput {
       'left': cue.direction.left,
       'right': cue.direction.right,
       'sensorAgeMs': state.sensorAgeMs,
+      'sensorRequired': state.sensorRequired,
       // Identified obstacles do not depend on bus beacon reception.
       'beaconAgeMs': cue.object.obstacleRisk != null ? -1 : state.beaconAgeMs,
       'intervalMs':
@@ -41,6 +44,7 @@ class NativeCueOutput implements CueOutput, CueSilenceOutput {
       'left': 0.0,
       'right': 0.0,
       'sensorAgeMs': state.sensorAgeMs,
+      'sensorRequired': state.sensorRequired,
       'beaconAgeMs': state.beaconAgeMs,
       'intervalMs': state.targetIntervalMs,
       'pattern': 'target',

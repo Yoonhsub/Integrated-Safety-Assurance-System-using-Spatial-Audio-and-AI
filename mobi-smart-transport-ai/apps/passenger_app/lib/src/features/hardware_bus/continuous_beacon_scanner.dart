@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 
@@ -7,15 +8,64 @@ class ContinuousBeaconScanner implements BeaconScanner {
   ContinuousBeaconScanner({
     required this.beaconIdResolver,
     this.scanTimeout = const Duration(seconds: 15),
+    this.recoveryTarget,
   });
   final Duration scanTimeout;
+  final String Function()? recoveryTarget;
+  final Map<String, Duration> _packetTimes = {};
 
   final BeaconIdResolver beaconIdResolver;
   final _estimator = const BeaconDistanceEstimator();
   final Map<String, RssiMovingAverageSmoother> _smoothers = {};
   StreamController<BeaconSignal>? _controller;
   StreamSubscription<List<ScanResult>>? _results;
-  Timer? _timer;
+  Timer? _timer, _watchdog;
+  final _clock = Stopwatch()..start();
+  final _recovery = ScanRecoveryGuard();
+  Duration _lastPacket = Duration.zero, _deadline = Duration.zero;
+  bool _recovering = false;
+  Future<void> _startRadio(Duration remaining) => FlutterBluePlus.startScan(
+      timeout: remaining,
+      continuousUpdates: true,
+      continuousDivisor: 1,
+      oneByOne: true,
+      androidLegacy: true,
+      androidScanMode: AndroidScanMode.lowLatency,
+      androidUsesFineLocation: true,
+      withRemoteIds: const ['C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48']);
+  Future<void> _checkRadio() async {
+    if (!_scanning ||
+        _recovering ||
+        !_recovery.claim(
+            _clock.elapsed,
+            recoveryTarget == null
+                ? _lastPacket
+                : (_packetTimes[recoveryTarget!()] ?? Duration.zero),
+            _deadline)) {
+      return;
+    }
+    _recovering = true;
+    debugPrint(
+        'MOBI_BLE_RECOVERY begin gapMs=${(_clock.elapsed - _lastPacket).inMilliseconds}');
+    try {
+      await FlutterBluePlus.stopScan();
+      if (!_scanning) return;
+      final remaining = _deadline - _clock.elapsed;
+      if (remaining <= Duration.zero) return;
+      await _startRadio(remaining);
+      if (!_scanning) await FlutterBluePlus.stopScan();
+      debugPrint(
+          'MOBI_BLE_RECOVERY restart completed · awaiting actual packet');
+    } catch (e, stack) {
+      if (_scanning) {
+        _controller?.addError(e, stack);
+        unawaited(stop());
+      }
+    } finally {
+      _recovering = false;
+    }
+  }
+
   Future<void>? _stopTask;
   bool _scanning = false;
 
@@ -39,6 +89,8 @@ class ContinuousBeaconScanner implements BeaconScanner {
     String? target,
   ) async {
     _scanning = true;
+    _lastPacket = _clock.elapsed;
+    _deadline = _clock.elapsed + scanTimeout;
     _results = FlutterBluePlus.onScanResults.listen(
       (results) {
         if (!_scanning || controller.isClosed) return;
@@ -49,6 +101,8 @@ class ContinuousBeaconScanner implements BeaconScanner {
               (target != null && target.isNotEmpty && id != target)) {
             continue;
           }
+          _lastPacket = _clock.elapsed;
+          _packetTimes[id] = _lastPacket;
           final smoother = _smoothers.putIfAbsent(
             id,
             () => RssiMovingAverageSmoother(
@@ -72,16 +126,11 @@ class ContinuousBeaconScanner implements BeaconScanner {
       },
     );
     try {
-      await FlutterBluePlus.startScan(
-        timeout: scanTimeout,
-        continuousUpdates: true,
-        continuousDivisor: 1,
-        oneByOne: true,
-        androidUsesFineLocation: true,
-        withRemoteIds: const ['C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48'],
-      );
+      await _startRadio(scanTimeout);
       if (_scanning) {
         _timer = Timer(scanTimeout, () => unawaited(stop()));
+        _watchdog = Timer.periodic(
+            const Duration(milliseconds: 500), (_) => unawaited(_checkRadio()));
       } else {
         await FlutterBluePlus.stopScan();
       }
@@ -97,6 +146,7 @@ class ContinuousBeaconScanner implements BeaconScanner {
   Future<void> _stop() async {
     _scanning = false;
     _timer?.cancel();
+    _watchdog?.cancel();
     await _results?.cancel();
     try {
       await FlutterBluePlus.stopScan();
@@ -106,5 +156,21 @@ class ContinuousBeaconScanner implements BeaconScanner {
         unawaited(controller.close());
       }
     }
+  }
+}
+
+/// At most one recovery per 30 seconds; never extends the user's scan deadline.
+class ScanRecoveryGuard {
+  Duration? _last;
+  bool claim(Duration now, Duration lastPacket, Duration deadline) {
+    if (now.isNegative ||
+        lastPacket > now ||
+        deadline - now <= const Duration(seconds: 1) ||
+        now - lastPacket < const Duration(seconds: 2) ||
+        (_last != null && now - _last! < const Duration(seconds: 30))) {
+      return false;
+    }
+    _last = now;
+    return true;
   }
 }

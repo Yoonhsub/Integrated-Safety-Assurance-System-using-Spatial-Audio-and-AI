@@ -123,6 +123,7 @@ class _HardwareBusPageState extends State<HardwareBusPage>
           (resolver) => ContinuousBeaconScanner(
                 beaconIdResolver: resolver,
                 scanTimeout: duration,
+                recoveryTarget: () => _toneBeaconMac,
               ))(
         // Both E2 devices advertise the same name/UUID: use the Android MAC.
         (result) {

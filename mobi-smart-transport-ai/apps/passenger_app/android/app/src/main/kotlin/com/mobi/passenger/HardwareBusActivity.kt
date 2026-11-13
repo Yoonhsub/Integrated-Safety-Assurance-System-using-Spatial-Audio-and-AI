@@ -41,7 +41,8 @@ open class HardwareBusActivity : FlutterActivity() {
                         val beaconAge = call.argument<Number>("beaconAgeMs")?.toInt() ?: -1
                         val pattern = call.argument<String>("pattern") ?: "target"
                         val azimuth = call.argument<Number>("azimuthDegrees")?.toDouble()
-                        result.success(if (call.method == "start") engine.start(left, right, age, interval, beaconAge, pattern, azimuth) else engine.update(left, right, age, interval, beaconAge, pattern, azimuth))
+                        val requiresSensor=call.argument<Boolean>("sensorRequired") ?: true
+                        result.success(if (call.method == "start") engine.start(left, right, age, interval, beaconAge, pattern, azimuth, requiresSensor) else engine.update(left, right, age, interval, beaconAge, pattern, azimuth, requiresSensor))
                     }
                     "stop" -> {
                         engine.stop()

@@ -31,6 +31,8 @@ void main() {
     String scope = 'radio',
     bool relative = false,
     bool wait = false,
+    bool fallback = false,
+    bool direction = true,
     int rssi = -85,
     DateTime? seen,
   }) =>
@@ -42,6 +44,8 @@ void main() {
               z: z,
               targetIsHeadRelative: relative,
               waitForTarget: wait,
+              allowCentralFallback: fallback,
+              directionAvailable: direction,
               reference: 0,
               fresh: fresh,
               sensorAgeMs: 0,
@@ -150,6 +154,55 @@ void main() {
     await tester.pumpWidget(panel(wait: true));
     await tester.pump(const Duration(milliseconds: 160));
     expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
+      'RSSI tone stays on without camera or head, direction only updates balance',
+      (tester) async {
+    await tester.pumpWidget(panel(
+        wait: true,
+        fallback: true,
+        direction: false,
+        fresh: false,
+        relative: true));
+    await start(tester);
+    final initial =
+        calls.lastWhere((c) => c.method == 'start').arguments as Map;
+    expect(initial['sensorRequired'], false);
+    expect(initial['left'], closeTo(initial['right'], 1e-9));
+    await tester.pumpWidget(panel(
+        wait: true,
+        fallback: true,
+        direction: true,
+        angle: 45,
+        relative: true,
+        rssi: -45));
+    await tester.pump(const Duration(milliseconds: 160));
+    final directional =
+        calls.lastWhere((c) => c.method == 'update').arguments as Map;
+    expect(directional['right'] as double,
+        greaterThan(directional['left'] as double));
+    expect(directional['sensorRequired'], true);
+    expect(directional['intervalMs'], 220);
+    await tester.pumpWidget(panel(
+        wait: true,
+        fallback: true,
+        direction: false,
+        relative: true,
+        fresh: false));
+    await tester.pump(const Duration(milliseconds: 160));
+    final central = calls.last.arguments as Map;
+    expect(central['left'], closeTo(central['right'], 1e-9));
+    expect(central['sensorRequired'], false);
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(panel(
+        wait: true,
+        fallback: true,
+        direction: false,
+        fresh: false,
+        seen: DateTime.now().subtract(const Duration(seconds: 4))));
+    await tester.pump();
+    expect(calls.last.method, 'stop');
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('rotation and stronger RSSI update different output parameters', (

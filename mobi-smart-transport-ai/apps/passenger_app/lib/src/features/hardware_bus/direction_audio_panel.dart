@@ -23,6 +23,8 @@ class DirectionAudioPanel extends StatefulWidget {
     this.audioScope = '',
     this.targetIsHeadRelative = false,
     this.waitForTarget = false,
+    this.allowCentralFallback = false,
+    this.directionAvailable = true,
     this.obstacles,
     this.sessionNow,
   });
@@ -37,6 +39,7 @@ class DirectionAudioPanel extends StatefulWidget {
   final String audioScope;
   final bool targetIsHeadRelative;
   final bool waitForTarget;
+  final bool allowCentralFallback, directionAvailable;
 
   /// Optional producer snapshot; no detector or synthetic input is created here.
   final ObstacleCueSnapshot? obstacles;
@@ -59,7 +62,11 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   final _listenDuration = Stopwatch();
   bool _reverse = false, _disposed = false;
   final bool _proximity = true;
-  double get _objectAngle => widget.busAngle;
+  bool get _centralFallback =>
+      widget.allowCentralFallback &&
+      (!widget.directionAvailable || !_sensorReady);
+  bool get _audioInputReady => _centralFallback ? _beaconFresh : _sensorReady;
+  double get _objectAngle => _centralFallback ? 0 : widget.busAngle;
   final _directionTracker = DirectionCueTracker();
   int _generation = 0;
   String _message = '정면을 보고 위의 기준각 버튼을 누른 뒤 시작하세요.';
@@ -82,22 +89,27 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       widget.reference!.isFinite;
   Duration get _now => widget.sessionNow?.call() ?? _clock.elapsed;
   bool get _externalWarning => _controller.active?.object.obstacleRisk != null;
-  String get _playingMessage => _externalWarning
-      ? '장애물 공간 경고음 · 센서 방향 보정 중'
-      : _manualWarning
-          ? '예시 경고음 재생 중'
-          : '실제 비콘 간격 · 센서 방향 보정 중';
+  String get _playingMessage => _centralFallback
+      ? '비콘 근접음 · 방향 미확인 · 중앙 출력'
+      : _externalWarning
+          ? '장애물 공간 경고음 · 센서 방향 보정 중'
+          : _manualWarning
+              ? '예시 경고음 재생 중'
+              : '실제 비콘 간격 · 센서 방향 보정 중';
   CueSelection? get _preview {
     final now = _now;
     return CueController()
         .tick(
           now: now,
           context: CueContext.walking,
-          headYaw: widget.targetIsHeadRelative ? 0 : widget.z ?? double.nan,
-          reference:
-              widget.targetIsHeadRelative ? 0 : widget.reference ?? double.nan,
+          headYaw: _centralFallback || widget.targetIsHeadRelative
+              ? 0
+              : widget.z ?? double.nan,
+          reference: _centralFallback || widget.targetIsHeadRelative
+              ? 0
+              : widget.reference ?? double.nan,
           reverse: widget.targetIsHeadRelative ? false : _reverse,
-          inputReady: _sensorReady,
+          inputReady: _audioInputReady,
           objects: _objects(now),
         )
         .selection;
@@ -108,12 +120,14 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   int get _interval => _proximity && _beaconFresh
       ? beaconToneIntervalMs(widget.beaconRssi!)
       : 1000;
-  DirectionPan? get _rawPan => _sensorReady
-      ? DirectionPan.fromZ(widget.targetIsHeadRelative ? 0 : widget.z!,
-          widget.targetIsHeadRelative ? 0 : widget.reference!,
-          reverse: widget.targetIsHeadRelative ? false : _reverse,
-          objectAngle: _objectAngle)
-      : null;
+  DirectionPan? get _rawPan => _centralFallback
+      ? DirectionPan.fromZ(0, 0, objectAngle: 0)
+      : _sensorReady
+          ? DirectionPan.fromZ(widget.targetIsHeadRelative ? 0 : widget.z!,
+              widget.targetIsHeadRelative ? 0 : widget.reference!,
+              reverse: widget.targetIsHeadRelative ? false : _reverse,
+              objectAngle: _objectAngle)
+          : null;
   bool get _warningBehind => _manualWarning && _rawPan?.supported == false;
   DirectionPan? get _pan {
     final raw = _rawPan;
@@ -140,6 +154,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         widget.sensorAgeMs,
         _proximity ? _beaconAge : -1,
         _interval,
+        sensorRequired: !_centralFallback,
       ),
     );
     _driver = CueOutputDriver(_output);
@@ -154,11 +169,14 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     return _controller.tick(
       now: now,
       context: CueContext.walking,
-      headYaw: widget.targetIsHeadRelative ? 0 : widget.z ?? double.nan,
-      reference:
-          widget.targetIsHeadRelative ? 0 : widget.reference ?? double.nan,
+      headYaw: _centralFallback || widget.targetIsHeadRelative
+          ? 0
+          : widget.z ?? double.nan,
+      reference: _centralFallback || widget.targetIsHeadRelative
+          ? 0
+          : widget.reference ?? double.nan,
       reverse: widget.targetIsHeadRelative ? false : _reverse,
-      inputReady: _sensorReady,
+      inputReady: _audioInputReady,
       objects: _objects(now),
     );
   }
@@ -349,7 +367,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   void _trace(String event) {
     debugPrint(
-        'MOBI_AUDIO_STATE event=$event waiting=$_waiting playing=$_playing sensorAgeMs=${widget.sensorAgeMs} sensorReady=$_sensorReady beaconAgeMs=$_beaconAge beaconFresh=$_beaconFresh targetReady=$_ready reference=${widget.reference} scope=${widget.audioScope} message=$_message');
+        'MOBI_AUDIO_STATE event=$event waiting=$_waiting playing=$_playing sensorAgeMs=${widget.sensorAgeMs} sensorReady=$_sensorReady centralFallback=$_centralFallback beaconAgeMs=$_beaconAge beaconFresh=$_beaconFresh targetReady=$_ready reference=${widget.reference} scope=${widget.audioScope} message=$_message');
   }
 
   @override
@@ -364,7 +382,8 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       unawaited(_stop('목표 또는 시험 세션이 바뀌어 소리 대기를 취소했습니다.'));
     } else if ((_playing || _starting) &&
         (!_ready ||
-            oldWidget.reference != widget.reference ||
+            (!widget.allowCentralFallback &&
+                oldWidget.reference != widget.reference) ||
             (!_externalWarning && scopeChanged))) {
       final wait = widget.waitForTarget &&
           !scopeChanged &&

@@ -21,6 +21,7 @@ class ToneTestEngine(context: Context) {
     private var startedAt = 0L
     private var updatedAt = 0L
     private var sensorAt = 0L
+    private var sensorRequired = true
     private var beaconAt = 0L
     private data class RenderState(val intervalMs: Int, val pattern: String, val azimuth: Double?)
     @Volatile private var renderState = RenderState(1000, "target", null)
@@ -39,7 +40,7 @@ class ToneTestEngine(context: Context) {
             val now = SystemClock.elapsedRealtime()
             when {
                 now - startedAt >= 300000 -> stop("5분 안내 종료")
-                now - updatedAt > 1200 || now - sensorAt > 1200 -> stop("센서 수신 지연으로 중지")
+                now - updatedAt > 1200 || (sensorRequired && now - sensorAt > 1200) -> stop("센서 수신 지연으로 중지")
                 beaconAt != 0L && now - beaconAt >= 3000 -> stop("기준 비콘 수신이 끊겨 중지")
                 else -> applyRoute()
             }
@@ -53,19 +54,21 @@ class ToneTestEngine(context: Context) {
         AudioDeviceInfo.TYPE_USB_HEADSET
     )
 
-    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double?) {
+    private fun validate(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double?, requiresSensor: Boolean) {
         require(azimuth == null || (azimuth.isFinite() && azimuth in -180.0..180.0 && patternName == "warning"))
         require(azimuth == null || interval >= 250)
         require(patternName == "target" || patternName == "warning") { "잘못된 소리 패턴" }
         require(l.isFinite() && r.isFinite() && l in 0.0..1.0 && r in 0.0..1.0)
-        require(age in 0..999) { "새 센서 각도를 수신한 뒤 시작해주세요." }
+        require(!requiresSensor || age in 0..999) { "새 센서 각도를 수신한 뒤 시작해주세요." }
+        require(requiresSensor || (beaconAge in 0..2999 && azimuth == null && kotlin.math.abs(l-r) < 0.000001)) { "중앙 근접음에는 최신 비콘이 필요합니다." }
         require(interval in 220..1400) { "잘못된 테스트음 간격" }
         require(beaconAge == -1 || beaconAge in 0..2999) { "기준 비콘을 다시 스캔해주세요." }
     }
 
-    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null): Map<String, Any> {
+    fun start(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null, requiresSensor: Boolean = true): Map<String, Any> {
         stop("새 테스트 준비")
-        validate(l, r, age, interval, beaconAge, patternName, azimuth)
+        validate(l, r, age, interval, beaconAge, patternName, azimuth, requiresSensor)
+            sensorRequired = requiresSensor
         if (azimuth != null) warningBank // Fail before acquiring focus if data is missing.
         val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { isHeadphone(it) }
         val output = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
@@ -168,10 +171,11 @@ class ToneTestEngine(context: Context) {
         }, "MobiDiagnosticTone").apply { isDaemon = true; start() }
     }
 
-    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null): Map<String, Any> {
+    fun update(l: Double, r: Double, age: Int, interval: Int, beaconAge: Int, patternName: String, azimuth: Double? = null, requiresSensor: Boolean = true): Map<String, Any> {
         if (track == null) return state()
         try {
-            validate(l, r, age, interval, beaconAge, patternName, azimuth)
+            validate(l, r, age, interval, beaconAge, patternName, azimuth, requiresSensor)
+            sensorRequired = requiresSensor
             left = l.toFloat()
             right = r.toFloat()
             renderState = RenderState(interval, patternName, azimuth)

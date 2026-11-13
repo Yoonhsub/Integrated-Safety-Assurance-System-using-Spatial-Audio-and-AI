@@ -252,9 +252,9 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       FilledButton(onPressed: _calibrate, child: const Text('머리·카메라 동일 정면 설정')),
       Text(_tracker.calibrated ? '정면 기준: 설정 완료' : '정면 기준: 설정 필요'),
       Text(
-          '방향 상태: ${angle == null ? "중지 · ${_tracker.reason}" : "문 상대각 ${angle.toStringAsFixed(1)}°"}'),
+          '방향 상태: ${angle == null ? "방향 미확인 · 중앙 근접음 · ${_tracker.reason}" : "문 상대각 ${angle.toStringAsFixed(1)}°"}'),
       const Text(
-          '카메라 정보에 의한 각도 근사이며 정확도 검증이 아닙니다. 문·휴대폰 방향·머리 센서·목표 비콘 중 하나라도 오래되면 재생을 중지하며 수동 재시작이 필요합니다.'),
+          '비콘 신호가 있으면 기본 근접음을 냅니다. 카메라·휴대폰·머리 방향을 확인할 수 없으면 중앙 출력으로 전환합니다. 목표 비콘 신호 상실·이어폰 해제 시에는 중지합니다.'),
       DirectionAudioPanel(
           z: head.filteredYaw,
           reference: head.referenceYaw,
@@ -264,8 +264,10 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
           beaconSeenAt: widget.seenAt,
           beaconName: widget.beaconName,
           busAngle: angle ?? 0,
-          busEnabled: angle != null,
-          audioScope: '${widget.scope}/$_reference',
+          busEnabled: _beaconFresh(now),
+          allowCentralFallback: true,
+          directionAvailable: angle != null,
+          audioScope: widget.scope,
           targetIsHeadRelative: true,
           waitForTarget: true),
       const SizedBox(height: 12),
