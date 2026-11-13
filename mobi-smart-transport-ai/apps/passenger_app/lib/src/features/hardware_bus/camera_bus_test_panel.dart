@@ -32,7 +32,8 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   Timer? _timer;
   bool _associated = false, _disposed = false;
   double? _reference;
-  String _phoneStatus = '휴대폰 방향 시작 필요';
+  String _phoneStatus = '휴대폰 방향 자동 측정 준비 중';
+  Future<void> _headingStopping = Future<void>.value();
   double? _phoneDegrees;
   int _session = 0;
   final _fov = TextEditingController(text: '60');
@@ -51,7 +52,6 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
         (_head.referenceYaw != _reference ||
             _head.status != HeadTrackingStatus.ready)) {
       _tracker.reset();
-      _session++;
     }
     _refresh();
   }
@@ -63,11 +63,15 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
     sharedHeadTrackingState.addListener(_headChanged);
     _timer =
         Timer.periodic(const Duration(milliseconds: 100), (_) => _refresh());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_disposed) unawaited(_startHeading());
+    });
   }
 
   Future<void> _startHeading() async {
     final generation = ++_session;
     _tracker.reset();
+    await _headingStopping;
     await _heading?.cancel();
     if (_disposed || generation != _session) return;
     _heading = _headingChannel.receiveBroadcastStream().listen((dynamic value) {
@@ -143,9 +147,6 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
     if (old.scope != widget.scope) {
       _tracker.reset();
       _associated = false;
-      _session++;
-      unawaited(_heading?.cancel());
-      _heading = null;
     }
   }
 
@@ -154,9 +155,15 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
     if (state != AppLifecycleState.resumed) {
       _tracker.reset();
       _session++;
-      unawaited(_heading?.cancel());
+      _headingStopping = Future.wait<void>([
+        _headingStopping,
+        if (_heading != null) _heading!.cancel(),
+      ]).then((_) {});
       _heading = null;
+      _phoneStatus = '화면 비활성화 · 휴대폰 방향 측정 중지';
       _refresh();
+    } else if (!_disposed) {
+      unawaited(_startHeading());
     }
   }
 
@@ -177,7 +184,6 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       const Text(
           '머리: WT901 / 손: 후면 카메라. 통제된 장소의 단일 버스·단일 문만 시험합니다. 실측 카메라·센서·BLE, 목표 연결은 수동입니다. 실제 탑승 안내가 아닙니다.'),
       WitSensorPanel(stateOnly: true, ensureReady: widget.ensureReady),
-      OutlinedButton(onPressed: _startHeading, child: const Text('휴대폰 방향 시작')),
       Text('$_phoneStatus · ${_phoneDegrees?.toStringAsFixed(1) ?? "-"}°'),
       TextField(
           controller: _fov,
