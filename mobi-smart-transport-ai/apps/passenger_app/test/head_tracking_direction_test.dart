@@ -208,25 +208,177 @@ void main() {
     expect(state.snapshot.referenceYaw, isNull);
   });
 
-  test('calibrateZeroReferenceFromCameraAngle sets reference yaw correctly', () {
-    final state = HeadTrackingState()
-      ..publish(ready(10)); // filteredYaw = 10 deg
+  const headMount = HeadTrackingMountCalibration(
+    mount: HeadTrackingCameraMount.headMountedCamera,
+    axesAlignmentVerified: true,
+    cameraAxisOffsetDegrees: 5,
+  );
+  double? calibrate(
+    HeadTrackingState state,
+    double angle, {
+    HeadTrackingMountCalibration mount = headMount,
+    double fov = 90,
+    DateTime? capturedAt,
+  }) => state.calibrateZeroReferenceFromCameraAngle(
+    angle,
+    calibration: mount,
+    horizontalFovDegrees: fov,
+    cameraCapturedAt: capturedAt ?? state.snapshot.receivedAt ?? now,
+    now: now,
+  );
 
-    // Camera detects door at +15 deg (right).
-    // Target world yaw = 10 + 15 = 25 deg.
-    final locked = state.calibrateZeroReferenceFromCameraAngle(15.0);
-    expect(locked, 25.0);
-    expect(state.snapshot.referenceYaw, 25.0);
-    expect(state.snapshot.message, contains('+15.0°'));
+  test(
+    'camera calibration preserves sample time and applies measured axes',
+    () {
+      final state = HeadTrackingState()..publish(ready(10));
+      final original = state.snapshot;
+      expect(calibrate(state, 15), 30); // yaw 10 + optical 15 + offset 5
+      expect(state.snapshot.receivedAt, original.receivedAt);
+      expect(state.snapshot.status, original.status);
+      expect(state.snapshot.filteredYaw, original.filteredYaw);
+      expect(state.snapshot.rawYaw, original.rawYaw);
+      expect(state.snapshot.usable(now), isTrue);
+      expect(
+        state.snapshot.usable(now.add(const Duration(seconds: 2))),
+        isFalse,
+      );
+      expect(relativeAngle(30, state.snapshot.referenceYaw!), 0);
+      // Head-mounted rendering must not subtract yaw a second time.
+      expect(
+        headTrackedAngleForMount(
+          cameraAngle: 15,
+          sensor: state.snapshot,
+          now: now,
+          calibration: headMount,
+        ),
+        20,
+      );
+      state.dispose();
+    },
+  );
 
-    // Before head turn (filteredYaw = 10 deg):
-    // headRight relative to reference (25 deg) = 10 - 25 = -15 deg (head is looking 15 deg left of target).
-    final headRight = relativeAngle(state.snapshot.filteredYaw!, state.snapshot.referenceYaw!);
-    expect(headRight, -15.0);
-
-    // When head rotates to face target (filteredYaw = 25 deg):
-    final headFacingTarget = relativeAngle(25.0, state.snapshot.referenceYaw!);
-    expect(headFacingTarget, 0.0);
+  for (final status in HeadTrackingStatus.values.where(
+    (s) => s != HeadTrackingStatus.ready,
+  )) {
+    test('camera calibration rejects $status without publishing', () {
+      final state = HeadTrackingState()
+        ..publish(
+          HeadTrackingSnapshot(
+            status: status,
+            rawYaw: 10,
+            filteredYaw: 10,
+            referenceYaw: 0,
+            receivedAt: now,
+          ),
+        );
+      final original = state.snapshot;
+      var notifications = 0;
+      state.addListener(() => notifications++);
+      expect(calibrate(state, 15), isNull);
+      expect(identical(state.snapshot, original), isTrue);
+      expect(notifications, 0);
+      state.dispose();
+    });
+  }
+  for (final age in [
+    const Duration(seconds: 10),
+    const Duration(seconds: 2),
+    const Duration(milliseconds: -1),
+  ]) {
+    test('camera calibration rejects expired or future sample $age', () {
+      final state = HeadTrackingState()
+        ..publish(
+          HeadTrackingSnapshot(
+            status: HeadTrackingStatus.ready,
+            rawYaw: 10,
+            filteredYaw: 10,
+            referenceYaw: 0,
+            receivedAt: now.subtract(age),
+          ),
+        );
+      final original = state.snapshot;
+      expect(calibrate(state, 15), isNull);
+      expect(identical(state.snapshot, original), isTrue);
+      expect(state.snapshot.usable(now), isFalse);
+      state.dispose();
+    });
+  }
+  test('camera calibration rejects missing time and invalid yaw/reference', () {
+    for (final sample in [
+      const HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        filteredYaw: 10,
+        referenceYaw: 0,
+      ),
+      HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        referenceYaw: 0,
+        receivedAt: now,
+      ),
+      HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        filteredYaw: double.nan,
+        referenceYaw: 0,
+        receivedAt: now,
+      ),
+      HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        filteredYaw: 10,
+        receivedAt: now,
+      ),
+    ]) {
+      final state = HeadTrackingState()..publish(sample);
+      expect(calibrate(state, 15), isNull);
+      expect(identical(state.snapshot, sample), isTrue);
+      state.dispose();
+    }
+  });
+  test('camera calibration rejects unverified and incompatible mounts', () {
+    final state = HeadTrackingState()..publish(ready(10));
+    final original = state.snapshot;
+    for (final mount in [
+      const HeadTrackingMountCalibration(),
+      fixed(),
+      const HeadTrackingMountCalibration(
+        mount: HeadTrackingCameraMount.handheldPhone,
+        axesAlignmentVerified: true,
+        cameraAxisOffsetDegrees: 0,
+      ),
+      const HeadTrackingMountCalibration(
+        mount: HeadTrackingCameraMount.headMountedCamera,
+        cameraAxisOffsetDegrees: 0,
+      ),
+      const HeadTrackingMountCalibration(
+        mount: HeadTrackingCameraMount.headMountedCamera,
+        axesAlignmentVerified: true,
+      ),
+    ]) {
+      expect(calibrate(state, 15, mount: mount), isNull);
+      expect(identical(state.snapshot, original), isTrue);
+    }
+    state.dispose();
+  });
+  test('camera calibration rejects invalid FOV, angles and unpaired frame', () {
+    final state = HeadTrackingState()..publish(ready(10));
+    final original = state.snapshot;
+    for (final fov in [0.0, 180.0, double.nan, double.infinity]) {
+      expect(calibrate(state, 15, fov: fov), isNull);
+    }
+    for (final angle in [46.0, -46.0, double.nan, double.infinity]) {
+      expect(calibrate(state, angle), isNull);
+    }
+    expect(calibrate(state, 15, capturedAt: now), isNull);
+    expect(identical(state.snapshot, original), isTrue);
+    state.dispose();
+  });
+  test('camera reference wraps without extending sensor lifetime', () {
+    final state = HeadTrackingState()..publish(ready(170));
+    final timestamp = state.snapshot.receivedAt;
+    expect(calibrate(state, 15), -170);
+    expect(calibrate(state, 15), -170);
+    expect(state.snapshot.receivedAt, timestamp);
+    state.dispose();
   });
 }
 

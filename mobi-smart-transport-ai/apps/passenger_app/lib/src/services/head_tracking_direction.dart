@@ -94,30 +94,47 @@ class HeadTrackingState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sets the zero-reference yaw using an optical camera target angle.
+  /// Locks a target reference only for a verified head-mounted camera.
+  /// [cameraCapturedAt] must identify the same timestamp as the paired sensor
+  /// sample. Callers must supply a time-aligned sample, not the latest unrelated
+  /// BLE packet. No live producer currently calls this API.
   ///
-  /// When a vision model detects a target (such as `bus_door`) at [cameraAngle],
-  /// the target's absolute azimuth in the world frame is:
-  /// `worldTargetYaw = currentRawYaw + cameraAngle`.
-  ///
-  /// Locking this as [referenceYaw] anchors the target at 0° in the user's
-  /// relative spatial audio frame, allowing continuous HRTF tracking as the
-  /// user rotates their head. Returns the newly locked reference yaw, or null
-  /// if the sensor is not currently reporting usable yaw data.
-  double? calibrateZeroReferenceFromCameraAngle(double cameraAngle) {
-    if (!cameraAngle.isFinite) return null;
-    final currentRaw = _snapshot.filteredYaw ?? _snapshot.rawYaw;
-    if (currentRaw == null || !currentRaw.isFinite) return null;
-
-    final newRef = relativeAngle(currentRaw, -cameraAngle);
+  /// Positive camera angle and measured axis offset point right. Fixed-world
+  /// cameras use a different reference frame and must not use this formula.
+  /// Updating calibration never refreshes sensor reception time or status.
+  double? calibrateZeroReferenceFromCameraAngle(
+    double cameraAngle, {
+    required HeadTrackingMountCalibration calibration,
+    required double horizontalFovDegrees,
+    required DateTime cameraCapturedAt,
+    DateTime? now,
+  }) {
+    final checkedAt = (now ?? DateTime.now()).toUtc();
+    final sensor = _snapshot;
+    if (!sensor.usable(checkedAt) ||
+        !calibration.verified ||
+        calibration.mount != HeadTrackingCameraMount.headMountedCamera ||
+        !horizontalFovDegrees.isFinite ||
+        horizontalFovDegrees <= 0 ||
+        horizontalFovDegrees >= 180 ||
+        !cameraAngle.isFinite ||
+        cameraAngle.abs() > horizontalFovDegrees / 2 ||
+        !cameraCapturedAt.isAtSameMomentAs(sensor.receivedAt!)) {
+      return null;
+    }
+    final alignedAngle = relativeAngle(
+      cameraAngle,
+      -(calibration.cameraAxisOffsetDegrees!),
+    );
+    final newRef = relativeAngle(sensor.filteredYaw!, -alignedAngle);
     publish(
       HeadTrackingSnapshot(
-        status: _snapshot.status,
-        rawYaw: _snapshot.rawYaw,
-        filteredYaw: _snapshot.filteredYaw,
+        status: sensor.status,
+        rawYaw: sensor.rawYaw,
+        filteredYaw: sensor.filteredYaw,
         referenceYaw: newRef,
-        receivedAt: DateTime.now().toUtc(),
-        message: '카메라 비전 객체 각도(${cameraAngle >= 0 ? '+' : ''}${cameraAngle.toStringAsFixed(1)}°) 기준 영점 보정 완료',
+        receivedAt: sensor.receivedAt,
+        message: '검증된 머리 장착 카메라 기준 영점 보정 완료',
       ),
     );
     return newRef;
