@@ -81,3 +81,11 @@ main 소스 변경 없이 기존 `lib/local_android_camera_backend_main.dart`를
 | PHOTO-BUS-MIX | 기존 main 앱·이어폰 | 휴대폰 카메라 실측 / 노트북 버스 사진 | 사진을 좌·중앙·우로 이동 | 방향 일치, 대상 명칭 안정적 | 사용자 방향 전부 성공 보고. 대상은 bus/bus_door로 번갈아 표시됨 | 방향 PASS / 대상 안정성 FAIL | 기존 무음 사례와 함께 선택 정책 후속 점검 |
 
 증빙은 PC `outputs/isolated-camera-20261113-124151/`의 trace.jsonl, verification-summary.json, camera-ui.xml, control/result.json에 보관했다. 단기 자격 파일과 APK는 Git에 포함하지 않는다. 전체 Backend 완료로 집계하지 않는다.
+
+### 격리 Backend 기록 재생 보완 검증
+
+| 테스트 ID | 장비·환경 | 입력(실측/모의) | 재현 절차 | 기대 결과 | 실제 결과·증빙 | 통과/실패/미실행 | 다음 작업 |
+|---|---|---|---|---|---|---|---|
+| ISO-REC-DUP-01 | 기존 main FastAPI TestClient, fake auth/memory | 직전 Android 실측 탐지 기록 재생 + 새 테스트 세션·시각·모델 메타데이터 구성 | 같은 payload 2회 전송 → Ledger 전후 비교 → 일반/proofOnly 조회 → 같은 eventId의 confidence 변경 재전송 | 동일 receipt, Ledger 1개, 원본 탐지 보존, 충돌 거부 | pytest 1 passed(2.12초). 두 전송 202와 receipt 완전 동일, Ledger 이벤트 1개 및 전체 데이터 불변. 일반/proofOnly 각각 200, frameId/class/confidence/bbox 동일, guidanceEligible=false, proofOnly observations=[] 및 bindings 일치. 변경 payload 409, Ledger 불변. outputs/isolated-camera-20261113-124151/recorded-duplicate-evidence.json | PASS(기록 재생·격리 저장소 범위) | 휴대폰 실제 송신 원문 그대로의 재전송 및 실제 Firebase 영속 저장 검증은 미실행 |
+
+이 검증은 main 소스를 수정하지 않고 작업 폴더 outputs의 임시 테스트에서 기존 인증 경계 fixture와 API를 재사용했다. 실제 휴대폰 원문을 가로채 재전송한 검증과 구분한다. 이전 ISO-CAM-03의 실기기 원문 재전송 미실행 상태는 유지한다.
