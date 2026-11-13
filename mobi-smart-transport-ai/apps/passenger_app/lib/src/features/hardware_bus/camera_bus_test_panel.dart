@@ -36,7 +36,11 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   Future<void> _headingStopping = Future<void>.value();
   double? _phoneDegrees;
   int _session = 0;
-  final _fov = TextEditingController(text: '60');
+  static const _geometryChannel = MethodChannel('mobi/camera_geometry');
+  String? _geometryKey;
+  int _geometryGeneration = 0;
+  double? _cameraFov;
+  String _geometryStatus = '카메라 정보 자동 확인 대기';
   HeadTrackingSnapshot get _head => sharedHeadTrackingState.snapshot;
   bool _beaconFresh(DateTime now) =>
       widget.rssi != null &&
@@ -103,16 +107,51 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
     _refresh();
   }
 
+  void _readGeometry(String id, int width, int height, int rotation) {
+    final key = '$id/$width/$height/$rotation';
+    if (_disposed || key == _geometryKey) return;
+    _geometryKey = key;
+    _cameraFov = null;
+    _tracker.reset();
+    final generation = ++_geometryGeneration;
+    _geometryStatus = '카메라 정보 자동 확인 중';
+    unawaited(() async {
+      try {
+        final result = await _geometryChannel.invokeMapMethod<String, dynamic>(
+            'read', {
+          'cameraId': id,
+          'width': width,
+          'height': height,
+          'rotation': rotation
+        });
+        final value = (result?['horizontalFovDegrees'] as num?)?.toDouble();
+        if (_disposed || generation != _geometryGeneration) return;
+        if (value == null || !value.isFinite || value < 20 || value > 130) {
+          throw const FormatException();
+        }
+        _cameraFov = value;
+        _tracker.fov = value;
+        _geometryStatus = '카메라 정보 자동 적용 완료 · 기본 줌 사용';
+      } catch (_) {
+        if (_disposed || generation != _geometryGeneration) return;
+        _cameraFov = null;
+        _tracker.reset();
+        _geometryStatus = '카메라 정보 확인 불가 · 방향 시험 중지';
+      }
+      _refresh();
+    }());
+  }
+
   void _calibrate() {
     final now = DateTime.now().toUtc();
-    final fov = double.tryParse(_fov.text);
+    final fov = _cameraFov;
     if (!_associated ||
         !_head.usable(now, maximumAge: const Duration(seconds: 1)) ||
         fov == null ||
         fov < 20 ||
         fov > 130) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('단일 대상 확인·센서 정면 설정·화각 20~130° 입력이 필요합니다.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('단일 대상 확인·센서 정면 설정·카메라 시작이 필요합니다.')));
       return;
     }
     _tracker.fov = fov;
@@ -137,6 +176,11 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
   }
 
   Future<void> _cameraStopped() async {
+    _geometryGeneration++;
+    _geometryKey = null;
+    _cameraFov = null;
+    _geometryStatus = '카메라 정보 자동 확인 대기';
+    _tracker.reset();
     _tracker.clear('카메라 중지 · 방향 안내 중지');
     _refresh();
   }
@@ -185,15 +229,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
           '머리: WT901 / 손: 후면 카메라. 통제된 장소의 단일 버스·단일 문만 시험합니다. 실측 카메라·센서·BLE, 목표 연결은 수동입니다. 실제 탑승 안내가 아닙니다.'),
       WitSensorPanel(stateOnly: true, ensureReady: widget.ensureReady),
       Text('$_phoneStatus · ${_phoneDegrees?.toStringAsFixed(1) ?? "-"}°'),
-      TextField(
-          controller: _fov,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-              labelText: '현재 영상 수평 화각(°) · 기본 60은 시험용 가정값'),
-          onChanged: (_) {
-            _tracker.reset();
-            _refresh();
-          }),
+      Text(_geometryStatus),
       CheckboxListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('화면의 단일 버스 문을 ${widget.beaconName} 시험 대상으로 연결'),
@@ -222,7 +258,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       Text(
           '방향 상태: ${angle == null ? "중지 · ${_tracker.reason}" : "문 상대각 ${angle.toStringAsFixed(1)}°"}'),
       const Text(
-          '기본 화각은 근사값이므로 각도 정확도 검증이 아닙니다. 문·휴대폰 방향·머리 센서·목표 비콘 중 하나라도 오래되면 재생을 중지하며 수동 재시작이 필요합니다.'),
+          '카메라 정보에 의한 각도 근사이며 정확도 검증이 아닙니다. 문·휴대폰 방향·머리 센서·목표 비콘 중 하나라도 오래되면 재생을 중지하며 수동 재시작이 필요합니다.'),
       DirectionAudioPanel(
           z: head.filteredYaw,
           reference: head.referenceYaw,
@@ -242,6 +278,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
           child: LocalVisionPage(
               bundledModel: true,
               localConsumer: true,
+              onCameraGeometry: _readGeometry,
               onResult: _observe,
               onStop: _cameraStopped)),
     ]);
@@ -254,7 +291,6 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
     sharedHeadTrackingState.removeListener(_headChanged);
     _timer?.cancel();
     unawaited(_heading?.cancel());
-    _fov.dispose();
     super.dispose();
   }
 }

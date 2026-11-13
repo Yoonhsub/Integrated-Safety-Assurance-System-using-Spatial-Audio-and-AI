@@ -32,7 +32,7 @@ void main() {
           10,
           20);
   CameraBusTargetTracker setup() {
-    final a = CameraBusTargetTracker();
+    final a = CameraBusTargetTracker()..fov = 60;
     a.addPhone(CameraHeadingSample(10, t));
     expect(a.calibrate(100, t), true);
     return a;
@@ -41,6 +41,11 @@ void main() {
   double? angle(CameraBusTargetTracker a, DateTime now,
           {double yaw = 100, bool head = true, bool beacon = true}) =>
       a.angle(now, headYaw: yaw, headFresh: head, beaconFresh: beacon);
+  test('missing camera geometry cannot calibrate', () {
+    final a = CameraBusTargetTracker();
+    a.addPhone(CameraHeadingSample(0, t));
+    expect(a.calibrate(0, t), false);
+  });
   test('camera target left center right moves sound with stationary head', () {
     final a = setup();
     a.observe(frame(t, center: .2), t);

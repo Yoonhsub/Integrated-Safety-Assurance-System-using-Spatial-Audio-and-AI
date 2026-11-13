@@ -33,6 +33,7 @@ class LocalVisionPage extends StatefulWidget {
       this.remoteSessionId,
       this.bundledModel = false,
       this.localConsumer = false,
+      this.onCameraGeometry,
       this.previewPriority,
       this.previewEngine,
       this.previewScope = 'camera-preview'});
@@ -48,6 +49,8 @@ class LocalVisionPage extends StatefulWidget {
   final String? remoteSessionId;
   final bool bundledModel;
   final bool localConsumer;
+  final void Function(String cameraId, int width, int height, int rotation)?
+      onCameraGeometry;
   final SpeechPriorityCoordinator? previewPriority;
   final SpatialVerificationEngine? previewEngine;
   final String previewScope;
@@ -288,6 +291,12 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       DeviceOrientation.portraitDown => 180,
       DeviceOrientation.landscapeRight => 270,
     };
+    widget.onCameraGeometry?.call(
+        description.name,
+        image.width,
+        image.height,
+        frameRotation(description.sensorOrientation, degrees,
+            description.lensDirection == CameraLensDirection.front));
     final format =
         image.format.group == ImageFormatGroup.nv21 || image.format.raw == 17
             ? 'nv21'

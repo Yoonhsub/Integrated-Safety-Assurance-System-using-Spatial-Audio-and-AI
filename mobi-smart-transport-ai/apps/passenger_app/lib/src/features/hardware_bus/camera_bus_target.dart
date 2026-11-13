@@ -22,7 +22,7 @@ class CameraBusTargetTracker {
   double? _phoneZero, _headZero, _worldBearing;
   DateTime? _capturedAt;
   String? _frameId;
-  double fov = 60;
+  double fov = double.nan;
   bool reverseHead = false;
   String reason = '동일 정면 기준 설정 필요';
   bool get calibrated => _phoneZero != null && _headZero != null;
