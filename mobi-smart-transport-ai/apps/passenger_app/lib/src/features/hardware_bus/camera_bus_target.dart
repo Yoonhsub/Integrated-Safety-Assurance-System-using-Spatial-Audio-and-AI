@@ -79,11 +79,11 @@ class CameraBusTargetTracker {
     final doors = frame.boxes
         .where((b) => b.classId == 'bus_door' && b.confidence >= .55)
         .toList();
-    if (buses.length != 1 || doors.length != 1) {
-      clear('버스 1대·문 1개가 함께 보여야 합니다');
+    if (buses.length != 1) {
+      clear('버스 1대를 확인해야 합니다');
       return;
     }
-    final bus = buses.single, door = doors.single;
+    final bus = buses.single;
     bool valid(LocalBox b) =>
         [b.confidence, b.x, b.y, b.w, b.h].every((v) => v.isFinite) &&
         b.confidence <= 1 &&
@@ -93,19 +93,22 @@ class CameraBusTargetTracker {
         b.h > 0 &&
         b.x + b.w <= 1.000000001 &&
         b.y + b.h <= 1.000000001;
-    if (!valid(bus) || !valid(door)) {
-      clear('잘못된 검출 박스');
+    if (!valid(bus)) {
+      clear('잘못된 버스 박스');
       return;
     }
-    final overlap = math.max(
-            0.0,
-            math.min(bus.x + bus.w, door.x + door.w) -
-                math.max(bus.x, door.x)) *
-        math.max(0.0,
-            math.min(bus.y + bus.h, door.y + door.h) - math.max(bus.y, door.y));
-    if (overlap / (door.w * door.h) < .7) {
-      clear('버스 내부 문 확인 불가');
-      return;
+    LocalBox target = bus;
+    if (doors.length == 1 && valid(doors.single)) {
+      final door = doors.single;
+      final overlap = math.max(
+              0.0,
+              math.min(bus.x + bus.w, door.x + door.w) -
+                  math.max(bus.x, door.x)) *
+          math.max(
+              0.0,
+              math.min(bus.y + bus.h, door.y + door.h) -
+                  math.max(bus.y, door.y));
+      if (overlap / (door.w * door.h) >= .7) target = door;
     }
     final samples = _phone
         .where((p) =>
@@ -122,14 +125,16 @@ class CameraBusTargetTracker {
       clear('촬영 시각의 휴대폰 방향 없음');
       return;
     }
-    final cameraAngle = math.atan(
-            (2 * (door.x + door.w / 2) - 1) * math.tan(fov * math.pi / 360)) *
+    final cameraAngle = math.atan((2 * (target.x + target.w / 2) - 1) *
+            math.tan(fov * math.pi / 360)) *
         180 /
         math.pi;
     _worldBearing =
         relativeAngle(samples.first.degrees, _phoneZero!) + cameraAngle;
     _capturedAt = at;
-    reason = '버스 문 실측 추적 중 · 수동 비콘 연결';
+    reason = target.classId == 'bus_door'
+        ? '버스 문 실측 추적 중 · 수동 비콘 연결'
+        : '버스 중심 추적 중 · 문 위치 안내 아님';
   }
 
   double? angle(DateTime now,

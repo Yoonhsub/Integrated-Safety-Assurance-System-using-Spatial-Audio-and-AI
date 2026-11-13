@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
+import android.util.Log
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.sin
@@ -26,10 +27,12 @@ class ToneTestEngine(context: Context) {
     private val warningBank by lazy { SpatialWarningBank(context.assets.open("hrtf/warning_bank.bin")) }
     private var left = 0.0f
     private var right = 0.0f
+    private var appliedLeft = Float.NaN
+    private var appliedRight = Float.NaN
     private var reason = "대기 중"
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
-    private val routeListener = AudioRouting.OnRoutingChangedListener { applyRoute() }
+    private val routeListener = AudioRouting.OnRoutingChangedListener { applyRoute(force = true) }
     private val watchdog = object : Runnable {
         override fun run() {
             if (track == null) return
@@ -87,6 +90,8 @@ class ToneTestEngine(context: Context) {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(maxOf(minBuffer, 480 * 4 * 4)).build()
             track = audio
+            appliedLeft = Float.NaN
+            appliedRight = Float.NaN
             check(audio.state == AudioTrack.STATE_INITIALIZED) { "오디오 장치 초기화 실패" }
             check(audio.setPreferredDevice(output)) { "이어폰 출력 경로 선택 실패" }
             audio.setStereoVolume(0f, 0f)
@@ -99,6 +104,7 @@ class ToneTestEngine(context: Context) {
             beaconAt = if (beaconAge < 0) 0L else startedAt - beaconAge
             reason = "이어폰 경로 확인 중"
             audio.addOnRoutingChangedListener(routeListener, handler)
+            Log.i("MobiTone", "start beaconAgeMs=$beaconAge sensorAgeMs=$age")
             audio.play()
             startWorker(audio, rate)
             handler.post(watchdog)
@@ -180,12 +186,16 @@ class ToneTestEngine(context: Context) {
         }
     }
 
-    private fun applyRoute() {
+    private fun applyRoute(force: Boolean = false) {
         val audio = track ?: return
         val route = audio.routedDevice
         if (route != null && isHeadphone(route)) {
-            if (renderState.azimuth != null) audio.setStereoVolume(1f, 1f)
-            else audio.setStereoVolume(left, right)
+            val l = if (renderState.azimuth != null) 1f else left
+            val r = if (renderState.azimuth != null) 1f else right
+            if (force || l != appliedLeft || r != appliedRight) {
+                audio.setStereoVolume(l, r)
+                appliedLeft = l; appliedRight = r
+            }
             reason = "방향/간격 테스트음 재생 중"
         } else {
             audio.setStereoVolume(0f, 0f)
@@ -203,6 +213,7 @@ class ToneTestEngine(context: Context) {
         handler.removeCallbacks(watchdog)
         workerGeneration.incrementAndGet()
         val audio = track
+        Log.i("MobiTone", "stop running=${audio != null} reason=$message")
         track = null
         reason = message
         if (audio != null) {

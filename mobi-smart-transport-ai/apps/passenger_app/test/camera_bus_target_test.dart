@@ -93,8 +93,7 @@ void main() {
     a.addPhone(CameraHeadingSample(10, t.add(const Duration(seconds: 1))));
     expect(angle(a, t.add(const Duration(seconds: 1))), isNull);
   });
-  test('no detection or ambiguous doors clears previous target immediately',
-      () {
+  test('no bus clears target; ambiguous doors use bus center', () {
     final a = setup();
     a.observe(frame(t), t);
     expect(angle(a, t), isNotNull);
@@ -111,7 +110,21 @@ void main() {
           const LocalBox('bus_door', .8, .6, .3, .08, .3)
         ]),
         next.add(const Duration(milliseconds: 20)));
-    expect(angle(a, next.add(const Duration(milliseconds: 20))), isNull);
+    expect(angle(a, next.add(const Duration(milliseconds: 20))), isNotNull);
+  });
+  test('bus-only frame produces direction but never claims door position', () {
+    final a = setup();
+    a.observe(frame(t, boxes: [const LocalBox('bus', .9, .6, .1, .3, .8)]), t);
+    expect(angle(a, t), greaterThan(0));
+    expect(a.reason, contains('문 위치 안내 아님'));
+    final next = t.add(const Duration(milliseconds: 50));
+    a.observe(
+        frame(next, id: 'multi', boxes: [
+          const LocalBox('bus', .9, .1, .1, .3, .8),
+          const LocalBox('bus', .9, .6, .1, .3, .8)
+        ]),
+        next);
+    expect(angle(a, next), isNull);
   });
   test('front camera and future frames are rejected', () {
     final a = setup();

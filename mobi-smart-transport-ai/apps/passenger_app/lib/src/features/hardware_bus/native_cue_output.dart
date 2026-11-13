@@ -7,7 +7,7 @@ class ToneInput {
 }
 
 /// Existing Android tone channel adapter. Repeated updates refresh its watchdog.
-class NativeCueOutput implements CueOutput {
+class NativeCueOutput implements CueOutput, CueSilenceOutput {
   NativeCueOutput(this.input);
   static const channel = MethodChannel('mobi.passenger/hardware-tone');
   final ToneInput Function() input;
@@ -31,6 +31,22 @@ class NativeCueOutput implements CueOutput {
     running = result?['running'] == true;
     route = result?['route'] as String? ?? '';
     reason = result?['reason'] as String? ?? '오디오 출력이 중지됐습니다.';
+    if (!running) throw StateError(reason);
+  }
+
+  @override
+  Future<void> silence() async {
+    final state = input();
+    final result = await channel.invokeMapMethod<String, dynamic>('update', {
+      'left': 0.0,
+      'right': 0.0,
+      'sensorAgeMs': state.sensorAgeMs,
+      'beaconAgeMs': state.beaconAgeMs,
+      'intervalMs': state.targetIntervalMs,
+      'pattern': 'target',
+    });
+    running = result?['running'] == true;
+    reason = result?['reason'] as String? ?? '무음 대기 출력 중지';
     if (!running) throw StateError(reason);
   }
 

@@ -10,7 +10,7 @@ enum ObstacleRisk { none, caution, danger }
 
 enum CueContext { waiting, walking, boarding, complete }
 
-enum CueAction { play, update, stop, none }
+enum CueAction { play, update, silence, stop, none }
 
 class CueObject {
   const CueObject({
@@ -248,6 +248,11 @@ abstract interface class CueOutput {
   Future<void> update(CueSelection cue);
 }
 
+/// Keeps an already opened device silent without tearing down its BT route.
+abstract interface class CueSilenceOutput {
+  Future<void> silence();
+}
+
 /// Serializes output operations. New decisions invalidate queued older work.
 /// A completed obsolete start is stopped before the newer cue can start.
 class CueOutputDriver {
@@ -265,6 +270,13 @@ class CueOutputDriver {
         if (decision.action == CueAction.stop) {
           await output.stop();
           _running = false;
+        } else if (decision.action == CueAction.silence) {
+          if (_running && output is CueSilenceOutput) {
+            await (output as CueSilenceOutput).silence();
+          } else {
+            await output.stop();
+            _running = false;
+          }
         } else if (decision.action == CueAction.play || !_running) {
           await output.stop();
           _running = false;

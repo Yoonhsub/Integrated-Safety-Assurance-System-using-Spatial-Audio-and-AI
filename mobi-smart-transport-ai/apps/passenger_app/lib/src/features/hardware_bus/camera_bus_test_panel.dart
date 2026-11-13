@@ -167,7 +167,7 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       _tracker.clear('동일 정면 설정·시험 대상 연결 확인 필요');
     }
     debugPrint(
-        'MOBI_TRIPLE frame=${value.frame.frameId} rssi=${widget.rssi} phone=$_phoneDegrees head=${_head.filteredYaw} status=${_tracker.reason}');
+        'MOBI_TRIPLE frame=${value.frame.frameId} rssi=${widget.rssi} phone=$_phoneDegrees head=${_head.filteredYaw} boxes=${value.boxes.map((b) => '${b.classId}:${b.confidence.toStringAsFixed(2)}').join(',')} status=${_tracker.reason}');
     _refresh();
   }
 
@@ -221,13 +221,13 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
       const Text('카메라·머리 센서·비콘 통합 방향 시험',
           style: TextStyle(fontWeight: FontWeight.bold)),
       const Text(
-          '머리: WT901 / 손: 후면 카메라. 통제된 장소의 단일 버스·단일 문만 시험합니다. 실측 카메라·센서·BLE, 목표 연결은 수동입니다. 실제 탑승 안내가 아닙니다.'),
+          '머리: WT901 / 손: 후면 카메라. 통제된 장소의 단일 버스를 시험하며 문이 검출되면 우선 사용합니다. 실측 카메라·센서·BLE, 목표 연결은 수동입니다. 실제 탑승 안내가 아닙니다.'),
       WitSensorPanel(stateOnly: true, ensureReady: widget.ensureReady),
       Text('$_phoneStatus · ${_phoneDegrees?.toStringAsFixed(1) ?? "-"}°'),
       Text(_geometryStatus),
       CheckboxListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text('화면의 단일 버스 문을 ${widget.beaconName} 시험 대상으로 연결'),
+          title: Text('화면의 단일 버스를 ${widget.beaconName} 시험 대상으로 연결'),
           subtitle: const Text('자동 차량 인증 아님 · 다른 버스가 들어오면 중지 후 다시 확인'),
           value: _associated,
           onChanged: (v) {

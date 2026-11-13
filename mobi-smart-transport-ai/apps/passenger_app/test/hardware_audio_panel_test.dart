@@ -87,10 +87,13 @@ void main() {
     expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(panel(enabled: false, wait: true));
     await tester.pump();
-    expect(calls.last.method, 'stop');
+    expect(calls.last.method, 'update');
+    final muted = calls.last.arguments as Map;
+    expect(muted['left'], 0.0);
+    expect(muted['right'], 0.0);
     await tester.pumpWidget(panel(wait: true));
     await tester.pump(const Duration(milliseconds: 160));
-    expect(calls.where((c) => c.method == 'start'), hasLength(2));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(panel(enabled: false, wait: true));
     await tester.pump();
     await tester.ensureVisible(find.text('소리 중지'));
@@ -98,7 +101,7 @@ void main() {
     await tester.pump();
     await tester.pumpWidget(panel(wait: true));
     await tester.pump(const Duration(milliseconds: 160));
-    expect(calls.where((c) => c.method == 'start'), hasLength(2));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('background cancels initial camera sound waiting',
@@ -121,6 +124,28 @@ void main() {
     expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(panel(wait: true, fresh: false));
     await tester.pump();
+    expect(calls.last.method, 'stop');
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
+      'muted camera route releases on stale beacon and cannot auto-resume',
+      (tester) async {
+    await tester.pumpWidget(panel(wait: true));
+    await start(tester);
+    await tester.pumpWidget(panel(wait: true, enabled: false));
+    await tester.pump();
+    expect(calls.last.method, 'update');
+    expect((calls.last.arguments as Map)['left'], 0.0);
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(panel(
+        wait: true,
+        enabled: false,
+        seen: DateTime.now().subtract(const Duration(seconds: 4))));
+    await tester.pump(const Duration(milliseconds: 160));
     expect(calls.last.method, 'stop');
     await tester.pumpWidget(panel(wait: true));
     await tester.pump(const Duration(milliseconds: 160));

@@ -221,11 +221,18 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     _message = '이어폰 출력 준비 중…';
     _refresh();
     try {
-      await _driver.apply(_decision());
+      final decision = _decision();
+      final resume =
+          widget.waitForTarget && _output.running && decision.selection != null;
+      await _driver.apply(resume
+          ? CueDecision(
+              CueAction.update, decision.selection, 'resume retained route')
+          : decision);
       if (_disposed || generation != _generation) return;
       _playing = _output.running;
       _route = _output.route;
       _message = _playingMessage;
+      _trace('start');
       if (_playing) {
         _duration
           ..reset()
@@ -240,7 +247,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   }
 
   Future<void> _sync() async {
-    if (_disposed) return;
+    if (_disposed || _syncing) return;
     if (widget.waitForTarget &&
         _listenDuration.isRunning &&
         _listenDuration.elapsed >= const Duration(minutes: 5)) {
@@ -251,6 +258,20 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
       if (_ready) {
         _waiting = false;
         await _start();
+      } else if (_output.running) {
+        if (!_sensorReady || !_beaconFresh) {
+          await _stop('센서 또는 목표 비콘 신호 상실 · 무음 대기 종료');
+        } else {
+          _syncing = true;
+          try {
+            await _driver.apply(const CueDecision(
+                CueAction.silence, null, 'silent source heartbeat'));
+          } catch (_) {
+            await _stop('이어폰 또는 출력 상태 변경 · 무음 대기 종료');
+          } finally {
+            _syncing = false;
+          }
+        }
       }
       return;
     }
@@ -258,7 +279,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     if (!_ready) {
       await _stop(
           widget.waitForTarget && _sensorReady && _beaconFresh
-              ? '소리 대기 중 · 문을 다시 확인하면 재생합니다.'
+              ? '소리 대기 중 · 버스를 다시 확인하면 재생합니다.'
               : '센서 또는 비콘의 최신 수신 상태를 확인해주세요.',
           wait: widget.waitForTarget && _sensorReady && _beaconFresh);
       return;
@@ -310,11 +331,25 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     try {
       // Force a stop even if a start is still in flight or policy was inactive.
       await _driver.apply(
-        const CueDecision(CueAction.stop, null, 'explicit stop'),
+        CueDecision(
+            wait ? CueAction.silence : CueAction.stop,
+            null,
+            wait
+                ? 'visual target missing, keep route silent'
+                : 'explicit stop'),
       );
     } catch (_) {
-      // Native watchdog also stops if heartbeat stops arriving.
+      _waiting = false;
+      _listenDuration.stop();
+      _message = '출력 대기 실패 · 다시 시작해주세요.';
+      _refresh();
     }
+    _trace(wait ? 'silence' : 'stop');
+  }
+
+  void _trace(String event) {
+    debugPrint(
+        'MOBI_AUDIO_STATE event=$event waiting=$_waiting playing=$_playing sensorAgeMs=${widget.sensorAgeMs} sensorReady=$_sensorReady beaconAgeMs=$_beaconAge beaconFresh=$_beaconFresh targetReady=$_ready reference=${widget.reference} scope=${widget.audioScope} message=$_message');
   }
 
   @override
@@ -337,7 +372,17 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           _sensorReady &&
           _beaconFresh;
       unawaited(_stop(
-          wait ? '소리 대기 중 · 문을 다시 확인하면 재생합니다.' : '입력 상태가 바뀌어 테스트음을 중지했습니다.',
+          wait
+              ? '소리 대기 중 · 버스를 다시 확인하면 재생합니다.'
+              : scopeChanged
+                  ? '목표 비콘 또는 스캔 세션이 변경되어 중지했습니다.'
+                  : oldWidget.reference != widget.reference
+                      ? '센서 정면 기준이 변경되어 중지했습니다.'
+                      : !_sensorReady
+                          ? '머리 센서 데이터가 만료되어 중지했습니다.'
+                          : !_beaconFresh
+                              ? '목표 비콘 신호가 3초 이상 갱신되지 않아 중지했습니다.'
+                              : '방향 입력이 유효하지 않아 중지했습니다.',
           wait: wait));
     }
   }
