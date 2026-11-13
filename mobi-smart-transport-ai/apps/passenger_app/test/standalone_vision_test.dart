@@ -35,9 +35,9 @@ void main() {
       await t
           .pumpWidget(MobiApp(firebaseInitialization: initialization.future));
       await flush(t);
-      await t.ensureVisible(find.text('AI 비전 · 공간음향'));
+      await t.ensureVisible(find.text('장애물 탐지'));
       await t.pumpAndSettle();
-      await t.tap(find.text('AI 비전 · 공간음향'));
+      await t.tap(find.text('장애물 탐지'));
       await t.pump();
       await t.pumpAndSettle();
       expect(find.byType(StandaloneVisionPage), findsOneWidget);
@@ -64,9 +64,9 @@ void main() {
           .pumpWidget(MobiApp(firebaseConfigured: true, authSession: session));
       await flush(t);
       expect(find.text('MOBI 스마트 교통 시스템'), findsNothing);
-      await t.ensureVisible(find.text('노선 정보 질문'));
+      await t.ensureVisible(find.text('노선 정보 검색'));
       await t.pumpAndSettle();
-      await t.tap(find.text('노선 정보 질문'));
+      await t.tap(find.text('노선 정보 검색'));
       await flush(t);
       expect(find.text('MOBI 스마트 교통 시스템'), findsOneWidget);
       expect(network.attempts, 0);
