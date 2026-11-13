@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'pages/passenger_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
@@ -37,6 +38,7 @@ class _MobiAppState extends State<MobiApp> {
   bool _isLoadingAgentName = true;
   String? _selectedDataMode;
   bool _onlineSelected = false;
+  bool _signingOut = false;
   late bool _firebaseReady;
   late bool _firebasePreparing;
 
@@ -102,7 +104,28 @@ class _MobiAppState extends State<MobiApp> {
   void _resetToModeSelection() {
     setState(() {
       _selectedDataMode = null;
+      if (_android) _onlineSelected = false;
     });
+  }
+
+  bool get _android =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _signOutFromHome(BuildContext context) async {
+    if (_signingOut) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _signingOut = true);
+    try {
+      await (widget.authSession ?? FirebaseAuthSession.instance).signOut();
+    } catch (_) {
+      if (messenger.mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('로그아웃하지 못했습니다. 다시 시도해 주세요.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _signingOut = false);
+    }
   }
 
   @override
@@ -117,7 +140,7 @@ class _MobiAppState extends State<MobiApp> {
       );
     }
     final agentName = _agentName;
-    final dataMode = _selectedDataMode;
+    final dataMode = _android ? 'live' : _selectedDataMode;
 
     Widget home;
     if (_isLoadingAgentName) {
@@ -138,6 +161,24 @@ class _MobiAppState extends State<MobiApp> {
         onEditAgentName: _resetAgentName,
         onReturnToModeSelection: _resetToModeSelection,
         dataMode: dataMode,
+      );
+    }
+
+    Widget protectAndroid(WidgetBuilder builder) {
+      if (!_android) return Builder(builder: builder);
+      final issue = widget.onlineConfigurationIssue;
+      if (issue != null) {
+        return Scaffold(body: Center(child: Text('UNAVAILABLE · $issue')));
+      }
+      if (_firebasePreparing) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      return AuthGate(
+        configurationReady: _firebaseReady,
+        requiredRole: 'passenger',
+        session: widget.authSession,
+        appLabel: 'MOBI',
+        builder: (context, account) => builder(context),
       );
     }
 
@@ -168,13 +209,19 @@ class _MobiAppState extends State<MobiApp> {
                           builder: (context, account) => home,
                         ),
             )
-          : PassengerLanding(
-              onOnline: () => setState(() => _onlineSelected = true)),
+          : protectAndroid((context) => PassengerLanding(
+                onOnline: () => setState(() => _onlineSelected = true),
+                onSignOut: _android && !_signingOut
+                    ? () => _signOutFromHome(context)
+                    : null,
+                showSignOut: _android,
+              )),
       routes: <String, WidgetBuilder>{
         // Local hardware diagnostics carry no server identity or Guidance authority.
-        '/device-check': (_) => const DeviceCheckPage(),
-        '/hardware-bus': (_) => const HardwareBusPage(),
-        '/standalone-vision': (_) => const StandaloneVisionPage(),
+        '/device-check': (_) => protectAndroid((_) => const DeviceCheckPage()),
+        '/hardware-bus': (_) => protectAndroid((_) => const HardwareBusPage()),
+        '/standalone-vision': (_) =>
+            protectAndroid((_) => const StandaloneVisionPage()),
         '/native-audio': (_) => AuthGate(
               configurationReady: _firebaseReady,
               requiredRole: 'passenger',

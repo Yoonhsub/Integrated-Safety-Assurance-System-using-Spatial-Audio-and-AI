@@ -13,7 +13,7 @@ Future<void> main() async {
             release: kReleaseMode) ??
         (config.isCompleteForAndroid
             ? null
-            : 'Android 로그인 설정이 준비되지 않았습니다. 로컬 시연은 로그인 없이 사용할 수 있습니다.');
+            : 'Android 로그인 설정이 준비되지 않았습니다. Firebase 설정을 확인해 주세요.');
   }
   const authOnly = AuthOnlyConfiguration.fromEnvironment();
   if (authOnly.enabled) {
@@ -22,7 +22,7 @@ Future<void> main() async {
     runApp(MobiApp(firebaseConfigured: configured));
     return;
   }
-  // Local camera/audio must not wait for Firebase or a Backend session.
+  // The Android app waits for Firebase before showing its feature selection.
   runApp(MobiApp(
       onlineConfigurationIssue: onlineIssue,
       firebaseInitialization: onlineIssue == null

@@ -1,4 +1,9 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../services/speech_priority_coordinator.dart';
 
 const mobiInk = Color(0xFF173550);
 const mobiBlue = Color(0xFF2378F3);
@@ -26,67 +31,184 @@ ThemeData passengerTheme() => ThemeData(
           titleLarge: TextStyle(fontWeight: FontWeight.w700, color: mobiInk)),
     );
 
-class PassengerLanding extends StatelessWidget {
-  const PassengerLanding({super.key, required this.onOnline});
+class PassengerLanding extends StatefulWidget {
+  const PassengerLanding({
+    super.key,
+    required this.onOnline,
+    this.speech,
+    this.onSignOut,
+    this.showSignOut = false,
+  });
   final VoidCallback onOnline;
+  final SpeechPriorityCoordinator? speech;
+  final VoidCallback? onSignOut;
+  final bool showSignOut;
+
+  @override
+  State<PassengerLanding> createState() => _PassengerLandingState();
+}
+
+enum _LandingDestination { routeInfo, vision }
+
+class _PassengerLandingState extends State<PassengerLanding> {
+  final _speechOwner = Object();
+  Timer? _tapWindow;
+  _LandingDestination? _pending;
+  int _speechRequest = 0;
+  bool _opening = false;
+
+  SpeechPriorityCoordinator get _speech =>
+      widget.speech ?? sharedSpeechPriority;
+  bool get _usesTapConfirmation =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _describe(String description, int request) async {
+    try {
+      await _speech.speakObservation(
+        _speechOwner,
+        description,
+        () => mounted && request == _speechRequest && !_opening,
+      );
+    } catch (error) {
+      debugPrint('MOBI home description: ${error.runtimeType}');
+    }
+  }
+
+  Future<void> _stopDescription() async {
+    try {
+      await _speech.stopObservation(_speechOwner);
+    } catch (error) {
+      debugPrint('MOBI home description stop: ${error.runtimeType}');
+    }
+  }
+
+  Future<void> _open(_LandingDestination destination) async {
+    if (_opening) return;
+    _opening = true;
+    _pending = null;
+    _tapWindow?.cancel();
+    if (_speechRequest > 0) {
+      _speechRequest++;
+      unawaited(_stopDescription());
+    }
+    try {
+      if (destination == _LandingDestination.routeInfo) {
+        widget.onOnline();
+      } else {
+        await Navigator.of(context).pushNamed('/standalone-vision');
+      }
+    } finally {
+      _opening = false;
+    }
+  }
+
+  void _tap(_LandingDestination destination, String description) {
+    if (_opening) return;
+    if (!_usesTapConfirmation || _pending == destination) {
+      unawaited(_open(destination));
+      return;
+    }
+    _pending = destination;
+    _tapWindow?.cancel();
+    _tapWindow =
+        Timer(const Duration(milliseconds: 500), () => _pending = null);
+    unawaited(_describe(description, ++_speechRequest));
+  }
+
+  Widget _screenReaderButton(
+    _LandingDestination destination,
+    String label,
+    String description,
+    Widget child,
+  ) =>
+      _usesTapConfirmation
+          ? Semantics(
+              excludeSemantics: true,
+              button: true,
+              label: label,
+              hint: description,
+              onTap: () => unawaited(_open(destination)),
+              child: child,
+            )
+          : child;
+
+  @override
+  void dispose() {
+    _tapWindow?.cancel();
+    if (_speechRequest > 0) {
+      _speechRequest++;
+      unawaited(_stopDescription());
+    }
+    super.dispose();
+  }
+
+  static const _routeLabel = '노선 정보 검색';
+  static const _routeDescription = '채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.';
+  static const _visionLabel = '장애물 탐지';
+  static const _visionDescription = '카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.';
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
             title: const Text('MOBI.',
                 style:
-                    TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2))),
+                    TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2)),
+            actions: [
+              if (widget.showSignOut)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: mobiInk,
+                    minimumSize: const Size(48, 48),
+                  ),
+                  onPressed: widget.onSignOut,
+                  child: const Text('로그아웃'),
+                ),
+            ]),
         body: SafeArea(
             child: ListView(padding: const EdgeInsets.all(24), children: [
-          const Text('당신의 이동을 더 편하게',
-              style: TextStyle(color: mobiBlue, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          Text('주변을 인식하고,\n소리로 확인하세요.',
+          Text('무엇을 도와드릴까요?',
               style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 12),
-          const Text('카메라 화면에 보이는 객체와 화면 속 위치를 안내합니다.',
-              style: TextStyle(height: 1.7)),
           const SizedBox(height: 24),
-          Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                  color: mobiInk, borderRadius: BorderRadius.circular(24)),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.center_focus_strong,
-                        color: Colors.white, size: 42),
-                    const SizedBox(height: 18),
-                    const Text('카메라로 주변 확인',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 23,
-                            fontWeight: FontWeight.bold)),
-                    const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                        child: Text('휴대폰 단독 모드 · 로그인이나 PC 연결 없이 사용할 수 있습니다.',
-                            style: TextStyle(
-                                color: Color(0xFFCDDFEF), height: 1.7))),
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                            onPressed: () => Navigator.of(context)
-                                .pushNamed('/standalone-vision'),
-                            icon: const Icon(Icons.camera_alt_outlined),
-                            label: const Text('카메라 인식 시작'))),
-                  ])),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-              onPressed: onOnline,
-              icon: const Icon(Icons.cloud_outlined),
-              label: const Text('온라인 서비스 연결')),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).pushNamed('/device-check'),
-              icon: const Icon(Icons.headphones_outlined),
-              label: const Text('이어폰·BLE 기기 점검')),
+          if (_usesTapConfirmation) ...[
+            const Text('한 번 누르면 설명을 듣고, 같은 버튼을 빠르게 두 번 누르면 열립니다.'),
+            const SizedBox(height: 16),
+          ],
+          _screenReaderButton(
+            _LandingDestination.routeInfo,
+            _routeLabel,
+            _routeDescription,
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: mobiInk,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () =>
+                  _tap(_LandingDestination.routeInfo, _routeDescription),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text(_routeLabel),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(_routeDescription),
           const SizedBox(height: 24),
-          const Text('화면 기준의 정보성 시연입니다. 실제 거리·출입문·승차 가능 여부는 판단하지 않습니다.',
-              style: TextStyle(color: Color(0xFF617087), height: 1.7)),
+          _screenReaderButton(
+            _LandingDestination.vision,
+            _visionLabel,
+            _visionDescription,
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: mobiInk,
+                backgroundColor: Colors.white,
+                side: const BorderSide(color: mobiInk, width: 2),
+              ),
+              onPressed: () =>
+                  _tap(_LandingDestination.vision, _visionDescription),
+              icon: const Icon(Icons.camera_alt_outlined),
+              label: const Text(_visionLabel),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(_visionDescription),
         ])),
       );
 }
