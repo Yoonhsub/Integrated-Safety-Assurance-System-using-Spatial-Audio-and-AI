@@ -34,8 +34,8 @@ void main() {
     try {
       await t.pumpWidget(MobiApp(firebaseInitialization: initializing.future));
       await t.pumpAndSettle();
-      expect(find.text('AI 비전 · 공간음향'), findsOneWidget);
-      await t.tap(find.text('AI 비전 · 공간음향'));
+      expect(find.text('장애물 탐지'), findsOneWidget);
+      await t.tap(find.text('장애물 탐지'));
       await t.pumpAndSettle();
       await t.tap(find.byTooltip('이어폰·BLE 기기 점검'));
       await t.pumpAndSettle();

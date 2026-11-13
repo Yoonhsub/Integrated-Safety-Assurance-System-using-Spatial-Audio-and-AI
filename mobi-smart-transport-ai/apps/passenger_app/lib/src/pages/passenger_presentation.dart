@@ -32,9 +32,17 @@ ThemeData passengerTheme() => ThemeData(
     );
 
 class PassengerLanding extends StatefulWidget {
-  const PassengerLanding({super.key, required this.onOnline, this.speech});
+  const PassengerLanding({
+    super.key,
+    required this.onOnline,
+    this.speech,
+    this.onSignOut,
+    this.showSignOut = false,
+  });
   final VoidCallback onOnline;
   final SpeechPriorityCoordinator? speech;
+  final VoidCallback? onSignOut;
+  final bool showSignOut;
 
   @override
   State<PassengerLanding> createState() => _PassengerLandingState();
@@ -49,7 +57,8 @@ class _PassengerLandingState extends State<PassengerLanding> {
   int _speechRequest = 0;
   bool _opening = false;
 
-  SpeechPriorityCoordinator get _speech => widget.speech ?? sharedSpeechPriority;
+  SpeechPriorityCoordinator get _speech =>
+      widget.speech ?? sharedSpeechPriority;
   bool get _usesTapConfirmation =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -101,7 +110,8 @@ class _PassengerLandingState extends State<PassengerLanding> {
     }
     _pending = destination;
     _tapWindow?.cancel();
-    _tapWindow = Timer(const Duration(milliseconds: 500), () => _pending = null);
+    _tapWindow =
+        Timer(const Duration(milliseconds: 500), () => _pending = null);
     unawaited(_describe(description, ++_speechRequest));
   }
 
@@ -132,9 +142,9 @@ class _PassengerLandingState extends State<PassengerLanding> {
     super.dispose();
   }
 
-  static const _routeLabel = '노선 정보 질문';
+  static const _routeLabel = '노선 정보 검색';
   static const _routeDescription = '채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.';
-  static const _visionLabel = 'AI 비전 · 공간음향';
+  static const _visionLabel = '장애물 탐지';
   static const _visionDescription = '카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.';
 
   @override
@@ -142,7 +152,18 @@ class _PassengerLandingState extends State<PassengerLanding> {
         appBar: AppBar(
             title: const Text('MOBI.',
                 style:
-                    TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2))),
+                    TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2)),
+            actions: [
+              if (widget.showSignOut)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: mobiInk,
+                    minimumSize: const Size(48, 48),
+                  ),
+                  onPressed: widget.onSignOut,
+                  child: const Text('로그아웃'),
+                ),
+            ]),
         body: SafeArea(
             child: ListView(padding: const EdgeInsets.all(24), children: [
           Text('무엇을 도와드릴까요?',
@@ -153,9 +174,16 @@ class _PassengerLandingState extends State<PassengerLanding> {
             const SizedBox(height: 16),
           ],
           _screenReaderButton(
-            _LandingDestination.routeInfo, _routeLabel, _routeDescription,
+            _LandingDestination.routeInfo,
+            _routeLabel,
+            _routeDescription,
             FilledButton.icon(
-              onPressed: () => _tap(_LandingDestination.routeInfo, _routeDescription),
+              style: FilledButton.styleFrom(
+                backgroundColor: mobiInk,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () =>
+                  _tap(_LandingDestination.routeInfo, _routeDescription),
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text(_routeLabel),
             ),
@@ -164,9 +192,17 @@ class _PassengerLandingState extends State<PassengerLanding> {
           const Text(_routeDescription),
           const SizedBox(height: 24),
           _screenReaderButton(
-            _LandingDestination.vision, _visionLabel, _visionDescription,
+            _LandingDestination.vision,
+            _visionLabel,
+            _visionDescription,
             OutlinedButton.icon(
-              onPressed: () => _tap(_LandingDestination.vision, _visionDescription),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: mobiInk,
+                backgroundColor: Colors.white,
+                side: const BorderSide(color: mobiInk, width: 2),
+              ),
+              onPressed: () =>
+                  _tap(_LandingDestination.vision, _visionDescription),
               icon: const Icon(Icons.camera_alt_outlined),
               label: const Text(_visionLabel),
             ),

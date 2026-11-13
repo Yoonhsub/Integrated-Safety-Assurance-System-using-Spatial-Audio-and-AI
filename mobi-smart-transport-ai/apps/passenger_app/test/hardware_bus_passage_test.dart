@@ -82,9 +82,9 @@ void main() {
     await tester.pumpAndSettle();
     // PR #69 keeps online mode selection behind authentication. The local
     // hardware entry must remain directly reachable without a backend.
-    expect(find.text('AI 비전 · 공간음향'), findsOneWidget);
-    await tester.tap(find.text('AI 비전 · 공간음향'));
-    await tester.tap(find.text('AI 비전 · 공간음향'));
+    expect(find.text('장애물 탐지'), findsOneWidget);
+    await tester.tap(find.text('장애물 탐지'));
+    await tester.tap(find.text('장애물 탐지'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('이어폰·BLE 기기 점검'));
     await tester.pumpAndSettle();
