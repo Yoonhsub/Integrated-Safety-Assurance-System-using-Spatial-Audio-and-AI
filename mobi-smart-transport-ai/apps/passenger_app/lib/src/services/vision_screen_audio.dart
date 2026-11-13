@@ -20,9 +20,10 @@ class VisionScreenAudio extends ChangeNotifier {
     this.minimumInterval = const Duration(seconds: 8),
     this.confirmationFrames = 1,
     this.requireDoorInBus = false,
-  }) : headTracking = headTracking ?? sharedHeadTrackingState,
-       horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
-       _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
+    this.prioritizeByDistance = false,
+  })  : headTracking = headTracking ?? sharedHeadTrackingState,
+        horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
+        _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
     if (!identical(priority.engine, engine)) {
       throw ArgumentError('Audio owner mismatch');
     }
@@ -34,8 +35,7 @@ class VisionScreenAudio extends ChangeNotifier {
     this.headTracking.addListener(_headTrackingChanged);
   }
   static final _clock = Stopwatch()..start();
-  static final double _configuredFov =
-      double.tryParse(
+  static final double _configuredFov = double.tryParse(
         const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
       ) ??
       0;
@@ -47,6 +47,7 @@ class VisionScreenAudio extends ChangeNotifier {
   final Duration minimumInterval;
   final int confirmationFrames;
   final bool requireDoorInBus;
+  final bool prioritizeByDistance;
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
   final int Function() _now;
@@ -79,6 +80,11 @@ class VisionScreenAudio extends ChangeNotifier {
       !priority.priorityActive &&
       !priority.outputUncertain &&
       headTracking.snapshot.usable(DateTime.now().toUtc());
+
+  bool _preempting = false;
+  static bool _isObstacle(Object? id) =>
+      id == 'parked_pm' || id == 'pole' || id == 'tree_trunk';
+
   static const classNames = {
     'bus': '버스',
     'bus_door': '버스 문',
@@ -88,14 +94,52 @@ class VisionScreenAudio extends ChangeNotifier {
     'tree_trunk': '나무 줄기',
     'roadway': '차도',
     'sidewalk': '보도',
-    'obstacle': '장애물',
     'tactile_paving': '점자블록',
+  };
+  static const _classPriority = <String, int>{
+    'parked_pm': 0,
+    'pole': 1,
+    'tree_trunk': 2,
+    'bus_door': 3,
+    'bus': 4,
+    'bus_stop': 5,
   };
   static TestDirection direction(double centerX) => centerX < 1 / 3
       ? TestDirection.left
       : centerX > 2 / 3
-      ? TestDirection.right
-      : TestDirection.center;
+          ? TestDirection.right
+          : TestDirection.center;
+
+  /// Relative distance rank based on normalized bbox area and vertical ground
+  /// position (bottomY = y + h). Returns 0 for NEAR, 1 for MEDIUM, 2 for FAR.
+  static int distanceRank(String classId, Map b) {
+    final w = (b['w'] as num).toDouble(),
+        h = (b['h'] as num).toDouble(),
+        y = (b['y'] as num).toDouble();
+    final area = w * h, bottomY = y + h;
+    if (classId == 'bus_door') {
+      if (area >= 0.06 || bottomY >= 0.85) return 0;
+      if (area >= 0.015 || bottomY >= 0.65) return 1;
+      return 2;
+    }
+    if (classId == 'parked_pm' ||
+        classId == 'pole' ||
+        classId == 'tree_trunk') {
+      if (area >= 0.08 || bottomY >= 0.80) return 0;
+      if (area >= 0.02 || bottomY >= 0.60) return 1;
+      return 2;
+    }
+    if (area >= 0.25 || bottomY >= 0.85) return 0;
+    if (area >= 0.08 || bottomY >= 0.65) return 1;
+    return 2;
+  }
+
+  static double proximityScore(Map b) {
+    final w = (b['w'] as num).toDouble(),
+        h = (b['h'] as num).toDouble(),
+        y = (b['y'] as num).toDouble();
+    return (y + h) * 0.6 + (w * h) * 0.4;
+  }
 
   static bool _isValidBoxMap(Map b) {
     if ([
@@ -118,14 +162,19 @@ class VisionScreenAudio extends ChangeNotifier {
         y + h <= 1.000000001;
   }
 
-  static bool _doorInBusValid(Map doorBox, List rows) {
+  /// Returns the bbox of the parent `bus` containing at least [minDoorInBusOverlap]
+  /// of [doorBox], preferring largest intersection area then largest bus area.
+  static Map? _parentBusBox(Map doorBox, List rows) {
     final dx1 = (doorBox['x'] as num).toDouble();
     final dy1 = (doorBox['y'] as num).toDouble();
     final dw = (doorBox['w'] as num).toDouble();
     final dh = (doorBox['h'] as num).toDouble();
     final doorArea = dw * dh;
-    if (doorArea <= 0) return false;
+    if (doorArea <= 0) return null;
     final dx2 = dx1 + dw, dy2 = dy1 + dh;
+    Map? bestBus;
+    double bestInterArea = -1;
+    double bestBusArea = -1;
     for (final row in rows) {
       if (row is! Map || row['classId'] != 'bus' || row['className'] != '버스') {
         continue;
@@ -141,18 +190,94 @@ class VisionScreenAudio extends ChangeNotifier {
       }
       final bx1 = (b['x'] as num).toDouble();
       final by1 = (b['y'] as num).toDouble();
-      final bx2 = bx1 + (b['w'] as num).toDouble();
-      final by2 = by1 + (b['h'] as num).toDouble();
+      final bw = (b['w'] as num).toDouble();
+      final bh = (b['h'] as num).toDouble();
+      final bx2 = bx1 + bw, by2 = by1 + bh;
       final ix1 = dx1 > bx1 ? dx1 : bx1;
       final iy1 = dy1 > by1 ? dy1 : by1;
       final ix2 = dx2 < bx2 ? dx2 : bx2;
       final iy2 = dy2 < by2 ? dy2 : by2;
       if (ix2 > ix1 && iy2 > iy1) {
         final interArea = (ix2 - ix1) * (iy2 - iy1);
-        if (interArea / doorArea >= minDoorInBusOverlap) return true;
+        final busArea = bw * bh;
+        if (interArea / doorArea >= minDoorInBusOverlap &&
+            (interArea > bestInterArea ||
+                (interArea == bestInterArea && busArea > bestBusArea))) {
+          bestBus = b;
+          bestInterArea = interArea;
+          bestBusArea = busArea;
+        }
       }
     }
-    return false;
+    return bestBus;
+  }
+
+  ({
+    Map? selected,
+    double bestConfidence,
+    int bestRank,
+  }) _analyzeFrame(List rows) {
+    Map? selected;
+    double best = -1;
+    int bestRank = 99;
+    int bestPriority = 99;
+    double bestProximity = -1;
+    for (final row in rows) {
+      if (row is! Map ||
+          !classNames.containsKey(row['classId']) ||
+          classNames[row['classId']] != row['className']) {
+        continue;
+      }
+      final c = row['confidence'], b = row['bbox'];
+      if (c is! num ||
+          !c.isFinite ||
+          c < .5 ||
+          c > 1 ||
+          b is! Map ||
+          !_isValidBoxMap(b)) {
+        continue;
+      }
+      final classId = row['classId'] as String;
+      final Map? parentBus =
+          classId == 'bus_door' ? _parentBusBox(b, rows) : null;
+      if (classId == 'bus_door' && requireDoorInBus && parentBus == null) {
+        continue;
+      }
+      // Inherit distance rank from parent bus so a narrow door on a near bus
+      // is not outranked by its own bus body (matches Python spatial_guidance.py).
+      final int effectiveRank = parentBus != null
+          ? distanceRank('bus', parentBus)
+          : distanceRank(classId, b);
+      if (prioritizeByDistance) {
+        final prio = _classPriority[classId] ?? 99;
+        final prox = proximityScore(b);
+        final better = selected == null ||
+            effectiveRank < bestRank ||
+            (effectiveRank == bestRank && prio < bestPriority) ||
+            (effectiveRank == bestRank &&
+                prio == bestPriority &&
+                prox > bestProximity) ||
+            (effectiveRank == bestRank &&
+                prio == bestPriority &&
+                prox == bestProximity &&
+                c > best);
+        if (better) {
+          selected = row;
+          best = c.toDouble();
+          bestRank = effectiveRank;
+          bestPriority = prio;
+          bestProximity = prox;
+        }
+      } else if (c > best) {
+        selected = row;
+        best = c.toDouble();
+      }
+    }
+    return (
+      selected: selected,
+      bestConfidence: best,
+      bestRank: bestRank,
+    );
   }
 
   void _notify() {
@@ -224,8 +349,7 @@ class VisionScreenAudio extends ChangeNotifier {
     mountCalibration = HeadTrackingMountCalibration(
       mount: mountCalibration.mount,
       axesAlignmentVerified: verified,
-      cameraAxisOffsetDegrees:
-          verified &&
+      cameraAxisOffsetDegrees: verified &&
               cameraAxisOffsetDegrees?.isFinite == true &&
               cameraAxisOffsetDegrees!.abs() <= 180
           ? cameraAxisOffsetDegrees
@@ -247,10 +371,10 @@ class VisionScreenAudio extends ChangeNotifier {
       status = !hasCameraCalibration
           ? '카메라 수평 화각 미확인 · Head Tracking 사용 불가'
           : !mountCalibration.supportsHeadTrackedCue
-          ? '지원·검증된 카메라 장착 방식이 아님 · 화면 기준 Cue 유지'
-          : !mountCalibration.verified
-          ? '카메라·센서 축 정렬과 측정 오프셋 확인 필요'
-          : '활성 세션·오디오 소유권·READY 센서 확인 필요';
+              ? '지원·검증된 카메라 장착 방식이 아님 · 화면 기준 Cue 유지'
+              : !mountCalibration.verified
+                  ? '카메라·센서 축 정렬과 측정 오프셋 확인 필요'
+                  : '활성 세션·오디오 소유권·READY 센서 확인 필요';
       _notify();
       return;
     }
@@ -313,7 +437,7 @@ class VisionScreenAudio extends ChangeNotifier {
       return;
     }
     _lastFrame = result['frameId'] as String;
-    if (busy || priority.priorityActive) {
+    if (priority.priorityActive) {
       skippedBusy++;
       return;
     }
@@ -324,35 +448,31 @@ class VisionScreenAudio extends ChangeNotifier {
         size['width'] <= 0 ||
         size['height'] <= 0 ||
         rows is! List) {
+      if (busy) skippedBusy++;
       return;
     }
-    Map? selected;
-    double best = -1;
-    for (final row in rows) {
-      if (row is! Map ||
-          !classNames.containsKey(row['classId']) ||
-          classNames[row['classId']] != row['className']) {
-        continue;
+    final analysis = _analyzeFrame(rows);
+    // Stop only our lower-priority preview output. Do not replay this frame
+    // after cancellation: a new, fresh camera frame must confirm the obstacle.
+    if (_preempting) return;
+    if (busy) {
+      if (_isObstacle(analysis.selected?['classId']) &&
+          !_isObstacle(diagnostic['classId'])) {
+        _preempting = true;
+        _revision++;
+        _lastMeaning = null;
+        _lastStarted = null;
+        _streakMeaning = null;
+        _streakCount = 0;
+        unawaited(_stopOwned().whenComplete(() => _preempting = false));
       }
-      final c = row['confidence'], b = row['bbox'];
-      if (c is! num ||
-          !c.isFinite ||
-          c < .5 ||
-          c > 1 ||
-          b is! Map ||
-          !_isValidBoxMap(b)) {
-        continue;
-      }
-      if (requireDoorInBus &&
-          row['classId'] == 'bus_door' &&
-          !_doorInBusValid(b, rows)) {
-        continue;
-      }
-      if (c > best) {
-        selected = row;
-        best = c.toDouble();
-      }
+      skippedBusy++;
+      return;
     }
+    final selected = analysis.selected;
+    final best = analysis.bestConfidence;
+    final bestRank = analysis.bestRank;
+
     if (selected == null) {
       _streakMeaning = null;
       _streakCount = 0;
@@ -361,8 +481,7 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     final box = selected['bbox'] as Map;
     final cx = (box['x'] as num).toDouble() + (box['w'] as num).toDouble() / 2;
-    final side = direction(cx),
-        meaning = '${selected['classId']}:${side.name}';
+    final side = direction(cx), meaning = '${selected['classId']}:${side.name}';
     if (_streakMeaning == meaning) {
       _streakCount++;
     } else {
@@ -372,8 +491,11 @@ class VisionScreenAudio extends ChangeNotifier {
     if (_streakCount < confirmationFrames) {
       return;
     }
+    final replacesNonObstacle =
+        _isObstacle(selected['classId']) && !_isObstacle(diagnostic['classId']);
     if (_lastMeaning == meaning ||
-        (_lastStarted != null &&
+        (!replacesNonObstacle &&
+            _lastStarted != null &&
             _now() - _lastStarted! < minimumInterval.inMicroseconds)) {
       return;
     }
@@ -392,8 +514,7 @@ class VisionScreenAudio extends ChangeNotifier {
         isCurrent() &&
         !priority.priorityActive;
     final admission = ObservationAdmission(
-      deadlineMicros:
-          _now() +
+      deadlineMicros: _now() +
           const Duration(seconds: 2).inMicroseconds -
           age.inMicroseconds,
       nowMicros: _now,
@@ -468,6 +589,12 @@ class VisionScreenAudio extends ChangeNotifier {
       'bbox': Map<String, Object?>.from(box),
       'screenCenterX': cx,
       'screenDirection': side.name.toUpperCase(),
+      if (prioritizeByDistance)
+        'relativeDistance': switch (bestRank) {
+          0 => 'NEAR',
+          1 => 'MEDIUM',
+          _ => 'FAR',
+        },
       'headTrackingStatus': headTracking.snapshot.status.name,
       'headTrackingEnabled': correctedAngle != null,
       'headTrackingMount': mountCalibration.mount.name,

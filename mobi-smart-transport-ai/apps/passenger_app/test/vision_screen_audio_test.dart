@@ -525,4 +525,305 @@ void main() {
     priority.dispose();
     expect(t.takeException(), isNull);
   });
+
+  testWidgets(
+      'prioritizeByDistance selects nearer obstacle over distant bus with higher confidence',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Distant bus (confidence 0.96, FAR) vs near kickboard obstacle (confidence 0.75, NEAR).
+    a.observe(
+        detection(1, boxes: [
+          const LocalBox('bus', .96, .05, .1, .15, .15),
+          const LocalBox('parked_pm', .75, .70, .55, .25, .35),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'parked_pm');
+    expect(a.diagnostic['className'], '방치 전동 킥보드');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door inherits NEAR distance rank from parent bus so bus body does not outrank narrow door',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Near large bus (area=0.6375 >= 0.25 -> NEAR rank 0) containing a small/narrow door
+    // (area=0.016, bottomY=0.45 -> standalone door rank would be MEDIUM rank 1).
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .95, .05, .10, .85, .75),
+          const LocalBox('bus_door', .85, .45, .25, .08, .20),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'bus_door');
+    expect(a.diagnostic['className'], '버스 문');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'CENTER');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets(
+      'bus_door inheriting MEDIUM rank from parent bus yields to NEAR obstacle',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Medium bus (area=0.1225 -> MEDIUM rank 1) containing a door whose own area=0.0625
+    // (>= 0.06, so standalone would be rank 0), alongside a genuinely NEAR obstacle.
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .92, .05, .20, .35, .35),
+          const LocalBox('bus_door', .90, .10, .22, .25, .25),
+          const LocalBox('parked_pm', .75, .70, .55, .25, .35),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'parked_pm');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'RIGHT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('NEAR obstacle always takes priority over NEAR bus and bus_door',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+
+    // Both bus/bus_door and tree_trunk obstacle are NEAR (rank 0):
+    // obstacle must take safety priority over bus/bus_door.
+    now = 1000;
+    a.observe(
+        detection(now, boxes: [
+          const LocalBox('bus', .95, .05, .10, .85, .75),
+          const LocalBox('bus_door', .92, .65, .20, .20, .55),
+          const LocalBox('tree_trunk', .86, .40, .05, .16, .60),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'tree_trunk');
+    expect(a.diagnostic['className'], '나무 줄기');
+    expect(a.diagnostic['relativeDistance'], 'NEAR');
+    expect(port.active?['direction'], 'CENTER');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
+
+  for (final side in [.05, .4, .75]) {
+    testWidgets('disappeared door at $side never produces movement guidance',
+        (t) async {
+      final port = native.Port(), tts = speech.FakeTts();
+      final engine = SpatialVerificationEngine(
+          NativeDirectionalCueOutput(port: port), tts);
+      final priority = SpeechPriorityCoordinator(engine);
+      var now = 1000;
+      final a = VisionScreenAudio(
+          priority: priority,
+          engine: engine,
+          sessionGeneration: 's',
+          isCurrent: () => true,
+          prioritizeByDistance: true,
+          nowMicros: () => now);
+      a.setEnabled(true);
+      a.observe(
+          detection(now, boxes: [LocalBox('bus_door', .9, side, .1, .2, .8)])
+              .toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+      port.finish();
+      await flush(t);
+      tts.finish();
+      await flush(t);
+      final count = a.admitted;
+      final spoken = tts.spoken.length;
+      for (final tick in [500000, 1500000, 5500000, 9000000]) {
+        now = tick;
+        a.observe(detection(now, boxes: []).toDetectionResult(),
+            age: Duration.zero);
+        await flush(t);
+      }
+      expect(a.admitted, count);
+      expect(tts.spoken.length, spoken);
+      expect(a.diagnostic.containsKey('doorExitEvent'), isFalse);
+      await a.stop();
+      a.dispose();
+      await engine.dispose();
+      priority.dispose();
+    });
+  }
+
+  testWidgets(
+      'strict camera door policy rejects high confidence standalone door',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: true,
+        confirmationFrames: 3,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+    for (var i = 1; i <= 3; i++) {
+      now = i;
+      a.observe(
+          detection(now,
+                  boxes: [const LocalBox('bus_door', .99, .4, .2, .2, .3)])
+              .toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 0);
+    expect(port.active, isNull);
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
+  for (final interrupt in [false, true]) {
+    testWidgets('current obstacle wins over prior door, busy=$interrupt',
+        (t) async {
+      final port = native.Port(), tts = speech.FakeTts();
+      final engine = SpatialVerificationEngine(
+          NativeDirectionalCueOutput(port: port), tts);
+      final priority = SpeechPriorityCoordinator(engine);
+      var now = 0;
+      final a = VisionScreenAudio(
+          priority: priority,
+          engine: engine,
+          sessionGeneration: 's',
+          isCurrent: () => true,
+          requireDoorInBus: true,
+          confirmationFrames: 3,
+          prioritizeByDistance: true,
+          nowMicros: () => now);
+      a.setEnabled(true);
+      for (var i = 1; i <= 3; i++) {
+        now = i * 1000;
+        a.observe(
+            detection(now, boxes: [
+              const LocalBox('bus', .95, .05, .1, .9, .8),
+              const LocalBox('bus_door', .9, .7, .2, .2, .6),
+            ]).toDetectionResult(),
+            age: Duration.zero);
+        await flush(t);
+      }
+      expect(a.diagnostic['classId'], 'bus_door');
+      port.finish();
+      await flush(t);
+      if (!interrupt) {
+        tts.finish();
+        await flush(t);
+      }
+      for (var i = 1; i <= 4; i++) {
+        now = 100000 + i * 1000;
+        a.observe(
+            detection(now,
+                    boxes: [const LocalBox('parked_pm', .9, .05, .5, .3, .4)])
+                .toDetectionResult(),
+            age: Duration.zero);
+        await flush(t);
+        if (interrupt && i == 1) {
+          expect(a.busy, isFalse);
+          expect(a.admitted, 1); // no replay/queue of cancellation frame
+        }
+      }
+      expect(a.diagnostic['classId'], 'parked_pm');
+      expect(a.diagnostic['guidanceEligible'], isFalse);
+      expect(port.active?['direction'], 'LEFT');
+      expect(a.admitted, 2); // obstacle does not wait for door cooldown
+      await a.stop();
+      a.dispose();
+      await engine.dispose();
+      priority.dispose();
+    });
+  }
 }

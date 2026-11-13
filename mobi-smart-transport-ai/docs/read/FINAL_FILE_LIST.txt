@@ -802,3 +802,4 @@ apps/passenger_app/android/gradle/wrapper/gradle-wrapper.jar
 apps/passenger_app/android/gradlew
 apps/passenger_app/android/gradlew.bat
 apps/passenger_app/lib/src/pages/passenger_presentation.dart
+docs/WT901_INTEGRATION_ARCHITECTURE.md

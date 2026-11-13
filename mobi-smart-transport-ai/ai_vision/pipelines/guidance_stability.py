@@ -11,8 +11,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from spatial_guidance import SpatialGuidance
+from spatial_guidance import RelativeDistance, SpatialGuidance
 from vision_result import VisionResultValidationError
+
+_DISTANCE_RANK: dict[RelativeDistance, int] = {
+    RelativeDistance.NEAR: 0,
+    RelativeDistance.MEDIUM: 1,
+    RelativeDistance.FAR: 2,
+}
 
 
 @dataclass(frozen=True)
@@ -22,7 +28,8 @@ class GuidanceStabilityPolicy:
     confirmation_frames: int = 3
     cooldown_seconds: float = 3.0
     max_candidates_per_frame: int = 1
-    priority: tuple[str, ...] = ("bus_door", "bus", "parked_pm", "pole", "tree_trunk", "bus_stop")
+    prioritize_by_distance: bool = True
+    priority: tuple[str, ...] = ("parked_pm", "pole", "tree_trunk", "bus_door", "bus", "bus_stop")
 
     def __post_init__(self) -> None:
         if self.confirmation_frames < 1:
@@ -50,7 +57,7 @@ class GuidanceStabilizer:
     _last_emitted: dict[str, tuple[tuple[str, str], datetime]] = field(default_factory=dict, init=False, repr=False)
 
     def filter(self, candidates: tuple[SpatialGuidance, ...], *, captured_at: datetime) -> tuple[SpatialGuidance, ...]:
-        """안정화·중복 억제를 적용한 후보를 우선순위 순으로 반환한다."""
+        """안정화·중복 억제를 적용한 후보를 거리(근접도) 및 우선순위 순으로 반환한다."""
         if captured_at.tzinfo is None or captured_at.utcoffset() is None:
             raise VisionResultValidationError("captured_at must include a timezone")
 
@@ -78,13 +85,23 @@ class GuidanceStabilizer:
             stable.append(candidate)
 
         priority_index = {class_id: index for index, class_id in enumerate(self.policy.priority)}
-        stable.sort(
-            key=lambda candidate: (
-                priority_index.get(candidate.class_id, len(priority_index)),
-                -candidate.confidence,
-                -candidate.normalized_area,
+        if self.policy.prioritize_by_distance:
+            stable.sort(
+                key=lambda candidate: (
+                    _DISTANCE_RANK.get(candidate.relative_distance, 3),
+                    priority_index.get(candidate.class_id, len(priority_index)),
+                    -candidate.normalized_area,
+                    -candidate.confidence,
+                )
             )
-        )
+        else:
+            stable.sort(
+                key=lambda candidate: (
+                    priority_index.get(candidate.class_id, len(priority_index)),
+                    -candidate.confidence,
+                    -candidate.normalized_area,
+                )
+            )
         selected = tuple(stable[: self.policy.max_candidates_per_frame])
         for candidate in selected:
             self._last_emitted[candidate.class_id] = (
