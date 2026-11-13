@@ -67,3 +67,17 @@ TFLite 초기화는 기기 로그에서 확인했지만 개별 검출값은 해�
 | AUDIO-TREE-LCR | 동일 | 검출된 다른 나무 사진 카메라 촬영 | 나무줄기 박스를 좌→중앙→우로 이동 | 위치와 방향음 일치 | 담당자 전부 성공 보고 | 통과 | 최초 나무 사진 미검출 실패는 별도 유지 |
 
 버스 문 중앙 방향음 실패는 해결되지 않았으며 위 장애물 세 종류의 성공으로 덮어쓰지 않는다. 버스 클래스 전체 3방향 청취와 실제 현장 검증은 아직 별도 미확인이다. 앱 코드 변경·재빌드 없음.
+
+## 2026-11-13 격리 Android 카메라 Backend 후속 검증
+
+main 소스 변경 없이 기존 `lib/local_android_camera_backend_main.dart`를 별도 패키지 `.localvision`으로 빌드·설치했다. 기존 Firebase 로그인 앱은 보존했다. Backend는 단일 프로세스 fake-auth/memory 환경이며 실제 Firebase 영속 저장 검증이 아니다.
+
+| 테스트 ID | 장비·환경 | 입력(실측/모의) | 재현 절차 | 기대 결과 | 실제 결과·증빙 | 통과/실패/미실행 | 다음 작업 |
+|---|---|---|---|---|---|---|---|
+| ISO-CAM-01 | SM-S942N Android 17, 별도 localvision APK, PC 격리 Backend | 카메라·TFLite 실측 / 노트북 사진 / 인증·저장소 모의 | 연결 파일 선택 → 세션 생성 → PC binding 승인 → v4 모델 선택 → 사진 촬영 | 실제 추론 결과 POST 202 | 307개 요청 202, frameId 307개 고유. 탐지 포함 10프레임. 사용자 박스 표시 확인. bus_door confidence 0.7897480130195618, 정규화 bbox 보존된 서버 preview 기록 확인 | PASS(격리 수신 범위) | 실제 Firebase 영속화는 별도 |
+| ISO-CAM-02 | 동일 | 실측 프레임 / 격리 서버 | 앱의 일반·proofOnly observation 조회 | 정상 조회 및 안내 판정과 분리 | 앱 observation GET 200 84회 이상, 화면 서버 관찰 표시 확인. 클라이언트 소스는 일반 조회 후 proofOnly 조회를 수행한다. query/응답 본문 전체와 원본 송신 payload 대조는 별도 수집하지 못함. PC 수동 요청 2회는 lease 헤더 누락으로 403이므로 앱 실패로 집계하지 않음 | PASS(앱 조회), 나머지 미실행 | 응답 원문 및 guidanceEligible=false 실측 증빙 추가 |
+| ISO-CAM-03 | 격리 Backend | 실측 전송 / 중복 재전송 미실행 | 동일 event 재전송 및 Ledger 대조 | 중복 생성 없음 | 실기기 동일 이벤트 재전송·Ledger 원문 대조는 미실행. 기존 자동 테스트 190개 통과와 구분 | 미실행 | 동일 payload 재전송 증빙 수집 |
+| ISO-CAM-04 | 격리 Backend | 종료 처리 실측 | 세션 종료 → 서버 종료 → reverse·임시 연결 파일 제거 | 일반 안내·안전 이벤트 발생 없음 | 종료 result: safetyCreate=0, publish=0, safetyItems=0, stopped=true, singleWorkerMemoryOnly=true. 임시 폰 연결 파일 및 소유 reverse 제거 | PASS | 없음 |
+| PHOTO-BUS-MIX | 기존 main 앱·이어폰 | 휴대폰 카메라 실측 / 노트북 버스 사진 | 사진을 좌·중앙·우로 이동 | 방향 일치, 대상 명칭 안정적 | 사용자 방향 전부 성공 보고. 대상은 bus/bus_door로 번갈아 표시됨 | 방향 PASS / 대상 안정성 FAIL | 기존 무음 사례와 함께 선택 정책 후속 점검 |
+
+증빙은 PC `outputs/isolated-camera-20261113-124151/`의 trace.jsonl, verification-summary.json, camera-ui.xml, control/result.json에 보관했다. 단기 자격 파일과 APK는 Git에 포함하지 않는다. 전체 Backend 완료로 집계하지 않는다.
