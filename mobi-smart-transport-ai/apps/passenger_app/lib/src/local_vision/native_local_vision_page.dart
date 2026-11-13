@@ -100,7 +100,6 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           sessionGeneration: widget.previewScope,
           confirmationFrames: 3,
           requireDoorInBus: true,
-          minStandaloneDoorConfidence: 0.80,
           prioritizeByDistance: true,
           isCurrent: () =>
               mounted &&
@@ -129,9 +128,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.detached) {
+    if (state != AppLifecycleState.resumed) {
       unawaited(_stop(reason: '앱 비활성화 · 카메라 중지됨'));
     }
   }

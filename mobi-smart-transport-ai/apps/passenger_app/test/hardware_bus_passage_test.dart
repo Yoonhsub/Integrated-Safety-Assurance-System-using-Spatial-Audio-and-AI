@@ -5,6 +5,8 @@ import 'package:mobi_passenger_app/src/app.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/bus_passage.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/hardware_bus_page.dart';
 
+import 'auth_only_app_test.dart' as auth;
+
 void sample(BusPassage p, int rssi, int ms) =>
     p.observe(rssi, Duration(milliseconds: ms));
 void stopInFront(BusPassage p) {
@@ -74,14 +76,17 @@ void main() {
   testWidgets('Passenger app opens real hardware screen without backend',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
-    await tester.pumpWidget(const MobiApp());
+    final session = auth.Session('passenger');
+    addTearDown(session.events.close);
+    await tester.pumpWidget(MobiApp(firebaseConfigured: true, authSession: session));
     await tester.pumpAndSettle();
     // PR #69 keeps online mode selection behind authentication. The local
     // hardware entry must remain directly reachable without a backend.
-    expect(find.text('카메라 인식 시작'), findsOneWidget);
-    await tester.ensureVisible(find.text('이어폰·BLE 기기 점검'));
+    expect(find.text('장애물 탐지'), findsOneWidget);
+    await tester.tap(find.text('장애물 탐지'));
+    await tester.tap(find.text('장애물 탐지'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('이어폰·BLE 기기 점검'));
+    await tester.tap(find.byTooltip('이어폰·BLE 기기 점검'));
     await tester.pumpAndSettle();
     final hardwareEntry = find.text('실기기 연동확인 · BLE/WT901/HRTF');
     await tester.scrollUntilVisible(hardwareEntry, 180);
@@ -93,6 +98,7 @@ void main() {
     expect(find.text('예시 재생'), findsNothing);
     expect(find.text('버스 탐색 시작 (5분)'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle(const Duration(seconds: 3));
   });
   test('approach spike cannot become the departure peak after docking', () {
     final p = BusPassage();

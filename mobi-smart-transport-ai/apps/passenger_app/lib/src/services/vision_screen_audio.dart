@@ -20,36 +20,26 @@ class VisionScreenAudio extends ChangeNotifier {
     this.minimumInterval = const Duration(seconds: 8),
     this.confirmationFrames = 1,
     this.requireDoorInBus = false,
-    this.minStandaloneDoorConfidence,
-    this.isTargetBusBeaconNear,
     this.prioritizeByDistance = false,
-  }) : headTracking = headTracking ?? sharedHeadTrackingState,
-       horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
-       _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
+  })  : headTracking = headTracking ?? sharedHeadTrackingState,
+        horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
+        _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
     if (!identical(priority.engine, engine)) {
       throw ArgumentError('Audio owner mismatch');
     }
     if (confirmationFrames < 1) {
       throw ArgumentError('confirmationFrames must be >= 1');
     }
-    if (minStandaloneDoorConfidence != null &&
-        (!minStandaloneDoorConfidence!.isFinite ||
-            minStandaloneDoorConfidence! < 0.5 ||
-            minStandaloneDoorConfidence! > 1.0)) {
-      throw ArgumentError('minStandaloneDoorConfidence must be in [0.5, 1.0]');
-    }
     this.headTracking.resetForSession();
     priority.addListener(_priorityChanged);
     this.headTracking.addListener(_headTrackingChanged);
   }
   static final _clock = Stopwatch()..start();
-  static final double _configuredFov =
-      double.tryParse(
+  static final double _configuredFov = double.tryParse(
         const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
       ) ??
       0;
   static const double minDoorInBusOverlap = 0.70;
-  static const int maxExitGraceMicros = 8000000;
   final SpeechPriorityCoordinator priority;
   final SpatialVerificationEngine engine;
   final String sessionGeneration;
@@ -57,8 +47,6 @@ class VisionScreenAudio extends ChangeNotifier {
   final Duration minimumInterval;
   final int confirmationFrames;
   final bool requireDoorInBus;
-  final double? minStandaloneDoorConfidence;
-  final bool Function()? isTargetBusBeaconNear;
   final bool prioritizeByDistance;
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
@@ -93,16 +81,9 @@ class VisionScreenAudio extends ChangeNotifier {
       !priority.outputUncertain &&
       headTracking.snapshot.usable(DateTime.now().toUtc());
 
-  TestDirection? _lastDoorSide;
-  bool _lastDoorWasUltraNear = false;
-  int? _lastDoorSeenMicros;
-  bool _doorExitHandled = false;
-  int _doorMissingFrames = 0;
-
-  static const doorHandoffPrompt =
-      '출입문 근처입니다. 버스가 완전히 멈췄는지 소리를 확인하시고, 흰지팡이로 전방의 계단이나 문을 조심스럽게 탐색해 주세요.';
-  static String doorRecoveryPrompt(TestDirection side) =>
-      '출입문이 마지막으로 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}에서 확인되었습니다. 몸을 ${side == TestDirection.left ? '왼쪽' : '오른쪽'}으로 천천히 돌려주세요.';
+  bool _preempting = false;
+  static bool _isObstacle(Object? id) =>
+      id == 'parked_pm' || id == 'pole' || id == 'tree_trunk';
 
   static const classNames = {
     'bus': '버스',
@@ -126,8 +107,8 @@ class VisionScreenAudio extends ChangeNotifier {
   static TestDirection direction(double centerX) => centerX < 1 / 3
       ? TestDirection.left
       : centerX > 2 / 3
-      ? TestDirection.right
-      : TestDirection.center;
+          ? TestDirection.right
+          : TestDirection.center;
 
   /// Relative distance rank based on normalized bbox area and vertical ground
   /// position (bottomY = y + h). Returns 0 for NEAR, 1 for MEDIUM, 2 for FAR.
@@ -151,16 +132,6 @@ class VisionScreenAudio extends ChangeNotifier {
     if (area >= 0.25 || bottomY >= 0.85) return 0;
     if (area >= 0.08 || bottomY >= 0.65) return 1;
     return 2;
-  }
-
-  /// Strict doorstep proximity check for center door handoff:
-  /// Requires large screen area (>= 0.20) or vertical span reaching ground (bottomY >= 0.88, y <= 0.15).
-  static bool isDoorUltraNear(Map b) {
-    final w = (b['w'] as num).toDouble(),
-        h = (b['h'] as num).toDouble(),
-        y = (b['y'] as num).toDouble();
-    final area = w * h, bottomY = y + h;
-    return area >= 0.20 || (bottomY >= 0.88 && y <= 0.15);
   }
 
   static double proximityScore(Map b) {
@@ -241,29 +212,16 @@ class VisionScreenAudio extends ChangeNotifier {
     return bestBus;
   }
 
-  /// Allows a standalone `bus_door` when [requireDoorInBus] is disabled, when
-  /// contained by a parent `bus`, when the target bus BLE beacon is near, or
-  /// when confidence meets [minStandaloneDoorConfidence].
-  bool _isDoorAllowed(double confidence, Map? parentBus) {
-    if (!requireDoorInBus || parentBus != null) return true;
-    if (isTargetBusBeaconNear?.call() == true) return true;
-    final standaloneMin = minStandaloneDoorConfidence;
-    return standaloneMin != null && confidence >= standaloneMin;
-  }
-
   ({
     Map? selected,
     double bestConfidence,
     int bestRank,
-    Map? currentDoor,
   }) _analyzeFrame(List rows) {
     Map? selected;
     double best = -1;
     int bestRank = 99;
     int bestPriority = 99;
     double bestProximity = -1;
-    Map? currentDoor;
-    int currentDoorRank = 99;
     for (final row in rows) {
       if (row is! Map ||
           !classNames.containsKey(row['classId']) ||
@@ -282,7 +240,7 @@ class VisionScreenAudio extends ChangeNotifier {
       final classId = row['classId'] as String;
       final Map? parentBus =
           classId == 'bus_door' ? _parentBusBox(b, rows) : null;
-      if (classId == 'bus_door' && !_isDoorAllowed(c.toDouble(), parentBus)) {
+      if (classId == 'bus_door' && requireDoorInBus && parentBus == null) {
         continue;
       }
       // Inherit distance rank from parent bus so a narrow door on a near bus
@@ -290,17 +248,10 @@ class VisionScreenAudio extends ChangeNotifier {
       final int effectiveRank = parentBus != null
           ? distanceRank('bus', parentBus)
           : distanceRank(classId, b);
-      if (classId == 'bus_door') {
-        if (currentDoor == null || effectiveRank < currentDoorRank) {
-          currentDoor = row;
-          currentDoorRank = effectiveRank;
-        }
-      }
       if (prioritizeByDistance) {
         final prio = _classPriority[classId] ?? 99;
         final prox = proximityScore(b);
-        final better =
-            selected == null ||
+        final better = selected == null ||
             effectiveRank < bestRank ||
             (effectiveRank == bestRank && prio < bestPriority) ||
             (effectiveRank == bestRank &&
@@ -326,39 +277,7 @@ class VisionScreenAudio extends ChangeNotifier {
       selected: selected,
       bestConfidence: best,
       bestRank: bestRank,
-      currentDoor: currentDoor,
     );
-  }
-
-  bool _updateDoorTracking(Map? currentDoor) {
-    if (currentDoor != null) {
-      final doorBox = currentDoor['bbox'] as Map;
-      final doorCx =
-          (doorBox['x'] as num).toDouble() + (doorBox['w'] as num).toDouble() / 2;
-      _lastDoorSide = direction(doorCx);
-      _lastDoorWasUltraNear = isDoorUltraNear(doorBox);
-      _lastDoorSeenMicros = _now();
-      _doorExitHandled = false;
-      _doorMissingFrames = 0;
-      return false;
-    }
-    if (_lastDoorSeenMicros == null) return false;
-    _doorMissingFrames++;
-    final elapsed = _now() - _lastDoorSeenMicros!;
-    if (elapsed > maxExitGraceMicros) {
-      _lastDoorSide = null;
-      _lastDoorWasUltraNear = false;
-      _lastDoorSeenMicros = null;
-      _doorExitHandled = false;
-      _doorMissingFrames = 0;
-      return false;
-    }
-    if (_doorExitHandled) return false;
-    final requiredMissing = confirmationFrames > 1 ? 2 : 1;
-    if (_doorMissingFrames < requiredMissing) return false;
-    return (_lastDoorSide == TestDirection.center && _lastDoorWasUltraNear) ||
-        _lastDoorSide == TestDirection.left ||
-        _lastDoorSide == TestDirection.right;
   }
 
   void _notify() {
@@ -380,11 +299,6 @@ class VisionScreenAudio extends ChangeNotifier {
     _lastMeaning = null;
     _streakMeaning = null;
     _streakCount = 0;
-    _lastDoorSide = null;
-    _lastDoorWasUltraNear = false;
-    _lastDoorSeenMicros = null;
-    _doorExitHandled = false;
-    _doorMissingFrames = 0;
     status = '화면 기준 음향 시연 ON · 새 검출 대기';
     _notify();
   }
@@ -435,8 +349,7 @@ class VisionScreenAudio extends ChangeNotifier {
     mountCalibration = HeadTrackingMountCalibration(
       mount: mountCalibration.mount,
       axesAlignmentVerified: verified,
-      cameraAxisOffsetDegrees:
-          verified &&
+      cameraAxisOffsetDegrees: verified &&
               cameraAxisOffsetDegrees?.isFinite == true &&
               cameraAxisOffsetDegrees!.abs() <= 180
           ? cameraAxisOffsetDegrees
@@ -458,10 +371,10 @@ class VisionScreenAudio extends ChangeNotifier {
       status = !hasCameraCalibration
           ? '카메라 수평 화각 미확인 · Head Tracking 사용 불가'
           : !mountCalibration.supportsHeadTrackedCue
-          ? '지원·검증된 카메라 장착 방식이 아님 · 화면 기준 Cue 유지'
-          : !mountCalibration.verified
-          ? '카메라·센서 축 정렬과 측정 오프셋 확인 필요'
-          : '활성 세션·오디오 소유권·READY 센서 확인 필요';
+              ? '지원·검증된 카메라 장착 방식이 아님 · 화면 기준 Cue 유지'
+              : !mountCalibration.verified
+                  ? '카메라·센서 축 정렬과 측정 오프셋 확인 필요'
+                  : '활성 세션·오디오 소유권·READY 센서 확인 필요';
       _notify();
       return;
     }
@@ -488,11 +401,6 @@ class VisionScreenAudio extends ChangeNotifier {
     _revision++;
     _streakMeaning = null;
     _streakCount = 0;
-    _lastDoorSide = null;
-    _lastDoorWasUltraNear = false;
-    _lastDoorSeenMicros = null;
-    _doorExitHandled = false;
-    _doorMissingFrames = 0;
     _hold?.release();
     _hold = null;
     status = '화면 음향 시연 STOP · 후속 TTS 없음';
@@ -544,127 +452,26 @@ class VisionScreenAudio extends ChangeNotifier {
       return;
     }
     final analysis = _analyzeFrame(rows);
-    final bool shouldHandleDoorExit = _updateDoorTracking(analysis.currentDoor);
+    // Stop only our lower-priority preview output. Do not replay this frame
+    // after cancellation: a new, fresh camera frame must confirm the obstacle.
+    if (_preempting) return;
     if (busy) {
-      // Skip emitting new speech during active TTS playback, while still
-      // refreshing door exit state above so 4~5s utterances do not lose tracking.
+      if (_isObstacle(analysis.selected?['classId']) &&
+          !_isObstacle(diagnostic['classId'])) {
+        _preempting = true;
+        _revision++;
+        _lastMeaning = null;
+        _lastStarted = null;
+        _streakMeaning = null;
+        _streakCount = 0;
+        unawaited(_stopOwned().whenComplete(() => _preempting = false));
+      }
       skippedBusy++;
       return;
     }
     final selected = analysis.selected;
     final best = analysis.bestConfidence;
     final bestRank = analysis.bestRank;
-
-    if (shouldHandleDoorExit) {
-      _doorExitHandled = true;
-      final exitSide = _lastDoorSide!;
-      final bool isCenterHandoff =
-          exitSide == TestDirection.center && _lastDoorWasUltraNear;
-      final text = isCenterHandoff
-          ? doorHandoffPrompt
-          : doorRecoveryPrompt(exitSide);
-      final exitMeaning = 'door_exit:${exitSide.name}:$isCenterHandoff';
-      final admission = ObservationAdmission(
-        deadlineMicros:
-            _now() +
-            const Duration(seconds: 2).inMicroseconds -
-            age.inMicroseconds,
-        nowMicros: _now,
-        eventId: '${result['frameId']}:door_exit',
-        sessionGeneration: sessionGeneration,
-        receivedAt: DateTime.now().toUtc().toIso8601String(),
-        eventCreatedAt: result['capturedAt'],
-      );
-      final revision = _revision;
-      bool valid() =>
-          !_disposed &&
-          enabled &&
-          revision == _revision &&
-          isCurrent() &&
-          !priority.priorityActive;
-      bool admit() {
-        final already = admission.started;
-        if (!admission.admit()) return false;
-        if (!already) {
-          _lastMeaning = exitMeaning;
-          _lastStarted = _now();
-          admitted++;
-        }
-        return true;
-      }
-
-      final guidance = DirectionalGuidance(
-        guidanceId: '${result['frameId']}:door_exit',
-        sessionGeneration: sessionGeneration,
-        authEpoch: 0,
-        priority: GuidancePriority.observation,
-        text: text,
-        provenance: DirectionalGuidance.screenProvenance,
-        testDirection: exitSide,
-        directionEvidence: DirectionEvidence.cameraScreenBbox,
-      );
-      final command = engine.registerGuidance(
-        guidance,
-        valid,
-        admit: admit,
-        spokenText: text,
-        phase: (phase) {
-          if (valid()) {
-            status = phase;
-            diagnostic = {...diagnostic, 'phase': phase};
-            _notify();
-          }
-        },
-      );
-      if (command == null) return;
-      diagnostic = {
-        'frameId': result['frameId'],
-        'capturedAt': result['capturedAt'],
-        'classId': 'bus_door',
-        'className': '버스 문',
-        'doorExitEvent': isCenterHandoff ? 'center_handoff' : 'lateral_recovery',
-        'screenDirection': exitSide.name.toUpperCase(),
-        'provenance': DirectionalGuidance.screenProvenance,
-        'guidanceEligible': false,
-        'text': text,
-      };
-      busy = true;
-      _activeHeadTracked = false;
-      status = 'Cue → TTS 준비';
-      _notify();
-      unawaited(() async {
-        try {
-          final ok = await priority.speakObservation(
-            _owner,
-            command,
-            valid,
-            onDeadline: () => admission.cancel('PLAYBACK_WATCHDOG'),
-          );
-          admission.finish(ok);
-          if (ok) completed++;
-          if (revision == _revision && !_disposed) {
-            status = ok ? 'Cue → 문장 완료' : '취소 또는 시작 전 만료 · 새 검출 대기';
-          }
-        } catch (error) {
-          admission.cancel('AUDIO_FAILURE');
-          debugPrint('Camera screen audio failure: ${error.runtimeType}');
-          if (!_disposed && revision == _revision) {
-            if (error is SpeechCancelled && !priority.outputUncertain) {
-              status = '시작 전 만료 또는 취소 · 새 검출 대기';
-            } else {
-              enabled = false;
-              status = '음향 시연 오류 · 출력 상태를 확인해 주세요';
-            }
-          }
-        } finally {
-          engine.retireGuidance(command);
-          busy = false;
-          _activeHeadTracked = false;
-          _notify();
-        }
-      }());
-      return;
-    }
 
     if (selected == null) {
       _streakMeaning = null;
@@ -674,8 +481,7 @@ class VisionScreenAudio extends ChangeNotifier {
     }
     final box = selected['bbox'] as Map;
     final cx = (box['x'] as num).toDouble() + (box['w'] as num).toDouble() / 2;
-    final side = direction(cx),
-        meaning = '${selected['classId']}:${side.name}';
+    final side = direction(cx), meaning = '${selected['classId']}:${side.name}';
     if (_streakMeaning == meaning) {
       _streakCount++;
     } else {
@@ -685,8 +491,11 @@ class VisionScreenAudio extends ChangeNotifier {
     if (_streakCount < confirmationFrames) {
       return;
     }
+    final replacesNonObstacle =
+        _isObstacle(selected['classId']) && !_isObstacle(diagnostic['classId']);
     if (_lastMeaning == meaning ||
-        (_lastStarted != null &&
+        (!replacesNonObstacle &&
+            _lastStarted != null &&
             _now() - _lastStarted! < minimumInterval.inMicroseconds)) {
       return;
     }
@@ -705,8 +514,7 @@ class VisionScreenAudio extends ChangeNotifier {
         isCurrent() &&
         !priority.priorityActive;
     final admission = ObservationAdmission(
-      deadlineMicros:
-          _now() +
+      deadlineMicros: _now() +
           const Duration(seconds: 2).inMicroseconds -
           age.inMicroseconds,
       nowMicros: _now,
