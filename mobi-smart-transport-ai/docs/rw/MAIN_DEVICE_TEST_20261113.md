@@ -153,3 +153,14 @@ main 소스 변경 없이 기존 `lib/local_android_camera_backend_main.dart`를
 | MAIN-CAM-UNLOCK-MANUAL-RECOVERY | 기존 main APK·SM-S942N·이어폰 | 카메라 실측 / 노트북 사진 | 잠금 → 5초 후 해제 → 카메라 시작 → 화면 음향 ON → 동일 사진 | 검출·음향 수동 복구 | 사용자 ‘둘 다 복구’ 확인 | PASS | 없음 |
 
 수정·재빌드를 제외하고 마지막으로 선정한 3항목 확인을 완료했다: (1) 카메라 권한 거부·복구 — 실행 차단·복구 PASS, 거부 이유 안내 FAIL; (2) 대상 제거 — 박스 소거 PASS, 이미 시작된 음성 즉시 중단 FAIL; (3) 잠금 해제 후 수동 복구 — PASS. 전체 프로젝트 검증 완료나 기존 실패 해소를 뜻하지 않는다. 마지막 청취 확인 후 ADB 홈 이동으로 앱을 비활성화했다. 소스 수정·APK 재빌드·병합은 수행하지 않았다.
+
+## 실제 휴대폰 원문 재전송·TAGO·Firebase 후속 결과
+
+| 테스트 ID | 장비·환경 | 입력(실측/모의) | 재현 절차 | 기대 결과 | 실제 결과·증빙 | 통과/실패/미실행 | 다음 작업 |
+|---|---|---|---|---|---|---|---|
+| ISO-RAW-DUP-01 | 기존 localvision APK·SM-S942N·PC 격리 HTTP Backend | Android 실제 송신 본문 1,019바이트 그대로 재전송 / fake-auth·memory | 별도 PC 진단 런처로 event 본문만 수집(인증 헤더 제외) → APK force-stop으로 송신 정지 → 동일 bytes HTTP POST → Ledger 전후 대조 | 동일 receipt·중복 생성 없음 | status 202, receiptIdentical=true, ledgerUnchanged=true, fingerprintMatches=true. 이벤트 176→176. 원 frameId 583359fd-162e-43a4-94ad-df4ecfd186c4. SHA256 fb06cf75918564201406d879db127722cd7ded22b630fd350bf3793af1177ba9. 송신 detections와 최초 서버 preview 정확히 일치. 최신 Observation은 중복된 과거 프레임으로 되감기지 않음 | PASS(휴대폰 원문·격리 저장소 범위) | 실제 Firebase 영속 저장과 구분 |
+| ISO-RAW-OBS-01 | 동일 | 실제 송신 후 격리 조회 | 동일 lease로 일반·proofOnly GET | 정상 조회·필드 보존·안내 불가 | 두 요청 200, bindings 일치, proofOnly observations=[], 일반 최신 frameId·detections가 서버 preview와 일치. 일반 Observation 및 중복 receipt guidanceEligible=false. verified-summary.json 검사 통과 | PASS | 없음 |
+| TAGO-LIVE-REQUEST | 배포 Backend 공개 arrivals GET(PC 직접 요청) | mode=mock/live 명시 | CJB283000215 mock/live, CJB283000216 live 요청 | live에서 PUBLIC_API 실데이터 증빙 | mock은 fallbackSource=MOCK. live 2건은 HTTP 200이나 fallbackSource=ERROR·arrivals=[]. 정류장 ID는 저장소 테스트 참고값이며 유효성을 독립 검증하지 못함. TAGO 키·상류 서비스·정류장 중 어느 원인인지는 확정하지 않음 | FAIL(해당 실데이터 수신 시도) | 유효 실정류장 ID 및 담당자 상류 진단 필요. 전체 TAGO 장애로 일반화하지 않음 |
+| FIREBASE-PERSIST-REAL | 실제 RTDB 검증 환경 미확보 | 미실행 | 격리 테스트 Backend·RTDB 설정·자격 조사 | 실제 transaction 후 재조회·영속 증빙 | 공개 Android 설정만 존재. 조사 범위에서 서비스 계정·ADC·실제 테스트 run 설정 없음. 담당자도 환경 위치 모름 응답. 배포 health firebase-admin/initialized=true 표시는 읽었으나 특정 Ledger 저장 증빙은 아님. 배포 저장 쓰기는 수행하지 않음 | 미실행(격리 저장 접근·환경 미확보) | 담당자로부터 테스트 환경·권한·실행 범위 확보 |
+
+증빙: outputs/exact-camera-20261113-132229/control/event-body.json, exact-replay-result.json, verified-summary.json, trace.jsonl, control/result.json. 기존 main 및 APK는 변경하지 않고 outputs의 외부 진단 런처만 사용했다. 검증 후 localvision APK 종료, PC 서버 종료, 소유 ADB reverse 및 휴대폰·PC 단기 연결 파일 제거. 실제 Firebase 검증으로 확대 집계하지 않는다. 원문 재전송 미실행 항목은 이번 격리 실측 시험으로 보완 완료했다.
