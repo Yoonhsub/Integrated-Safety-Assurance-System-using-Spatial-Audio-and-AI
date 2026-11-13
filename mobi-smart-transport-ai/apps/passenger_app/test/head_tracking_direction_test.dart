@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobi_passenger_app/src/features/hardware_bus/wit_sensor_protocol.dart';
 import 'package:mobi_passenger_app/src/services/head_tracking_direction.dart';
 
 void main() {
@@ -205,6 +206,27 @@ void main() {
       ..resetForSession();
     expect(state.snapshot.status, HeadTrackingStatus.disconnected);
     expect(state.snapshot.referenceYaw, isNull);
+  });
+
+  test('calibrateZeroReferenceFromCameraAngle sets reference yaw correctly', () {
+    final state = HeadTrackingState()
+      ..publish(ready(10)); // filteredYaw = 10 deg
+
+    // Camera detects door at +15 deg (right).
+    // Target world yaw = 10 + 15 = 25 deg.
+    final locked = state.calibrateZeroReferenceFromCameraAngle(15.0);
+    expect(locked, 25.0);
+    expect(state.snapshot.referenceYaw, 25.0);
+    expect(state.snapshot.message, contains('+15.0°'));
+
+    // Before head turn (filteredYaw = 10 deg):
+    // headRight relative to reference (25 deg) = 10 - 25 = -15 deg (head is looking 15 deg left of target).
+    final headRight = relativeAngle(state.snapshot.filteredYaw!, state.snapshot.referenceYaw!);
+    expect(headRight, -15.0);
+
+    // When head rotates to face target (filteredYaw = 25 deg):
+    final headFacingTarget = relativeAngle(25.0, state.snapshot.referenceYaw!);
+    expect(headFacingTarget, 0.0);
   });
 }
 
