@@ -30,6 +30,7 @@ void main() {
     bool enabled = true,
     String scope = 'radio',
     bool relative = false,
+    bool wait = false,
     int rssi = -85,
     DateTime? seen,
   }) =>
@@ -40,6 +41,7 @@ void main() {
               key: const ValueKey('tone'),
               z: z,
               targetIsHeadRelative: relative,
+              waitForTarget: wait,
               reference: 0,
               fresh: fresh,
               sensorAgeMs: 0,
@@ -74,6 +76,57 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+      'camera monitor arms without target, plays only fresh target, and STOP cancels waiting',
+      (tester) async {
+    await tester.pumpWidget(panel(enabled: false, wait: true));
+    await start(tester);
+    expect(calls.where((c) => c.method == 'start'), isEmpty);
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(panel(enabled: false, wait: true));
+    await tester.pump();
+    expect(calls.last.method, 'stop');
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(2));
+    await tester.pumpWidget(panel(enabled: false, wait: true));
+    await tester.pump();
+    await tester.ensureVisible(find.text('소리 중지'));
+    await tester.tap(find.text('소리 중지'));
+    await tester.pump();
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(2));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('background cancels initial camera sound waiting',
+      (tester) async {
+    await tester.pumpWidget(panel(enabled: false, wait: true));
+    await start(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('sensor loss cancels camera monitoring until manual restart',
+      (tester) async {
+    await tester.pumpWidget(panel(wait: true));
+    await start(tester);
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(panel(wait: true, fresh: false));
+    await tester.pump();
+    expect(calls.last.method, 'stop');
+    await tester.pumpWidget(panel(wait: true));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(calls.where((c) => c.method == 'start'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('rotation and stronger RSSI update different output parameters', (
     tester,
   ) async {

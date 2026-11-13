@@ -266,7 +266,8 @@ class _CameraBusTestPanelState extends State<CameraBusTestPanel>
           busAngle: angle ?? 0,
           busEnabled: angle != null,
           audioScope: '${widget.scope}/$_reference',
-          targetIsHeadRelative: true),
+          targetIsHeadRelative: true,
+          waitForTarget: true),
       const SizedBox(height: 12),
       const Text('후면 카메라 · 통합 v4 실측'),
       SizedBox(

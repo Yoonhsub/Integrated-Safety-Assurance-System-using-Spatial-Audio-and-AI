@@ -22,6 +22,7 @@ class DirectionAudioPanel extends StatefulWidget {
     this.busEnabled = true,
     this.audioScope = '',
     this.targetIsHeadRelative = false,
+    this.waitForTarget = false,
     this.obstacles,
     this.sessionNow,
   });
@@ -35,6 +36,7 @@ class DirectionAudioPanel extends StatefulWidget {
   final bool warning, busEnabled;
   final String audioScope;
   final bool targetIsHeadRelative;
+  final bool waitForTarget;
 
   /// Optional producer snapshot; no detector or synthetic input is created here.
   final ObstacleCueSnapshot? obstacles;
@@ -53,6 +55,8 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   late final CueOutputDriver _driver;
   bool get _manualWarning => widget.warning;
   bool _playing = false, _starting = false, _syncing = false;
+  bool _waiting = false;
+  final _listenDuration = Stopwatch();
   bool _reverse = false, _disposed = false;
   final bool _proximity = true;
   double get _objectAngle => widget.busAngle;
@@ -193,6 +197,21 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     ];
   }
 
+  Future<void> _requestStart() async {
+    if (widget.waitForTarget) {
+      _listenDuration
+        ..reset()
+        ..start();
+      if (!_ready) {
+        _waiting = true;
+        _message = '소리 대기 중 · 문 검출과 카메라·센서·목표 비콘의 최신 입력을 기다립니다.';
+        _refresh();
+        return;
+      }
+    }
+    await _start();
+  }
+
   Future<void> _start() async {
     if (!_ready || _playing || _starting) return;
     final generation = ++_generation;
@@ -221,9 +240,27 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   }
 
   Future<void> _sync() async {
+    if (_disposed) return;
+    if (widget.waitForTarget &&
+        _listenDuration.isRunning &&
+        _listenDuration.elapsed >= const Duration(minutes: 5)) {
+      await _stop('5분 소리 대기·안내 종료. 다시 시작할 수 있습니다.');
+      return;
+    }
+    if (_waiting) {
+      if (_ready) {
+        _waiting = false;
+        await _start();
+      }
+      return;
+    }
     if (!_playing || _syncing || _disposed) return;
     if (!_ready) {
-      await _stop('센서 또는 비콘의 최신 수신 상태를 확인해주세요.');
+      await _stop(
+          widget.waitForTarget && _sensorReady && _beaconFresh
+              ? '소리 대기 중 · 문을 다시 확인하면 재생합니다.'
+              : '센서 또는 비콘의 최신 수신 상태를 확인해주세요.',
+          wait: widget.waitForTarget && _sensorReady && _beaconFresh);
       return;
     }
     if (_duration.elapsed >= const Duration(minutes: 5)) {
@@ -259,10 +296,12 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     }
   }
 
-  Future<void> _stop(String message) async {
+  Future<void> _stop(String message, {bool wait = false}) async {
     ++_generation;
     _playing = false;
     _starting = false;
+    _waiting = wait;
+    if (!wait) _listenDuration.stop();
 
     _controller.cancel();
     _duration.stop();
@@ -284,19 +323,29 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     if (oldWidget.reference != widget.reference || !widget.fresh) {
       _directionTracker.reset();
     }
-    if ((_playing || _starting) &&
+    final scopeChanged = oldWidget.beaconName != widget.beaconName ||
+        oldWidget.audioScope != widget.audioScope;
+    if (_waiting && scopeChanged) {
+      unawaited(_stop('목표 또는 시험 세션이 바뀌어 소리 대기를 취소했습니다.'));
+    } else if ((_playing || _starting) &&
         (!_ready ||
             oldWidget.reference != widget.reference ||
-            (!_externalWarning &&
-                (oldWidget.beaconName != widget.beaconName ||
-                    oldWidget.audioScope != widget.audioScope)))) {
-      unawaited(_stop('센서 상태 또는 기준각이 바뀌어 테스트음을 중지했습니다.'));
+            (!_externalWarning && scopeChanged))) {
+      final wait = widget.waitForTarget &&
+          !scopeChanged &&
+          oldWidget.reference == widget.reference &&
+          _sensorReady &&
+          _beaconFresh;
+      unawaited(_stop(
+          wait ? '소리 대기 중 · 문을 다시 확인하면 재생합니다.' : '입력 상태가 바뀌어 테스트음을 중지했습니다.',
+          wait: wait));
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed && (_playing || _starting)) {
+    if (state != AppLifecycleState.resumed &&
+        (_playing || _starting || _waiting)) {
       unawaited(_stop('화면을 벗어나 테스트음을 중지했습니다.'));
     }
   }
@@ -367,11 +416,16 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           spacing: 8,
           children: [
             FilledButton(
-              onPressed: _ready && !_playing && !_starting ? _start : null,
+              onPressed: (_ready || widget.waitForTarget) &&
+                      !_playing &&
+                      !_starting &&
+                      !_waiting
+                  ? _requestStart
+                  : null,
               child: Text(widget.obstacles != null ? '안내 소리 시작' : '버스 소리 시작'),
             ),
             OutlinedButton(
-              onPressed: _playing || _starting
+              onPressed: _playing || _starting || _waiting
                   ? () => unawaited(_stop('사용자가 테스트음을 중지했습니다.'))
                   : null,
               child: const Text('소리 중지'),
@@ -391,7 +445,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     _disposed = true;
     _timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    if (_playing || _starting) unawaited(_stop(''));
+    if (_playing || _starting || _waiting) unawaited(_stop(''));
     super.dispose();
   }
 }
