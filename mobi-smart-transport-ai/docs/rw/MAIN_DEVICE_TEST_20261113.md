@@ -89,3 +89,11 @@ main 소스 변경 없이 기존 `lib/local_android_camera_backend_main.dart`를
 | ISO-REC-DUP-01 | 기존 main FastAPI TestClient, fake auth/memory | 직전 Android 실측 탐지 기록 재생 + 새 테스트 세션·시각·모델 메타데이터 구성 | 같은 payload 2회 전송 → Ledger 전후 비교 → 일반/proofOnly 조회 → 같은 eventId의 confidence 변경 재전송 | 동일 receipt, Ledger 1개, 원본 탐지 보존, 충돌 거부 | pytest 1 passed(2.12초). 두 전송 202와 receipt 완전 동일, Ledger 이벤트 1개 및 전체 데이터 불변. 일반/proofOnly 각각 200, frameId/class/confidence/bbox 동일, guidanceEligible=false, proofOnly observations=[] 및 bindings 일치. 변경 payload 409, Ledger 불변. outputs/isolated-camera-20261113-124151/recorded-duplicate-evidence.json | PASS(기록 재생·격리 저장소 범위) | 휴대폰 실제 송신 원문 그대로의 재전송 및 실제 Firebase 영속 저장 검증은 미실행 |
 
 이 검증은 main 소스를 수정하지 않고 작업 폴더 outputs의 임시 테스트에서 기존 인증 경계 fixture와 API를 재사용했다. 실제 휴대폰 원문을 가로채 재전송한 검증과 구분한다. 이전 ISO-CAM-03의 실기기 원문 재전송 미실행 상태는 유지한다.
+
+### 이어폰 미연결 상태의 새 카메라 음향 출력
+
+| 테스트 ID | 장비·환경 | 입력(실측/모의) | 재현 절차 | 기대 결과 | 실제 결과·증빙 | 통과/실패/미실행 | 다음 작업 |
+|---|---|---|---|---|---|---|---|
+| MAIN-AUDIO-LOSS-NEW | 기존 main APK, SM-S942N, Shokz 전원 OFF | 휴대폰 카메라 실측 / 노트북 사진 | 이어폰 OFF → 로컬 카메라 시작 → 화면 위치 소리·음성 안내 ON → 새 객체 탐지 | 이어폰 전용 출력 정책을 적용한다면 미연결 중 새 음향도 차단 | 사용자가 휴대폰 스피커에서 들렸다고 확인. UI에서 카메라 실행 및 음향 스위치 checked=true 확인. headphone-loss-current.png에 노트북 버스 사진 bus 81% 박스 확인. 보고 직후 음성·카메라 중지 조작 수행 | FAIL(이어폰 전용 출력 기준) | 미연결 상태에서 새 cue/TTS 시작 차단과 재연결 시 명시적 재시작 정책 검토. 앱의 스피커 허용 정책이 의도된 것인지 확인 필요 |
+
+재생 중 연결 해제에 따른 정지 시험과 구분한다. 이번 결과는 이어폰이 이미 꺼진 상태에서도 새 카메라 음향을 시작할 수 있다는 의미이며, 기존 main 소스 수정 없이 기록했다.
