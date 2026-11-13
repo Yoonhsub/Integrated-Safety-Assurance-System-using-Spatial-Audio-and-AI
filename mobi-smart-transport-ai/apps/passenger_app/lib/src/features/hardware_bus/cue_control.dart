@@ -36,6 +36,7 @@ class CueObject {
 class CueSelection {
   const CueSelection(this.object, this.priority, this.direction,
       {this.usesHrtf = false});
+
   /// When true, render direction.targetAngle through HRTF; five-way cue/gains
   /// are not a front/back rendering instruction.
   final bool usesHrtf;
@@ -198,16 +199,17 @@ class CueController {
       objectAngle: selected.angleDegrees,
     );
     // Explicit obstacle directions use measured horizontal HRTF, including rear.
-    // Legacy bus diagnostics retain the original five-way behavior.
+    // A rear bus target keeps a balanced proximity cue, without claiming front/back direction.
     final spatial = selected.kind == CueObjectKind.obstacle &&
         selected.obstacleRisk != null;
-    if (!raw.supported && !spatial) {
+    final rearTarget = selected.kind == CueObjectKind.target && !raw.supported;
+    if (!raw.supported && !spatial && !rearTarget) {
       return _clear('selected object outside five-way field');
     }
-    final direction = spatial
+    final direction = spatial || rearTarget
         ? DirectionPan(raw.targetAngle, 0, .7071067811865476, .7071067811865476)
         : _tracker.track(raw);
-    if (spatial) _tracker.reset();
+    if (spatial || rearTarget) _tracker.reset();
     final next = CueSelection(selected, rank, direction, usesHrtf: spatial);
     final previous = _active;
     if (previous == null &&

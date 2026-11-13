@@ -109,7 +109,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   DirectionPan? get _pan {
     final raw = _rawPan;
     if (raw == null) return null;
-    if (_warningBehind) {
+    if (raw.supported == false) {
       _directionTracker.reset();
       // Keep the true angle for UI; an out-of-field hazard uses a balanced alert.
       return DirectionPan(
@@ -217,7 +217,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   Future<void> _sync() async {
     if (!_playing || _syncing || _disposed) return;
     if (!_ready) {
-      await _stop('수신 상태 또는 목표각을 확인해주세요. 후방 목표는 5방향 출력 범위 밖입니다.');
+      await _stop('센서 또는 비콘의 최신 수신 상태를 확인해주세요.');
       return;
     }
     if (_duration.elapsed >= const Duration(minutes: 5)) {
@@ -333,7 +333,9 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
               : _warningBehind
                   ? '후방 대상 · 방향 없는 경고음'
                   : pan.supported
-                      ? '출력 Cue: ${pan.cue.code}'
+                      ? (!_manualWarning && _rawPan?.supported == false
+                          ? '후방 목표 · 방향 없는 중앙 근접음'
+                          : '출력 Cue: ${pan.cue.code}')
                       : '후방 목표 · 재생 중지'),
         if (pan != null)
           Text(
@@ -372,7 +374,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         ),
         if (widget.busEnabled)
           const Text(
-            '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다.',
+            '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다. 후방 목표는 중앙 근접음으로 계속 재생합니다.',
           ),
       ],
     );

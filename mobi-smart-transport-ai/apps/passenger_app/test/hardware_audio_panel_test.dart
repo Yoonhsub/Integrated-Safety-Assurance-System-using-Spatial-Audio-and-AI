@@ -101,14 +101,26 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(
-    'rear target stops native output instead of playing a front cue',
+    'rear target keeps balanced proximity tone and returns to directional cue',
     (tester) async {
       await tester.pumpWidget(panel());
       await start(tester);
-      await tester.pumpWidget(panel(z: 180));
-      await tester.pump();
-      expect(calls.last.method, 'stop');
-      expect(find.text('후방 목표 · 재생 중지'), findsOneWidget);
+      final initialStops = calls.where((c) => c.method == 'stop').length;
+      for (final angle in [96.0, 180.0, -96.0]) {
+        await tester.pumpWidget(panel(z: angle));
+        await tester.pump(const Duration(milliseconds: 200));
+        final output =
+            calls.lastWhere((c) => c.method == 'update').arguments as Map;
+        expect(output['left'], closeTo(output['right'], 1e-9));
+        expect(calls.where((c) => c.method == 'stop').length, initialStops);
+        expect(find.text('후방 목표 · 방향 없는 중앙 근접음'), findsOneWidget);
+      }
+      await tester.pumpWidget(panel(z: 45));
+      await tester.pump(const Duration(milliseconds: 200));
+      final output =
+          calls.lastWhere((c) => c.method == 'update').arguments as Map;
+      expect(output['left'] as double, greaterThan(output['right'] as double));
+      expect(calls.where((c) => c.method == 'start'), hasLength(1));
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -242,8 +254,7 @@ void main() {
     expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets(
-      'disabled hardware input stops sound until explicitly restarted',
+  testWidgets('disabled hardware input stops sound until explicitly restarted',
       (tester) async {
     await tester.pumpWidget(panel());
     await start(tester);
@@ -256,8 +267,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('changing radio source stops old output',
-      (tester) async {
+  testWidgets('changing radio source stops old output', (tester) async {
     await tester.pumpWidget(panel());
     await start(tester);
     await tester.pumpWidget(panel(scope: 'radio-target-b'));
