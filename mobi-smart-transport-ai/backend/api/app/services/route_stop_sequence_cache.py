@@ -74,22 +74,29 @@ class RouteStopSequenceCache:
 
     def sequences(self, *, live: bool, route_nos: Iterable[str] = ()) -> list[RouteSequence]:
         requested = {route_no.strip() for route_no in route_nos if route_no.strip()}
-        if live and requested:
+        if live:
+            if not requested:
+                return []
             previously_loaded = requested & self._loaded_live_route_nos
             self.load_live_routes(requested)
-            live_sequences = [
-                sequence
-                for sequence in self._sequences_by_route_id.values()
-                if sequence.route_no in requested
-                and sequence.source in (FallbackSource.PUBLIC_API, FallbackSource.CACHE)
-            ]
-            if live_sequences:
+            with self._lock:
                 live_sequences = [
-                    replace(sequence, source=FallbackSource.CACHE)
-                    if sequence.route_no in previously_loaded
-                    else sequence
-                    for sequence in live_sequences
+                    sequence
+                    for sequence in self._sequences_by_route_id.values()
+                    if sequence.route_no in requested
+                    and sequence.source in (FallbackSource.PUBLIC_API, FallbackSource.CACHE)
                 ]
+            if live_sequences:
+                if previously_loaded:
+                    cached_sequences = []
+                    with self._lock:
+                        for sequence in live_sequences:
+                            if sequence.route_no in previously_loaded:
+                                # CACHE records in-process reuse, not a freshness guarantee.
+                                sequence = replace(sequence, source=FallbackSource.CACHE)
+                                self._sequences_by_route_id[sequence.route_id] = sequence
+                            cached_sequences.append(sequence)
+                    live_sequences = cached_sequences
                 return sorted(live_sequences, key=lambda sequence: (sequence.route_no, sequence.route_id))
             # Live requests must never silently consume the demo-only sequence set.
             return []
