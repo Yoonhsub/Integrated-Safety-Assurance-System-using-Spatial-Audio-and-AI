@@ -1,3 +1,4 @@
+import '../../widgets/described_action.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -62,6 +63,7 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
   Future<void> _exit({required bool navigated}) async {
     if (_exiting) return;
     _exiting = true;
+    DescribedAction.cancelDescriptions();
     // 1) 남은 partial을 final로 정리해 로그 보존.
     _captions.flushTemporaryToSessionLog();
     final log = _captions.sessionLog;
@@ -146,9 +148,15 @@ class _LiveVoicePageState extends State<LiveVoicePage> {
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 18),
-                  child: _BottomControls(
-                    onMicTap: () => _controller.handleMicTap(),
-                    onClose: () => _exit(navigated: false),
+                  child: ValueListenableBuilder<VoiceTurnState>(
+                    valueListenable: _controller.state,
+                    builder: (context, state, _) => _BottomControls(
+                        immediateMic: state != VoiceTurnState.idle,
+                        onMicTap: () {
+                          DescribedAction.cancelDescriptions();
+                          _controller.handleMicTap();
+                        },
+                        onClose: () => _exit(navigated: false)),
                   ),
                 ),
               ),
@@ -199,7 +207,11 @@ class _TopStatus extends StatelessWidget {
 }
 
 class _BottomControls extends StatelessWidget {
-  const _BottomControls({required this.onMicTap, required this.onClose});
+  const _BottomControls(
+      {required this.onMicTap,
+      required this.onClose,
+      required this.immediateMic});
+  final bool immediateMic;
 
   final VoidCallback onMicTap;
   final VoidCallback onClose;
@@ -217,11 +229,16 @@ class _BottomControls extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _RoundButton(
-              icon: Icons.mic,
-              background: Colors.white.withValues(alpha: 0.12),
-              onTap: onMicTap,
-            ),
+            DescribedAction(
+                label: '음성 질문 시작',
+                description: '마이크를 켜서 음성으로 질문합니다.',
+                immediate: immediateMic,
+                onActivate: onMicTap,
+                child: _RoundButton(
+                  icon: Icons.mic,
+                  background: Colors.white.withValues(alpha: 0.12),
+                  onTap: onMicTap,
+                )),
             const SizedBox(width: 28),
             _RoundButton(
               icon: Icons.close,

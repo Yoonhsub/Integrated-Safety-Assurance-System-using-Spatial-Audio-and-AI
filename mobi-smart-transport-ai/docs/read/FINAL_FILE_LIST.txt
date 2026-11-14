@@ -854,3 +854,7 @@ backend/api/tests/test_gemini_completion_and_provider.py
 backend/api/tests/test_tago_diagnostics.py
 docs/rw/TAGO_DIAGNOSTICS.md
 backend/api/tests/test_tago_stop_provider.py
+apps/passenger_app/lib/src/widgets/described_action.dart
+apps/passenger_app/test/described_action_test.dart
+apps/passenger_app/lib/src/widgets/app_navigation.dart
+apps/passenger_app/test/app_navigation_test.dart

@@ -1,3 +1,4 @@
+import '../widgets/described_action.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
@@ -319,6 +320,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   }
 
   Future<void> _stop({String reason = '카메라 중지됨'}) {
+    DescribedAction.cancelDescriptions();
     final previewStop = _previewAudio?.stop(notify: !_disposing);
     if (_stopping != null) return _stopping!;
     _generation++;
@@ -377,168 +379,196 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     }
     final item = _pump.observation;
     final busy = _starting || _picking || _stopping != null || _ending;
-    return Scaffold(
-        appBar: AppBar(title: const Text('카메라 인식')),
-        bottomNavigationBar: SafeArea(
-            child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: Wrap(spacing: 12, runSpacing: 8, children: [
-                  if (_previewAudio != null)
-                    FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFB03132)),
-                        onPressed: _previewAudio!.stop,
-                        icon: const Icon(Icons.stop),
-                        label: const Text('음성 중지')),
-                  OutlinedButton.icon(
-                      onPressed:
-                          _camera == null && !_starting ? null : () => _stop(),
-                      icon: const Icon(Icons.videocam_off_outlined),
-                      label: const Text('카메라 중지')),
-                ]))),
-        body: ListView(padding: const EdgeInsets.all(16), children: [
-          Semantics(
-            liveRegion: true,
-            child: Text(
-              '카메라 상태: ${_pump.lost ? "프레임 수신 소실 또는 지연 · 카메라를 중지한 뒤 다시 시작해 주세요" : _status}',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ),
-          if (busy)
-            const LinearProgressIndicator(semanticsLabel: '카메라 작업 처리 중'),
-          const SizedBox(height: 12),
-          if (item == null)
-            const SizedBox(
-                height: 160, child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
-          else
-            AspectRatio(
-                aspectRatio: item.width / item.height,
-                child: Stack(fit: StackFit.expand, children: [
-                  Image.memory(item.jpeg,
-                      fit: BoxFit.fill, gaplessPlayback: true),
-                  CustomPaint(painter: _BoxPainter(item.boxes)),
-                ])),
-          if (item != null && item.boxes.isNotEmpty)
-            Card(
+    return ActionSpeechScope(
+        speech: widget.previewPriority ?? sharedSpeechPriority,
+        child: Scaffold(
+            appBar: AppBar(title: const Text('카메라 인식')),
+            bottomNavigationBar: SafeArea(
                 child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('현재 인식 결과',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                          for (final box in item.boxes.take(3))
-                            Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 6),
-                                child: Text(
-                                    '${visionClassNames[box.classId] ?? box.classId} · ${(box.confidence * 100).round()}%',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleLarge)),
-                          if (item.boxes.length > 3)
-                            Text('외 ${item.boxes.length - 3}개 · 검출 이미지에서 확인'),
-                        ]))),
-          const SizedBox(height: 12),
-          const Card(
-              child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                      '화면 기준의 정보성 시연입니다. 실제 거리·공간 방향·출입문·승차 가능 여부를 판단하지 않습니다.'))),
-          ExpansionTile(
-              title: const Text('실시간 카메라 Preview'),
-              maintainState: true,
-              children: [
-                if (_camera?.value.isInitialized == true) ...[
-                  const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
-                  AspectRatio(
-                      aspectRatio: _camera!.value.aspectRatio,
-                      child: CameraPreview(_camera!)),
-                ],
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                    child: Wrap(spacing: 12, runSpacing: 8, children: [
+                      if (_previewAudio != null)
+                        FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFB03132)),
+                            onPressed: () {
+                              DescribedAction.cancelDescriptions();
+                              _previewAudio!.stop();
+                            },
+                            icon: const Icon(Icons.stop),
+                            label: const Text('음성 중지')),
+                      OutlinedButton.icon(
+                          onPressed: _camera == null && !_starting
+                              ? null
+                              : () {
+                                  DescribedAction.cancelDescriptions();
+                                  _stop();
+                                },
+                          icon: const Icon(Icons.videocam_off_outlined),
+                          label: const Text('카메라 중지')),
+                    ]))),
+            body: ListView(padding: const EdgeInsets.all(16), children: [
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  '카메라 상태: ${_pump.lost ? "프레임 수신 소실 또는 지연 · 카메라를 중지한 뒤 다시 시작해 주세요" : _status}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (busy)
+                const LinearProgressIndicator(semanticsLabel: '카메라 작업 처리 중'),
+              const SizedBox(height: 12),
+              if (item == null)
+                const SizedBox(
+                    height: 160,
+                    child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
+              else
+                AspectRatio(
+                    aspectRatio: item.width / item.height,
+                    child: Stack(fit: StackFit.expand, children: [
+                      Image.memory(item.jpeg,
+                          fit: BoxFit.fill, gaplessPlayback: true),
+                      CustomPaint(painter: _BoxPainter(item.boxes)),
+                    ])),
+              if (item != null && item.boxes.isNotEmpty)
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('현재 인식 결과',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold)),
+                              for (final box in item.boxes.take(3))
+                                Padding(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 6),
+                                    child: Text(
+                                        '${visionClassNames[box.classId] ?? box.classId} · ${(box.confidence * 100).round()}%',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleLarge)),
+                              if (item.boxes.length > 3)
+                                Text(
+                                    '외 ${item.boxes.length - 3}개 · 검출 이미지에서 확인'),
+                            ]))),
+              const SizedBox(height: 12),
+              const Card(
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                          '화면 기준의 객체 안내입니다. 실제 거리·공간 방향·출입문·승차 가능 여부를 판단하지 않습니다.'))),
+              ExpansionTile(
+                  title: const Text('실시간 카메라 Preview'),
+                  maintainState: true,
+                  children: [
+                    if (_camera?.value.isInitialized == true) ...[
+                      const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
+                      AspectRatio(
+                          aspectRatio: _camera!.value.aspectRatio,
+                          child: CameraPreview(_camera!)),
+                    ],
+                  ]),
+              Text(widget.producer == null && widget.onResult == null
+                  ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
+                  : _pump.error != null
+                      ? 'UNAVAILABLE · 온라인 전송 중지 · 연결 상태를 확인한 뒤 다시 시작해 주세요'
+                      : 'ONLINE 연결 경로 · 서버 수신 여부는 아래 서버 관찰에서 확인'),
+              Text(widget.producer == null && widget.onResult == null
+                  ? '휴대폰 내부 관찰 · 서버로 전송하지 않습니다. 승차 판단에 사용하지 않습니다.'
+                  : _previewAudio == null
+                      ? '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·자동 음성 안내는 없습니다.'
+                      : '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·위험 안내는 없습니다. 객체 음성·방향음은 직접 켠 경우만 출력합니다.'),
+              Wrap(spacing: 8, children: [
+                DescribedAction.button(
+                    label: widget.bundledModel ? '모델 다시 준비' : 'TFLite 모델 선택',
+                    description: '객체 인식에 사용할 모델을 준비합니다.',
+                    immediate: false,
+                    child: FilledButton(
+                        onPressed: busy || _camera != null
+                            ? null
+                            : widget.bundledModel
+                                ? _loadBundledModel
+                                : _chooseModel,
+                        child: Text(widget.bundledModel
+                            ? '모델 다시 준비'
+                            : 'TFLite 모델 선택'))),
+                DescribedAction.button(
+                    label: '카메라 시작',
+                    description: '카메라 촬영과 객체 인식을 시작합니다.',
+                    immediate: false,
+                    child: FilledButton(
+                        onPressed: busy || _model == null || _camera != null
+                            ? null
+                            : _start,
+                        child: const Text('카메라 시작'))),
               ]),
-          Text(widget.producer == null && widget.onResult == null
-              ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
-              : _pump.error != null
-                  ? 'UNAVAILABLE · 온라인 전송 중지 · 로컬 시연은 앱 첫 화면에서 별도로 선택해 주세요'
-                  : 'ONLINE 연결 경로 · 서버 수신 여부는 아래 서버 관찰에서 확인'),
-          Text(widget.producer == null && widget.onResult == null
-              ? '휴대폰 내부 관찰 · 서버로 전송하지 않습니다. 승차 판단에 사용하지 않습니다.'
-              : _previewAudio == null
-                  ? '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·자동 음성 안내는 없습니다.'
-                  : '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·위험 안내는 없습니다. 화면 음향 시연은 직접 켠 경우만 출력합니다.'),
-          Wrap(spacing: 8, children: [
-            FilledButton(
-                onPressed: busy || _camera != null
-                    ? null
-                    : widget.bundledModel
-                        ? _loadBundledModel
-                        : _chooseModel,
-                child: Text(widget.bundledModel ? '모델 다시 준비' : 'TFLite 모델 선택')),
-            FilledButton(
-                onPressed:
-                    busy || _model == null || _camera != null ? null : _start,
-                child: const Text('카메라 시작')),
-          ]),
-          if (_previewAudio != null)
-            VisionScreenAudioPanel(
-                audio: _previewAudio!,
-                cameraActive: _pump.active,
-                showStopButton: false),
-          if (_previewAudio != null)
-            ExpansionTile(
-                title: const Text('WT901 Head Tracking (기본 OFF)'),
-                subtitle: const Text('센서 연결·정면 보정·검증된 카메라 화각이 모두 필요'),
-                maintainState: true,
-                children: [
-                  WitSensorPanel(
-                      stateOnly: true, ensureReady: _ensureHeadTrackingReady),
-                ]),
-          if (widget.onEndSession != null)
-            OutlinedButton(
-                onPressed: busy
-                    ? null
-                    : () async {
-                        setState(() => _ending = true);
-                        await _stop(reason: '세션 종료 · 카메라/전송 중지');
-                        try {
-                          await widget.onEndSession!();
-                        } finally {
-                          if (mounted) setState(() => _ending = false);
-                        }
-                      },
-                child: const Text('세션 종료 · 카메라/전송 중지')),
-          SwitchListTile(
-              title: const Text('전면 카메라 사용'),
-              value: _front,
-              onChanged: busy || _camera != null
-                  ? null
-                  : (v) => setState(() => _front = v)),
-          if (_worker != null)
-            Text(
-                'TFLite 로드 ${_worker!.loadMs.toStringAsFixed(1)}ms · warm-up ${_worker!.warmUpMs.toStringAsFixed(1)}ms'),
-          if (widget.remoteApi != null &&
-              (widget.producer != null || widget.remoteSessionId != null) &&
-              _pump.active &&
-              _pump.error == null &&
-              _pump.processed > 0)
-            VisionObservationPanel(
-                key: ValueKey(_generation),
-                sessionId: widget.remoteSessionId ?? widget.producer!.sessionId,
-                ownerUid: widget.ownerUid,
-                fetch: widget.remoteApi!.fetchVisionObservations,
-                hideSpeechControls: true),
-          ExpansionTile(
-              title: const Text('인식 상세 정보'),
-              maintainState: true,
-              children: [
-                if (item != null) VisionObservationPanel.localCamera(item),
+              if (_previewAudio != null)
+                VisionScreenAudioPanel(
+                    audio: _previewAudio!,
+                    cameraActive: _pump.active,
+                    showStopButton: false,
+                    diagnostics: widget.remoteApi == null),
+              if (_previewAudio != null && widget.remoteApi == null)
+                ExpansionTile(
+                    title: const Text('WT901 Head Tracking (기본 OFF)'),
+                    subtitle: const Text('센서 연결·정면 보정·검증된 카메라 화각이 모두 필요'),
+                    maintainState: true,
+                    children: [
+                      WitSensorPanel(
+                          stateOnly: true,
+                          ensureReady: _ensureHeadTrackingReady),
+                    ]),
+              if (widget.onEndSession != null)
+                OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            setState(() => _ending = true);
+                            await _stop(reason: '세션 종료 · 카메라/전송 중지');
+                            try {
+                              await widget.onEndSession!();
+                            } finally {
+                              if (mounted) setState(() => _ending = false);
+                            }
+                          },
+                    child: const Text('세션 종료 · 카메라/전송 중지')),
+              SwitchListTile(
+                  title: const Text('전면 카메라 사용'),
+                  value: _front,
+                  onChanged: busy || _camera != null
+                      ? null
+                      : (v) => setState(() => _front = v)),
+              if (_worker != null && widget.remoteApi == null)
                 Text(
-                    '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired} · 중복/역순 거부 ${_pump.rejected}'),
-                Text(
-                    '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
-                const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),
-              ]),
-        ]));
+                    'TFLite 로드 ${_worker!.loadMs.toStringAsFixed(1)}ms · warm-up ${_worker!.warmUpMs.toStringAsFixed(1)}ms'),
+              if (widget.remoteApi != null &&
+                  (widget.producer != null || widget.remoteSessionId != null) &&
+                  _pump.active &&
+                  _pump.error == null &&
+                  _pump.processed > 0)
+                VisionObservationPanel(
+                    key: ValueKey(_generation),
+                    sessionId:
+                        widget.remoteSessionId ?? widget.producer!.sessionId,
+                    ownerUid: widget.ownerUid,
+                    fetch: widget.remoteApi!.fetchVisionObservations,
+                    hideSpeechControls: true),
+              if (widget.remoteApi == null)
+                ExpansionTile(
+                    title: const Text('인식 상세 정보'),
+                    maintainState: true,
+                    children: [
+                      if (item != null)
+                        VisionObservationPanel.localCamera(item),
+                      Text(
+                          '처리 ${_pump.processed} · 최신 프레임 대체 ${_pump.replaced} · 만료 폐기 ${_pump.expired} · 중복/역순 거부 ${_pump.rejected}'),
+                      Text(
+                          '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
+                      const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),
+                    ]),
+            ])));
   }
 }
 

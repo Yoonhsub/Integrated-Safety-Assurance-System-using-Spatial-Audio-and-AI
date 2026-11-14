@@ -8,7 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobi_passenger_app/src/app.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/hardware_bus_page.dart';
-import 'package:mobi_passenger_app/src/pages/standalone_vision_page.dart';
 import 'auth_only_app_test.dart' as auth;
 
 void main() {
@@ -35,9 +34,7 @@ void main() {
       await t.pumpWidget(MobiApp(firebaseInitialization: initializing.future));
       await t.pumpAndSettle();
       expect(find.text('장애물 탐지'), findsOneWidget);
-      await t.tap(find.text('장애물 탐지'));
-      await t.pumpAndSettle();
-      await t.tap(find.byTooltip('이어폰·BLE 기기 점검'));
+      await t.tap(find.text('테스트'));
       await t.pumpAndSettle();
       await t.scrollUntilVisible(find.text('실기기 연동확인 · BLE/WT901/HRTF'), 180);
       await t.pumpAndSettle();
@@ -50,7 +47,7 @@ void main() {
       await t.pumpAndSettle();
       Navigator.of(t.element(find.byType(DeviceCheckPage))).pop();
       await t.pumpAndSettle();
-      expect(find.byType(StandaloneVisionPage), findsOneWidget);
+      expect(find.text('무엇을 도와드릴까요?'), findsOneWidget);
       expect(noNetwork.attempts, 0);
       await t.pumpWidget(const SizedBox());
       initializing.complete(false);
