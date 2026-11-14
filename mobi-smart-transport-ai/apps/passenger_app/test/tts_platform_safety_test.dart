@@ -98,6 +98,41 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
   });
+  testWidgets(
+      'home TTS receives platform completion after route engine returns',
+      (t) async {
+    reply = 1;
+    Future<void> platformEvent(String name) async {
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+              'flutter_tts',
+              const StandardMethodCodec().encodeMethodCall(MethodCall(name)),
+              (_) {});
+      await t.pump();
+    }
+
+    final home = FlutterSpeechEngine.platform(webPlatform: false);
+    await home.prepare(requireKoreanVoice: true);
+    final route = FlutterSpeechEngine.platform(webPlatform: false);
+    await route.prepare(requireKoreanVoice: true);
+    var routeDone = false;
+    route.speak('노선 답변').then((_) => routeDone = true);
+    await t.pump();
+    await platformEvent('speak.onComplete');
+    expect(routeDone, isTrue);
+    await home.prepare(requireKoreanVoice: true);
+    var homeDone = false;
+    home.speak('노선 정보 검색 설명').then((_) => homeDone = true);
+    await t.pump();
+    // Late cleanup of the retired page must not stop the current home voice.
+    final stops = nativeStops;
+    await route.stop();
+    expect(nativeStops, stops);
+    expect(homeDone, isFalse);
+    await platformEvent('speak.onComplete');
+    expect(homeDone, isTrue);
+  });
+
   FlutterSpeechEngine webEngine() => FlutterSpeechEngine.platform(
       tts: tts,
       webPlatform: true,

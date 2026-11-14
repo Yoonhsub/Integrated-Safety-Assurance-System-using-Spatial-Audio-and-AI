@@ -418,18 +418,22 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               if (busy)
                 const LinearProgressIndicator(semanticsLabel: '카메라 작업 처리 중'),
               const SizedBox(height: 12),
-              if (item == null)
-                const SizedBox(
-                    height: 160,
-                    child: Center(child: Text('현재 유효한 로컬 관찰이 없습니다')))
-              else
-                AspectRatio(
-                    aspectRatio: item.width / item.height,
-                    child: Stack(fit: StackFit.expand, children: [
-                      Image.memory(item.jpeg,
-                          fit: BoxFit.fill, gaplessPlayback: true),
-                      CustomPaint(painter: _BoxPainter(item.boxes)),
-                    ])),
+              CameraObservationSurface(
+                livePreview: _camera?.value.isInitialized == true
+                    ? AspectRatio(
+                        aspectRatio: _camera!.value.aspectRatio,
+                        child: CameraPreview(_camera!))
+                    : null,
+                snapshot: item == null
+                    ? null
+                    : AspectRatio(
+                        aspectRatio: item.width / item.height,
+                        child: Stack(fit: StackFit.expand, children: [
+                          Image.memory(item.jpeg,
+                              fit: BoxFit.fill, gaplessPlayback: true),
+                          CustomPaint(painter: _BoxPainter(item.boxes)),
+                        ])),
+              ),
               if (item != null && item.boxes.isNotEmpty)
                 Card(
                     child: Padding(
@@ -459,17 +463,6 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                       padding: EdgeInsets.all(16),
                       child: Text(
                           '화면 기준의 객체 안내입니다. 실제 거리·공간 방향·출입문·승차 가능 여부를 판단하지 않습니다.'))),
-              ExpansionTile(
-                  title: const Text('실시간 카메라 Preview'),
-                  maintainState: true,
-                  children: [
-                    if (_camera?.value.isInitialized == true) ...[
-                      const Text('실시간 카메라 Preview · 아래 bbox는 추론 프레임 기준'),
-                      AspectRatio(
-                          aspectRatio: _camera!.value.aspectRatio,
-                          child: CameraPreview(_camera!)),
-                    ],
-                  ]),
               Text(widget.producer == null && widget.onResult == null
                   ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
                   : _pump.error != null
@@ -605,4 +598,29 @@ class _BoxPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_BoxPainter oldDelegate) => oldDelegate.boxes != boxes;
+}
+
+/// Live video does not depend on inference/HTTP cadence. Expired detections
+/// disappear independently; no historical boxes are painted over live video.
+class CameraObservationSurface extends StatelessWidget {
+  const CameraObservationSurface({super.key, this.livePreview, this.snapshot});
+  final Widget? livePreview;
+  final Widget? snapshot;
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        SizedBox(
+          key: const ValueKey('live-camera-surface'),
+          height: 300,
+          child: livePreview == null
+              ? const Center(child: Text('카메라 시작을 기다리고 있습니다'))
+              : Center(child: livePreview),
+        ),
+        Text(snapshot == null
+            ? '최신 인식 결과를 기다리는 중 · 이전 결과는 안내에 사용하지 않습니다'
+            : '최신 인식 결과 수신 · 실시간 영상과 추론 시점은 다를 수 있습니다'),
+        ExpansionTile(
+          title: const Text('인식 프레임 확인'),
+          children: [if (snapshot != null) snapshot!],
+        ),
+      ]);
 }
