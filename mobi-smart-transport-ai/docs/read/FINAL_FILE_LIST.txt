@@ -785,6 +785,7 @@ apps/passenger_app/lib/src/features/hardware_bus/hardware_bus_page.dart
 apps/passenger_app/lib/src/features/hardware_bus/native_cue_output.dart
 apps/passenger_app/lib/src/features/hardware_bus/obstacle_cue_input.dart
 apps/passenger_app/lib/src/features/hardware_bus/spatial_warning_check_panel.dart
+apps/passenger_app/lib/src/features/hardware_bus/safety_integration_check_page.dart
 apps/passenger_app/lib/src/features/hardware_bus/wit_sensor_panel.dart
 apps/passenger_app/lib/src/features/hardware_bus/wit_sensor_protocol.dart
 apps/passenger_app/lib/src/features/hardware_bus/stationary_beacon_heading.dart
@@ -801,6 +802,7 @@ apps/passenger_app/test/passenger_login_home_test.dart
 apps/passenger_app/test/passenger_ui_cleanup_test.dart
 apps/passenger_app/test/pr68_pr69_integration_test.dart
 apps/passenger_app/test/spatial_warning_check_panel_test.dart
+apps/passenger_app/test/safety_integration_check_page_test.dart
 apps/passenger_app/test/vision_ping_tracker_test.dart
 apps/passenger_app/test/vision_ping_integration_test.dart
 apps/passenger_app/test/informational_ping_output_test.dart
