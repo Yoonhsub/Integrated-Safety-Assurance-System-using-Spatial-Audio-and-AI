@@ -143,10 +143,9 @@ python scripts/prepare_passenger_android.py --settings <normal-android.json> --f
 
 | 팀원 | 담당 영역 |
 | --- | --- |
-| 윤현섭 | 승객·운전자 Flutter 앱, 음성 입출력, 접근성 |
+| 윤현섭 | 승객·운전자 Flutter 앱, 음성 입출력, 접근성, Backend API, Firebase 및 기사·승객 연계, 공공데이터 연동 |
 | 안준환 | 모바일 센서, BLE 비콘과 방향 데이터 |
-| 심현석 | Backend API, Firebase 및 기사·승객 연계 |
-| 김도성 | 공공데이터 연동, AI Vision |
+| 김도성 | AI Vision |
 
 
 ## 사용 범위와 주의사항
