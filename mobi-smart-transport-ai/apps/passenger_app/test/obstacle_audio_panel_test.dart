@@ -9,8 +9,11 @@ void main() {
   const channel = MethodChannel('mobi.passenger/hardware-tone');
   final calls = <MethodCall>[];
   var now = Duration.zero;
+  final epoch = DateTime.utc(2026);
+  var beaconAt = DateTime.utc(2026);
   setUp(() {
     now = Duration.zero;
+    beaconAt = epoch;
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -46,7 +49,8 @@ void main() {
         obstacles: obstacles,
         sessionNow: clock ? () => now : null,
         beaconRssi: bus ? -55 : null,
-        beaconSeenAt: bus ? DateTime.now() : null,
+        beaconSeenAt: bus ? beaconAt : null,
+        wallClock: () => epoch.add(now),
         busAngle: 0,
         busEnabled: bus,
       ))));
@@ -77,17 +81,69 @@ void main() {
     expect(calls.last.method, 'stop');
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets('disappearing obstacle resumes valid bus with beacon watchdog',
+  ObstacleCueSnapshot clear() =>
+      ObstacleCueSnapshot(observedAt: now, observations: const []);
+  bool targetStarted() => calls.any((c) =>
+      c.method == 'start' && (c.arguments as Map)['pattern'] == 'target');
+  testWidgets('danger requires newer clear frame and newly received beacon',
       (tester) async {
     await tester.pumpWidget(panel(obstacles: risk(), bus: true));
     await start(tester);
-    await tester.pumpWidget(panel(bus: true));
+    now = const Duration(milliseconds: 100);
+    await tester.pumpWidget(panel(obstacles: clear(), bus: true));
     await tester.pump(const Duration(milliseconds: 200));
-    final args = calls.lastWhere((c) => c.method == 'start').arguments as Map;
-    expect(args['pattern'], 'target');
-    expect(args['beaconAgeMs'], greaterThanOrEqualTo(0));
+    expect(calls.last.method, 'stop');
+    expect(targetStarted(), isFalse);
+    // Explicit start cannot bypass the old beacon gate.
+    expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, '안내 소리 시작'))
+            .onPressed,
+        isNull);
+    beaconAt = epoch.add(now);
+    await tester.pumpWidget(panel(obstacles: clear(), bus: true));
+    await start(tester);
+    expect(targetStarted(), isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  for (final loss in ['missing', 'expired', 'future', 'older']) {
+    testWidgets('camera $loss stops approach; old beacon cannot restart',
+        (tester) async {
+      now = const Duration(milliseconds: 100);
+      await tester.pumpWidget(panel(obstacles: clear(), bus: true));
+      await start(tester);
+      expect(targetStarted(), isTrue);
+      calls.clear();
+      final previous = clear();
+      now = const Duration(milliseconds: 2100);
+      final lost = loss == 'missing'
+          ? null
+          : loss == 'expired'
+              ? previous
+              : ObstacleCueSnapshot(
+                  observedAt: loss == 'future'
+                      ? const Duration(seconds: 3)
+                      : Duration.zero,
+                  observations: const []);
+      await tester.pumpWidget(panel(obstacles: lost, bus: true));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(calls.last.method, 'stop');
+      now += const Duration(milliseconds: 1);
+      await tester.pumpWidget(panel(obstacles: clear(), bus: true));
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, '안내 소리 시작'))
+              .onPressed,
+          isNull);
+      expect(targetStarted(), isFalse);
+      beaconAt = epoch.add(now);
+      await tester.pumpWidget(panel(obstacles: clear(), bus: true));
+      await start(tester);
+      expect(targetStarted(), isTrue);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   testWidgets('sensor loss stops obstacle even without beacon dependency',
       (tester) async {
     await tester.pumpWidget(panel(obstacles: risk()));

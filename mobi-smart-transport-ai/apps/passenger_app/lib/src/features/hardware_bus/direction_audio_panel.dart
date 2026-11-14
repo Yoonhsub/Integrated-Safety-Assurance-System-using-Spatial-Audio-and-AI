@@ -76,6 +76,11 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   int _generation = 0;
   String _message = '정면을 보고 위의 기준각 버튼을 누른 뒤 시작하세요.';
   String _route = '';
+  // Once a camera/risk producer participates, loss is not a clear observation.
+  bool _cameraRequired = false;
+  Duration? _lastCameraCapture, _lastDangerCapture, _cameraResumeAfter;
+  DateTime? _resumeBeaconAfter;
+  bool _cameraWasValid = false;
   Timer? _timer;
   final _duration = Stopwatch();
 
@@ -199,9 +204,53 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         // Reject invalid snapshots; never retain an older warning as fallback.
       }
     }
+    final snapshot = widget.obstacles;
+    _cameraRequired = _cameraRequired || snapshot != null;
+    var cameraValid = false;
+    if (snapshot != null && widget.sessionNow != null) {
+      final age = now - snapshot.observedAt;
+      try {
+        snapshot.toCueObjects();
+        cameraValid = !age.isNegative &&
+            age < _controller.riskTtl &&
+            (_lastCameraCapture == null ||
+                snapshot.observedAt >= _lastCameraCapture!);
+      } on ArgumentError {
+        cameraValid = false;
+      }
+    }
+    final wallNow = widget.wallClock?.call() ?? DateTime.now();
+    if (_cameraRequired && !cameraValid) {
+      if (_cameraWasValid || _resumeBeaconAfter == null) {
+        _resumeBeaconAfter = wallNow;
+        _cameraResumeAfter = now;
+      }
+      obstacles = const [];
+    }
+    if (cameraValid) {
+      _lastCameraCapture = snapshot!.observedAt;
+      if (obstacles.any((o) => o.obstacleRisk == ObstacleRisk.danger) &&
+          (_lastDangerCapture == null ||
+              snapshot.observedAt > _lastDangerCapture!)) {
+        _lastDangerCapture = snapshot.observedAt;
+        _resumeBeaconAfter = wallNow;
+      }
+    }
+    _cameraWasValid = cameraValid;
+    final cleared = !_cameraRequired ||
+        (cameraValid &&
+            (_cameraResumeAfter == null ||
+                snapshot!.observedAt > _cameraResumeAfter!) &&
+            (_lastDangerCapture == null ||
+                snapshot!.observedAt > _lastDangerCapture!) &&
+            !obstacles.any((o) => o.obstacleRisk == ObstacleRisk.danger));
+    final newBeacon = _resumeBeaconAfter == null ||
+        (widget.beaconSeenAt?.isAfter(_resumeBeaconAfter!) ?? false);
     return [
       ...obstacles,
       if (widget.busEnabled &&
+          cleared &&
+          newBeacon &&
           _beaconFresh &&
           (!widget.stationaryBeacon || _stationary.calibrated)) ...[
         CueObject(
