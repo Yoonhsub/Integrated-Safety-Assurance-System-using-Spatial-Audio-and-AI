@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.schemas.bus_info import BusArrivalsResponse
 from app.services.firebase_client import FirebaseClient, get_firebase_client
@@ -52,7 +54,15 @@ class BusInfoGatewayService:
         *,
         firebase: FirebaseClient | None = None,
         public_data_service: BusArrivalsService | None = None,
+        cache_max_age_seconds: float | None = None,
+        clock: Callable[[], datetime] | None = None,
+        allow_cache: bool = True,
     ) -> None:
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.allow_cache = allow_cache
+        self.cache_max_age_seconds = float(cache_max_age_seconds if cache_max_age_seconds is not None else os.getenv("BUS_ARRIVAL_CACHE_MAX_AGE_SECONDS", "30"))
+        if not 0 <= self.cache_max_age_seconds <= 300:
+            raise ValueError("Arrival cache TTL must be between 0 and 300 seconds")
         self.firebase = firebase or get_firebase_client()
         self.public_data_service = public_data_service or BusArrivalsService()
 
@@ -67,15 +77,26 @@ class BusInfoGatewayService:
         """Return normalized arrivals with the source used by V3 fallback logic."""
         normalized_stop_id = self._normalize_stop_id(stop_id)
 
-        cached = self.firebase.get(self._firebase_path(normalized_stop_id))
+        cached = self.firebase.get(self._firebase_path(normalized_stop_id)) if self.allow_cache else None
         if cached is not None:
-            return BusInfoGatewayResult(
-                response=self._coerce_response(cached, fallback_stop_id=normalized_stop_id),
-                source="CACHE",
-            )
+            try:
+                response = self._coerce_response(cached, fallback_stop_id=normalized_stop_id)
+                # Missing/empty, future, naive and stale observations are not fresh.
+                # CACHE conveys storage provenance only, not a verified live origin.
+                now = self.clock()
+                fresh = bool(response.arrivals) and response.stopId == normalized_stop_id and all(
+                    item.updatedAt.tzinfo is not None
+                    and 0 <= (now - item.updatedAt).total_seconds() <= self.cache_max_age_seconds
+                    for item in response.arrivals
+                )
+                if fresh and self.cache_max_age_seconds > 0:
+                    return BusInfoGatewayResult(response=response, source="CACHE")
+            except (ValidationError, ValueError, TypeError):
+                pass  # Bad cache must not prevent an independent provider fetch.
 
         try:
             public_data_response = self.public_data_service.get_arrivals(normalized_stop_id)
+            response = self._coerce_response(public_data_response, fallback_stop_id=normalized_stop_id)
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
@@ -89,7 +110,7 @@ class BusInfoGatewayService:
             ) from exc
 
         return BusInfoGatewayResult(
-            response=self._coerce_response(public_data_response, fallback_stop_id=normalized_stop_id),
+            response=response,
             source=self._infer_public_data_source(),
         )
 
@@ -137,18 +158,4 @@ class BusInfoGatewayService:
             data = {**data, "stopId": fallback_stop_id}
         if isinstance(data, dict) and "arrivals" not in data:
             data = {**data, "arrivals": []}
-        data = self._ensure_arrival_timestamps(data)
         return BusArrivalsResponse.model_validate(data)
-
-    def _ensure_arrival_timestamps(self, data: Any) -> Any:
-        if not isinstance(data, dict) or not isinstance(data.get("arrivals"), list):
-            return data
-
-        now = datetime.now(timezone.utc)
-        arrivals = [
-            {**arrival, "updatedAt": arrival.get("updatedAt") or now}
-            if isinstance(arrival, dict)
-            else arrival
-            for arrival in data["arrivals"]
-        ]
-        return {**data, "arrivals": arrivals}

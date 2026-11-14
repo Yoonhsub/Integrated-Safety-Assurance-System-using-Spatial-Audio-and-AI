@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/speech_priority_coordinator.dart';
 
@@ -115,22 +116,38 @@ class _PassengerLandingState extends State<PassengerLanding> {
     unawaited(_describe(description, ++_speechRequest));
   }
 
+  Future<void> _logout() async {
+    if (_opening) return;
+    _opening = true;
+    _pending = null;
+    _tapWindow?.cancel();
+    _speechRequest++;
+    unawaited(_stopDescription());
+    try {
+      if (widget.onSignOut != null) {
+        widget.onSignOut!();
+      } else {
+        await AuthGate.signOut(context);
+      }
+    } finally {
+      _opening = false;
+    }
+  }
+
   Widget _screenReaderButton(
     _LandingDestination destination,
     String label,
     String description,
     Widget child,
   ) =>
-      _usesTapConfirmation
-          ? Semantics(
-              excludeSemantics: true,
-              button: true,
-              label: label,
-              hint: description,
-              onTap: () => unawaited(_open(destination)),
-              child: child,
-            )
-          : child;
+      Semantics(
+        excludeSemantics: true,
+        button: true,
+        label: label,
+        hint: description,
+        onTap: () => unawaited(_open(destination)),
+        child: child,
+      );
 
   @override
   void dispose() {
@@ -146,7 +163,6 @@ class _PassengerLandingState extends State<PassengerLanding> {
   static const _routeDescription = '채팅이나 음성으로 버스 노선과 도착 정보를 물어보세요.';
   static const _visionLabel = '장애물 탐지';
   static const _visionDescription = '카메라로 객체를 감지하고 화면 기준 위치를 소리로 확인합니다.';
-
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
@@ -154,15 +170,19 @@ class _PassengerLandingState extends State<PassengerLanding> {
                 style:
                     TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2)),
             actions: [
-              if (widget.showSignOut)
-                TextButton(
+              if (widget.showSignOut || AuthGate.canSignOut(context))
+                TextButton.icon(
                   style: TextButton.styleFrom(
                     foregroundColor: mobiInk,
                     minimumSize: const Size(48, 48),
                   ),
-                  onPressed: widget.onSignOut,
-                  child: const Text('로그아웃'),
+                  onPressed: widget.showSignOut && widget.onSignOut == null
+                      ? null
+                      : () => unawaited(_logout()),
+                  icon: const Icon(Icons.logout),
+                  label: const Text('로그아웃'),
                 ),
+              const SizedBox(width: 8),
             ]),
         body: SafeArea(
             child: ListView(padding: const EdgeInsets.all(24), children: [
@@ -259,6 +279,11 @@ class DeviceCheckPage extends StatelessWidget {
                     ]))),
         const SizedBox(height: 16),
         const Text('고급 하드웨어 진단', style: TextStyle(fontWeight: FontWeight.bold)),
+        OutlinedButton(
+          onPressed: () =>
+              Navigator.of(context).pushNamed('/concurrent-hardware-test'),
+          child: const Text('동시 기기 테스트 (임시)'),
+        ),
         const Text(
             'BLE/WT901/HRTF · 테스트 매핑과 가정 방향을 사용합니다. 실제 위험 Guidance와 구분됩니다.',
             style: TextStyle(height: 1.7)),

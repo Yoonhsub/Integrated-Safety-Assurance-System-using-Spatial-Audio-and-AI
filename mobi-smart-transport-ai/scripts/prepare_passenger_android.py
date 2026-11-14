@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import zipfile
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +94,62 @@ def validate(settings: dict) -> dict[str, str]:
     return dict(settings)
 
 
+
+def build_source_info() -> dict:
+    """Best-effort source identity, without paths, diffs or configuration values."""
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, stderr=subprocess.DEVNULL,
+            timeout=10).decode().strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=ROOT,
+            stderr=subprocess.DEVNULL, timeout=10).strip())
+        return {"gitCommit": commit, "workingTreeDirty": dirty}
+    except (OSError, subprocess.SubprocessError):
+        return {"gitCommit": None, "workingTreeDirty": None}
+
+
+def write_build_info(apk: Path, settings: dict, source: dict) -> Path:
+    """Describe bytes actually packaged. This is NOT runtime/device validation.
+
+    Never serialize the settings dictionary, Firebase keys, device identifiers,
+    local paths, or claims about the deployed provider's live/mock mode.
+    """
+    settings = validate(settings)
+    models = []
+    with zipfile.ZipFile(apk) as archive:
+        for name in sorted(archive.namelist()):
+            if name.startswith("assets/flutter_assets/assets/models/") and name.endswith(".tflite"):
+                data = archive.read(name)
+                models.append({"asset": name, "sizeBytes": len(data),
+                               "sha256": hashlib.sha256(data).hexdigest()})
+    if not models:
+        raise ValueError("Built APK has no packaged camera model")
+    commit = source.get("gitCommit")
+    if commit is not None and not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        raise ValueError("Invalid source identity")
+    dirty = source.get("workingTreeDirty")
+    if dirty is not None and not isinstance(dirty, bool):
+        raise ValueError("Invalid working-tree state")
+    info = {
+        "schemaVersion": 1,
+        "artifact": {"fileName": apk.name, "sizeBytes": apk.stat().st_size,
+                     "sha256": hashlib.sha256(apk.read_bytes()).hexdigest()},
+        "build": {"type": "debug", "entrypoint": "lib/main.dart",
+                  "configuredPackage": PACKAGE, "authentication": "normal"},
+        "source": {"gitCommit": commit, "workingTreeDirty": dirty},
+        "backend": {"configuredOrigin": settings["MOBI_API_BASE_URL"],
+                    "observedDataMode": "UNKNOWN", "connectivityChecked": False},
+        "models": models,
+        "verificationScope": "Build bytes only; no signature, device, acoustic, network, or live-data validation",
+    }
+    path = apk.with_suffix(".build-info.json")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -121,6 +178,7 @@ def main() -> int:
         target = APP / "build/passenger-config/normal-android.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
+        source_info = build_source_info()
         result = subprocess.run([str(flutter), "build", "apk", "--debug", "--no-pub",
             "--target", "lib/main.dart", "--dart-define-from-file=" + str(target)], cwd=APP)
         if result.returncode:
@@ -128,9 +186,10 @@ def main() -> int:
         apk = APP / "build/app/outputs/flutter-apk/app-debug.apk"
         print("APK_BUILT:", apk)
         print("APK_SHA256:", hashlib.sha256(apk.read_bytes()).hexdigest())
+        print("BUILD_INFO:", write_build_info(apk, settings, source_info))
         print("Not installed/launched. Login requires separate Firebase access approval.")
         return 0
-    except (ValueError, OSError, KeyError, TypeError):
+    except (ValueError, OSError, KeyError, TypeError, zipfile.BadZipFile):
         # Configuration values (including malformed credential files) are never echoed.
         print("CONFIGURATION_BLOCKED: check file type, Android package/app ID, required fields, Backend URL and optional local BLE mapping.")
         return 2

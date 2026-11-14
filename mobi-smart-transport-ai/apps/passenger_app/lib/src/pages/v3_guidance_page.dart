@@ -1,3 +1,5 @@
+import '../services/route_data_presentation.dart';
+import '../widgets/route_data_status.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -155,8 +157,8 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   bool _isAgentTraceExpanded = false;
   // 보이스 모델(테스트 비교용): 'realtime'=gpt-realtime-2, 'mini'=gpt-4o-mini-tts, 'gemini'=Gemini TTS.
   String _voiceChoice = 'realtime';
-  // NLU(의도분류·자연어 응답) 제공자: 'openai'=GPT, 'gemini'=Gemini.
-  String _nluProvider = 'openai';
+  // 서버의 기존 자동 폴백을 기본으로 사용한다. 특정 제공자는 비교 시에만 고른다.
+  String _nluProvider = 'auto';
   bool _isListening = false;
   String? _nextLiveScriptLineId;
   String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말씀해 주세요.';
@@ -1452,7 +1454,9 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     required V3RoutePlanResponse routePlan,
   }) {
     if (routePlan.recommendedPlan == null) {
-      return routePlan.question ?? '직통 또는 1회 환승 경로를 찾지 못했습니다.';
+      return [routePlan.question, routeFailureNextAction(routePlan.status)]
+          .whereType<String>()
+          .join(' ');
     }
     final plan = routePlan.recommendedPlan!;
     final locationLabel =
@@ -1479,7 +1483,9 @@ class _V3GuidancePageState extends State<V3GuidancePage>
 
   bool _looksLikeRouteRequest(String utterance) {
     final compact = utterance.replaceAll(' ', '');
-    return utterance.contains('가야') ||
+    return ['가는버스', '가는노선', '가는길', '노선검색', '경로검색', '길찾기', '길찾아', '경로찾아', '가려면']
+            .any(compact.contains) ||
+        utterance.contains('가야') ||
         utterance.contains('가고 싶') ||
         compact.contains('가고싶') ||
         utterance.contains('가자') ||
@@ -2604,10 +2610,13 @@ class _HeroStatusCard extends StatelessWidget {
             Text(message, style: Theme.of(context).textTheme.bodyLarge),
             if (errorMessage != null) ...[
               const SizedBox(height: 8),
-              Text(
-                errorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+              Semantics(
+                  liveRegion: true,
+                  child: Text(errorMessage!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error))),
+              const Text(
+                  '연결 오류라면 인터넷과 서버 상태를 확인한 뒤 상단의 서버 다시 연결 또는 상태 새로고침을 눌러 주세요.'),
             ],
             const SizedBox(height: 12),
             Wrap(
@@ -2711,11 +2720,15 @@ class _LocationNeededBanner extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 6),
-            const Text(
-              '• 카카오톡·인스타그램 같은 앱 안의 브라우저는 위치를 막는 경우가 많습니다. '
-              '우측 상단 메뉴에서 Safari/Chrome 같은 기본 브라우저로 열면 위치가 잡혀요.\n'
-              '• 기본 브라우저에서는 주소창 옆 위치 아이콘에서 접근을 허용해 주세요.',
-            ),
+            if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+              const Text(
+                  '휴대폰 설정 → 앱 → MOBI → 권한에서 위치를 허용하고, 휴대폰 위치 서비스를 켠 뒤 다시 시도해 주세요.')
+            else
+              const Text(
+                '• 카카오톡·인스타그램 같은 앱 안의 브라우저는 위치를 막는 경우가 많습니다. '
+                '우측 상단 메뉴에서 Safari/Chrome 같은 기본 브라우저로 열면 위치가 잡혀요.\n'
+                '• 기본 브라우저에서는 주소창 옆 위치 아이콘에서 접근을 허용해 주세요.',
+              ),
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
@@ -3030,8 +3043,8 @@ class _RealtimeNavCard extends StatelessWidget {
     final s = status;
     final statusArrivals = s?.arrivals ?? const <V3BusArrival>[];
     final planArrivals = segment?.arrivals ?? const <V3BusArrival>[];
-    final displayedArrivals =
-        statusArrivals.isNotEmpty ? statusArrivals : planArrivals;
+    final displayedArrivals = displayedRouteArrivals(
+        latest: s == null ? null : statusArrivals, planned: planArrivals);
     final firstArrival =
         displayedArrivals.isNotEmpty ? displayedArrivals.first : null;
     final serviceStatus = s?.serviceStatus ?? segment?.serviceStatus;
@@ -3239,8 +3252,14 @@ class _RealtimeNavCard extends StatelessWidget {
               ],
               const SizedBox(height: 8),
               Text(
-                '마지막 갱신: $updatedText · 도착 카운트다운 매초 표시 · 실데이터 30초마다 갱신',
+                '응답 생성 시각: $updatedText · 30초마다 조회 시도 · 자료 관측 시각과 다릅니다',
                 style: Theme.of(context).textTheme.bodySmall,
+              ),
+              RouteDataStatus(
+                source:
+                    s?.fallbackSource ?? segment?.arrivalSource ?? 'UNKNOWN',
+                arrivals: displayedArrivals,
+                planningSnapshot: s == null,
               ),
               if (s != null) ...[
                 const SizedBox(height: 4),
@@ -4398,6 +4417,10 @@ class _CombinedChatControlCard extends StatelessWidget {
                   child: SegmentedButton<String>(
                     segments: const [
                       ButtonSegment<String>(
+                        value: 'auto',
+                        label: Text('자동'),
+                      ),
+                      ButtonSegment<String>(
                         value: 'openai',
                         label: Text('GPT'),
                         icon: Icon(Icons.graphic_eq),
@@ -4771,7 +4794,9 @@ class _ArrivalCard extends StatelessWidget {
               _PublicDataEvidenceCard(evidence: routeRecommendation!.evidence!),
             ],
             const SizedBox(height: 8),
-            Text('도착정보 source: ${arrivals?.fallbackSource ?? '-'}'),
+            RouteDataStatus(
+                source: arrivals?.fallbackSource ?? 'UNKNOWN',
+                arrivals: arrivals?.arrivals ?? const <V3BusArrival>[]),
             const SizedBox(height: 4),
             for (final arrival in arrivals?.arrivals ?? const <V3BusArrival>[])
               Text(
@@ -4782,18 +4807,6 @@ class _ArrivalCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton(
-                  onPressed: isBusy ? null : onRecommendSachang,
-                  child: const Text('사창사거리 추천'),
-                ),
-                OutlinedButton(
-                  onPressed: isBusy ? null : onRecommendHospital,
-                  child: const Text('충북대병원 추천'),
-                ),
-                OutlinedButton(
-                  onPressed: isBusy ? null : onRecommendSangdang,
-                  child: const Text('상당산성 경로계산'),
-                ),
                 OutlinedButton(
                   onPressed: isBusy ? null : onRefreshArrivals,
                   child: const Text('도착정보 갱신'),
@@ -4843,7 +4856,11 @@ class _RoutePlanCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(plan.summary),
               const SizedBox(height: 6),
-              Text('출처: ${_routePlanSourceLabel(plan)}'),
+              Text('출처: ${routePlanSourceLabel(plan)}'),
+              RouteDataStatus(
+                  source: plan.fallbackSource,
+                  arrivals: plan.segments.expand((s) => s.arrivals).toList(),
+                  planningSnapshot: true),
               const SizedBox(height: 4),
               Text(
                 '검증 상태: ${_verificationStatusLabel(plan.verificationStatus)}',
@@ -4880,7 +4897,7 @@ class _RoutePlanCard extends StatelessWidget {
               ],
               const SizedBox(height: 8),
               Text(
-                '보행 약 ${plan.estimatedWalkMeters.toStringAsFixed(0)}m · ${plan.totalBusStopCount}정류장 · source ${plan.fallbackSource}',
+                '보행 추정 약 ${plan.estimatedWalkMeters.toStringAsFixed(0)}m · ${plan.totalBusStopCount}정류장',
               ),
               const SizedBox(height: 8),
               for (final segment in plan.segments)
@@ -4898,17 +4915,9 @@ class _RoutePlanCard extends StatelessWidget {
   }
 }
 
-String _routePlanSourceLabel(V3RoutePlanCandidate plan) {
-  return switch (plan.planSource) {
-    'ODSAY_ENRICHED' => 'ODsay 경로 + 청주 실시간 도착정보 검증',
-    'ODSAY' => 'ODsay 경로',
-    _ => '청주 버스 공공데이터 자체 경로',
-  };
-}
-
 String _verificationStatusLabel(String status) {
   return switch (status) {
-    'VERIFIED_WITH_TAGO' => '청주 버스 데이터 검증 완료',
+    'VERIFIED_WITH_TAGO' => '청주 노선·정류장 자료 대조됨 · 실제 차량 일치 확인 아님',
     'PARTIAL' => '일부 구간만 검증됨',
     'ODSAY_ONLY' => '실시간 도착정보 미확인',
     _ => '자체 경로 계산',
@@ -4934,7 +4943,7 @@ class _AlternativeRouteCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Text(
-            '${plan.type == 'DIRECT' ? '직통' : '1회 환승'} · ${plan.summary} · 점수 ${plan.score.toStringAsFixed(1)}',
+            '${plan.type == 'DIRECT' ? '직통' : '1회 환승'} · ${plan.summary} · 점수 ${plan.score.toStringAsFixed(1)}\n${routePlanSourceLabel(plan)}',
           ),
         ),
       ),
@@ -5067,12 +5076,7 @@ class _PublicDataEvidenceCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final accentColor =
         isPublicData ? colorScheme.primary : colorScheme.tertiary;
-    final sourceLabel = switch (evidence.source) {
-      'PUBLIC_API' => '실시간 공공 API',
-      'CACHE' => '공공 API 정규화 캐시',
-      'MOCK' => '시연 데이터 · 실제 공공 API 아님',
-      _ => '공공 데이터 확인 불가',
-    };
+    final sourceLabel = routeDataSourceLabel(evidence.source);
 
     return Semantics(
       container: true,
@@ -5111,6 +5115,9 @@ class _PublicDataEvidenceCard extends StatelessWidget {
                     ),
               ),
               const SizedBox(height: 8),
+              Text(arrivalFreshnessLabel(
+                  evidence.arrivals, DateTime.now().toUtc())),
+              const Text('도착 예상은 눈앞 차량의 일치나 승차 가능 여부를 확인하지 않습니다.'),
               Text('${evidence.stopName} · ${evidence.routeNo}번'),
               Text('정류장 ID: ${evidence.stopId}'),
               const SizedBox(height: 10),

@@ -99,6 +99,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           engine: widget.previewEngine!,
           sessionGeneration: widget.previewScope,
           confirmationFrames: 3,
+          sceneMode: false,
+          pingOnly: false,
+          minimumInterval: const Duration(seconds: 8),
           requireDoorInBus: true,
           prioritizeByDistance: true,
           isCurrent: () =>
@@ -117,6 +120,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     final item = _pump.observation;
     if (item != null && _pump.active && _pump.error == null) {
       _previewAudio?.observe(item.toDetectionResult(),
+          receivedAt: item.frame.receivedAt,
+          inferenceMs: item.inferenceMs,
+          processingMs: item.processingMs,
           age: Duration(
               microseconds:
                   _clock.elapsedMicroseconds - item.frame.receivedMicros));
@@ -267,7 +273,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     } on VisionProducerException catch (e) {
       await _stop(reason: e.message);
     } catch (_) {
-      await _stop(reason: 'TFLite 모델 또는 네이티브 런타임을 시작할 수 없습니다');
+      await _stop(
+          reason:
+              '모델 또는 카메라를 시작하지 못했습니다. 모델 다시 준비 후 카메라 시작을 눌러 주세요. 반복되면 앱을 다시 실행해 주세요');
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -389,6 +397,15 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                       label: const Text('카메라 중지')),
                 ]))),
         body: ListView(padding: const EdgeInsets.all(16), children: [
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              '카메라 상태: ${_pump.lost ? "프레임 수신 소실 또는 지연 · 카메라를 중지한 뒤 다시 시작해 주세요" : _status}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          if (busy)
+            const LinearProgressIndicator(semanticsLabel: '카메라 작업 처리 중'),
           const SizedBox(height: 12),
           if (item == null)
             const SizedBox(
@@ -449,7 +466,6 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               : _previewAudio == null
                   ? '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·자동 음성 안내는 없습니다.'
                   : '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·위험 안내는 없습니다. 화면 음향 시연은 직접 켠 경우만 출력합니다.'),
-          Text(_pump.lost ? '카메라 프레임 수신 소실 또는 지연 · 관찰 만료' : _status),
           Wrap(spacing: 8, children: [
             FilledButton(
                 onPressed: busy || _camera != null

@@ -1,3 +1,5 @@
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.api.routes import v3_agent
@@ -316,3 +318,48 @@ def test_agent_contextual_route_followup_uses_selected_route_plan() -> None:
     assert "862번" in body["message"]
     assert "사창사거리" in body["message"]
     assert "먼저 목적지" not in body["message"]
+
+
+@pytest.mark.parametrize("utterance", [
+    "충북대병원", "청주대", "청주대 가는 버스", "충북대병원 노선 검색",
+    "충북대병원 길 찾아줘", "청주대 경로 찾아줘", "충북대병원 가는 길",
+])
+def test_agent_routes_normal_destination_requests_with_nlu_unavailable(monkeypatch, utterance) -> None:
+    from app.services import v3_gemini_service
+
+    monkeypatch.setattr(v3_gemini_service, "_generate", lambda **kwargs: None)
+    response = _say(
+        "s-nlu-unavailable", utterance,
+        originLat=36.6359, originLng=127.4596,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "FIND_ROUTE"
+    assert body["routePlan"]["status"] == "RESOLVED"
+    assert body["routePlan"]["recommendedPlan"] is not None
+    assert body["usedGemini"] is False
+
+
+@pytest.mark.parametrize("utterance", ["충북대병원", "청주대 가는 버스"])
+def test_live_route_intent_without_nlu_still_requires_origin(monkeypatch, utterance) -> None:
+    from app.services import v3_gemini_service
+
+    monkeypatch.setattr(v3_gemini_service, "_generate", lambda **kwargs: None)
+    response = _say("s-live-nlu-unavailable", utterance, mode="live")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "FIND_ROUTE"
+    assert body["routePlan"]["recommendedPlan"] is None
+    assert "위치 권한" in body["message"]
+
+
+def test_unrecognized_chatter_without_nlu_gives_actionable_example(monkeypatch) -> None:
+    from app.services import v3_gemini_service
+
+    monkeypatch.setattr(v3_gemini_service, "_generate", lambda **kwargs: None)
+    response = _say("s-unknown-nlu-unavailable", "오늘 날씨 좋다")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "UNKNOWN"
+    assert body["routePlan"] is None
+    assert "충북대병원 어떻게 가?" in body["message"]

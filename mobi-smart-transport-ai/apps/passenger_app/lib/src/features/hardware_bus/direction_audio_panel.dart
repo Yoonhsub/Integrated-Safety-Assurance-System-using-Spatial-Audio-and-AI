@@ -6,6 +6,7 @@ import 'native_cue_output.dart';
 import 'direction_pan.dart';
 import 'wit_sensor_protocol.dart';
 import 'beacon_tone_interval.dart';
+import 'stationary_beacon_heading.dart';
 
 class DirectionAudioPanel extends StatefulWidget {
   const DirectionAudioPanel({
@@ -21,8 +22,11 @@ class DirectionAudioPanel extends StatefulWidget {
     this.warning = false,
     this.busEnabled = true,
     this.audioScope = '',
+    this.stationaryBeacon = false,
     this.obstacles,
     this.sessionNow,
+    this.wallClock,
+    this.elapsedSensorAgeMs,
   });
   final double? z, reference;
   final bool fresh;
@@ -33,12 +37,17 @@ class DirectionAudioPanel extends StatefulWidget {
   final double busAngle;
   final bool warning, busEnabled;
   final String audioScope;
+  final bool stationaryBeacon;
 
   /// Optional producer snapshot; no detector or synthetic input is created here.
   final ObstacleCueSnapshot? obstacles;
 
   /// Required with obstacles: the same monotonic clock as snapshot capture time.
   final Duration Function()? sessionNow;
+
+  /// Optional clocks keep freshness and expiry checks deterministic in tests.
+  final DateTime Function()? wallClock;
+  final int Function()? elapsedSensorAgeMs;
   @override
   State<DirectionAudioPanel> createState() => _DirectionAudioPanelState();
 }
@@ -49,11 +58,20 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   final _clock = Stopwatch()..start();
   late final NativeCueOutput _output;
   late final CueOutputDriver _driver;
-  bool get _manualWarning => widget.warning;
+  bool get _manualWarning => !widget.stationaryBeacon && widget.warning;
+  final _stationary = StationaryBeaconHeading();
+  final _inputAge = Stopwatch()..start();
+  int get _sensorAge =>
+      widget.sensorAgeMs +
+      (widget.stationaryBeacon
+          ? (widget.elapsedSensorAgeMs?.call() ?? _inputAge.elapsedMilliseconds)
+          : 0);
   bool _playing = false, _starting = false, _syncing = false;
   bool _reverse = false, _disposed = false;
   final bool _proximity = true;
-  double get _objectAngle => widget.busAngle;
+  double get _objectAngle => widget.stationaryBeacon
+      ? (_stationary.bearing ?? double.nan)
+      : widget.busAngle;
   final _directionTracker = DirectionCueTracker();
   int _generation = 0;
   String _message = '정면을 보고 위의 기준각 버튼을 누른 뒤 시작하세요.';
@@ -63,13 +81,19 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   int get _beaconAge => widget.beaconSeenAt == null
       ? 99999
-      : DateTime.now().difference(widget.beaconSeenAt!).inMilliseconds;
+      : (widget.wallClock?.call() ?? DateTime.now())
+          .difference(widget.beaconSeenAt!)
+          .inMilliseconds;
   bool get _beaconFresh =>
-      widget.beaconRssi != null && _beaconAge >= 0 && _beaconAge < 3000;
+      widget.beaconRssi != null &&
+      _beaconAge >= 0 &&
+      _beaconAge < 3000 &&
+      (!widget.stationaryBeacon ||
+          (widget.beaconRssi! >= -120 && widget.beaconRssi! < 0));
   bool get _sensorReady =>
       widget.fresh &&
-      widget.sensorAgeMs >= 0 &&
-      widget.sensorAgeMs < 1000 &&
+      _sensorAge >= 0 &&
+      _sensorAge < 1000 &&
       widget.z != null &&
       widget.reference != null &&
       widget.z!.isFinite &&
@@ -96,15 +120,25 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         .selection;
   }
 
-  bool get _ready => _preview != null;
+  bool get _ready {
+    final preview = _preview;
+    if (preview == null) return false;
+    // Existing explicit obstacle warnings do not depend on beacon calibration.
+    if (preview.object.obstacleRisk != null) return true;
+    return !widget.stationaryBeacon ||
+        (_stationary.calibrated && _beaconFresh && _sensorReady);
+  }
 
-  int get _interval => _proximity && _beaconFresh
-      ? beaconToneIntervalMs(widget.beaconRssi!)
-      : 1000;
-  DirectionPan? get _rawPan => _sensorReady
-      ? DirectionPan.fromZ(widget.z!, widget.reference!,
-          reverse: _reverse, objectAngle: _objectAngle)
-      : null;
+  int get _interval => widget.stationaryBeacon
+      ? _stationary.intervalMs
+      : _proximity && _beaconFresh
+          ? beaconToneIntervalMs(widget.beaconRssi!)
+          : 1000;
+  DirectionPan? get _rawPan =>
+      _sensorReady && (!widget.stationaryBeacon || _stationary.calibrated)
+          ? DirectionPan.fromZ(widget.z!, widget.reference!,
+              reverse: _reverse, objectAngle: _objectAngle)
+          : null;
   bool get _warningBehind => _manualWarning && _rawPan?.supported == false;
   DirectionPan? get _pan {
     final raw = _rawPan;
@@ -128,7 +162,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     WidgetsBinding.instance.addObserver(this);
     _output = NativeCueOutput(
       () => ToneInput(
-        widget.sensorAgeMs,
+        _sensorAge,
         _proximity ? _beaconAge : -1,
         _interval,
       ),
@@ -136,7 +170,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     _driver = CueOutputDriver(_output);
     _timer = Timer.periodic(
       const Duration(milliseconds: 150),
-      (_) => unawaited(_sync()),
+      (_) {
+        _checkStationary();
+        unawaited(_sync());
+      },
     );
   }
 
@@ -164,10 +201,15 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
     }
     return [
       ...obstacles,
-      if (widget.busEnabled && _beaconFresh) ...[
+      if (widget.busEnabled &&
+          _beaconFresh &&
+          (!widget.stationaryBeacon || _stationary.calibrated)) ...[
         CueObject(
-          id: 'manual-target',
+          id: widget.stationaryBeacon
+              ? 'stationary:${widget.audioScope}'
+              : 'manual-target',
           kind: CueObjectKind.target,
+          // Legacy target policy ignores this enum; physical proximity is UNKNOWN.
           distance: CueDistance.near,
           angleDegrees: _objectAngle,
           observedAt: now,
@@ -185,6 +227,47 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
           ),
       ],
     ];
+  }
+
+  void _checkStationary() {
+    if (!widget.stationaryBeacon) return;
+    final valid = _sensorReady && _beaconFresh && widget.busEnabled;
+    final radioGap = widget.beaconSeenAt != null &&
+        _stationary.hasSampleGap(widget.beaconSeenAt!);
+    if (_stationary.calibrated &&
+        (!valid ||
+            radioGap ||
+            !_stationary.matches(
+                widget.audioScope, widget.reference ?? double.nan, _reverse))) {
+      _stationary.invalidate();
+      _directionTracker.reset();
+      if (!_externalWarning && _preview?.object.obstacleRisk == null) {
+        unawaited(_stop('정지 비콘 보정 무효 · 수신과 기준을 확인하고 다시 보정하세요.'));
+      } else {
+        _refresh();
+      }
+    }
+    if (valid) _stationary.addRssi(widget.beaconRssi!, widget.beaconSeenAt!);
+  }
+
+  void _calibrateStationary() {
+    if (!widget.busEnabled ||
+        !_sensorReady ||
+        !_beaconFresh ||
+        _playing ||
+        _starting ||
+        widget.audioScope.isEmpty) {
+      return;
+    }
+    _stationary.calibrate(
+        yaw: widget.z!,
+        reference: widget.reference!,
+        scope: widget.audioScope,
+        reverse: _reverse);
+    _stationary.addRssi(widget.beaconRssi!, widget.beaconSeenAt!);
+    _directionTracker.reset();
+    _message = '목표 방향 보정 완료 · 제자리에서 머리만 회전하세요. 이동했다면 다시 보정하세요.';
+    _refresh();
   }
 
   Future<void> _start() async {
@@ -275,6 +358,22 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
   @override
   void didUpdateWidget(covariant DirectionAudioPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final previousSensorExpired = oldWidget.stationaryBeacon &&
+        oldWidget.sensorAgeMs +
+                (oldWidget.elapsedSensorAgeMs?.call() ??
+                    _inputAge.elapsedMilliseconds) >=
+            1000;
+    _inputAge
+      ..reset()
+      ..start();
+    if (previousSensorExpired ||
+        oldWidget.stationaryBeacon != widget.stationaryBeacon ||
+        oldWidget.audioScope != widget.audioScope ||
+        oldWidget.reference != widget.reference ||
+        oldWidget.beaconName != widget.beaconName) {
+      _stationary.invalidate();
+    }
+    _checkStationary();
     if (oldWidget.reference != widget.reference || !widget.fresh) {
       _directionTracker.reset();
     }
@@ -290,6 +389,10 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _stationary.invalidate();
+      _refresh();
+    }
     if (state != AppLifecycleState.resumed && (_playing || _starting)) {
       unawaited(_stop('화면을 벗어나 테스트음을 중지했습니다.'));
     }
@@ -323,8 +426,25 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
                     : '버스 비콘 수신 대기 · 버스 탐색을 시작해주세요')
                 : '간격 조절 꺼짐 · 고정 간격 1초',
           ),
-        if (widget.busEnabled)
-          Text('도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
+        if (widget.stationaryBeacon) ...[
+          const Text(
+              '먼저 위의 도로 정면 기준을 설정한 뒤 목표 비콘을 바라보고 보정하세요. 정지 비콘 수동 방향 시연 · 비콘과 사용자 위치를 고정하세요. RSSI는 거리나 방위가 아닙니다. 근접 거리: UNKNOWN.'),
+          OutlinedButton(
+            onPressed: widget.busEnabled &&
+                    widget.audioScope.isNotEmpty &&
+                    _sensorReady &&
+                    _beaconFresh &&
+                    !_playing &&
+                    !_starting
+                ? _calibrateStationary
+                : null,
+            child: const Text('목표 비콘을 바라보고 방향 보정'),
+          ),
+          Text(_stationary.calibrated
+              ? '보정된 목표 방향 사용 · 이동 시 재보정 필요'
+              : '목표 방향 미보정 · 버스 재생 차단'),
+        ] else if (widget.busEnabled)
+          Text('시뮬레이션 도로 기준 버스 방향: ${widget.busAngle.toStringAsFixed(0)}°'),
         if (pan != null)
           Text(spatial
               ? (pan.targetAngle.abs() > 95
@@ -351,6 +471,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
               : (v) => setState(() {
                     _directionTracker.reset();
                     _reverse = v;
+                    _stationary.invalidate();
                   }),
         ),
         Text(_message),
@@ -370,7 +491,7 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
             ),
           ],
         ),
-        if (widget.busEnabled)
+        if (widget.busEnabled && !widget.stationaryBeacon)
           const Text(
             '방향은 왼쪽 접근→정면 정차→오른쪽 출발 가정을 따릅니다. 비콘 방위를 측정하지 않습니다.',
           ),

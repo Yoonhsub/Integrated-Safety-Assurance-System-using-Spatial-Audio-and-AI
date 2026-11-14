@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/head_tracking_direction.dart';
 import '../services/vision_screen_audio.dart';
+import '../services/vision_scene_summary.dart';
 
 class VisionScreenAudioPanel extends StatelessWidget {
   const VisionScreenAudioPanel({
@@ -38,9 +39,7 @@ class VisionScreenAudioPanel extends StatelessWidget {
           FilledButton(
             onPressed: () {
               final parsed = double.tryParse(controller.text.trim());
-              if (parsed != null &&
-                  parsed.isFinite &&
-                  parsed.abs() <= 180) {
+              if (parsed != null && parsed.isFinite && parsed.abs() <= 180) {
                 Navigator.pop(context, parsed);
               }
             },
@@ -67,12 +66,54 @@ class VisionScreenAudioPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SwitchListTile(
-                    title: const Text('화면 위치 소리·음성 안내'),
-                    subtitle: const Text('정보성 시연 · 실제 3D 방향·거리·안전 Guidance 아님'),
+                    title: Text(audio.sceneMode
+                        ? '현재 화면 장면 안내'
+                        : audio.pingOnly
+                            ? '화면 방향 핑'
+                            : '화면 위치 소리·음성 안내'),
+                    subtitle: Text(audio.pingOnly
+                        ? '정보성 핑 · 근접 UNKNOWN · 실제 위험도 아님. 객체별 음색과 1초 간격은 청취 평가용 임시값입니다.'
+                        : '정보성 시연 · 실제 3D 방향·거리·안전 Guidance 아님'),
                     value: audio.enabled,
                     onChanged: cameraActive ? audio.setEnabled : null,
                   ),
                   Text(audio.status),
+                  if (audio.sceneMode) ...[
+                    Semantics(
+                        liveRegion: true,
+                        child: Text(
+                            '장면 상태: ${audio.scene.statusLabel} · ${audio.scene.briefText}')),
+                    Text(audio.lastSceneReceivedAt == null
+                        ? '마지막 관찰 수신: 없음'
+                        : '마지막 관찰 수신: ${audio.lastSceneReceivedAt!.toLocal().toIso8601String()} · ${visionReceiptAgeLabel(audio.lastSceneReceivedAt, DateTime.now().toUtc())}'),
+                    const Text(
+                        '앱의 카메라 콜백 수신 시각입니다. 실제 촬영 시각이나 귀에 들린 시각을 측정한 값은 아닙니다.'),
+                    OutlinedButton(
+                        onPressed: cameraActive && audio.canDescribeScene
+                            ? audio.describeScene
+                            : null,
+                        child: const Text('자세히 듣기')),
+                    const Text(
+                        '통제된 정지 시연용입니다. 다중 장면에는 한 방향 핑을 붙이지 않으며 실제 위험·거리·안전한 경로를 판단하지 않습니다.'),
+                  ],
+                  if (audio.sceneMode)
+                    ExpansionTile(
+                      title: const Text('수신·출력 진단'),
+                      children: [
+                        if (d['inferenceMs'] != null)
+                          Text(
+                              '마지막 추론 ${d['inferenceMs']} ms · 처리 ${d['processingMs'] ?? '-'} ms'),
+                        Text(
+                            '소프트웨어 출력: ${visionSoftwarePhaseLabel(audio.sceneOutputDiagnostic['phase'] as String?)}'),
+                        if (audio.sceneOutputDiagnostic[
+                                'requestElapsedMicros'] !=
+                            null)
+                          Text(
+                              '요청 후 콜백 경과: ${audio.sceneOutputDiagnostic['requestElapsedMicros']} µs'),
+                        const Text(
+                            '모델 처리와 소프트웨어 콜백의 진단값입니다. 촬영 시각이나 실제 귀에 도달한 시각·지연을 측정한 값이 아닙니다.'),
+                      ],
+                    ),
                   DropdownButtonFormField<HeadTrackingCameraMount>(
                     decoration: const InputDecoration(labelText: '카메라 장착 방식'),
                     initialValue: audio.mountCalibration.mount,

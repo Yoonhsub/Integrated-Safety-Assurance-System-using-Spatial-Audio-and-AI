@@ -124,6 +124,18 @@ void main() {
       await tester.pump();
     }
     expect(client.starts, 2);
+    // Do not force GPT when the server only has Gemini configured.
+    final nluSelector = find.byWidgetPredicate((widget) =>
+        widget is SegmentedButton<String> &&
+        widget.segments.any((segment) => segment.value == 'auto'));
+    expect(nluSelector, findsOneWidget);
+    expect(tester.widget<SegmentedButton<String>>(nluSelector).selected,
+        {'auto'});
+    tester.widget<SegmentedButton<String>>(nluSelector)
+        .onSelectionChanged!({'gemini'});
+    await tester.pump();
+    expect(tester.widget<SegmentedButton<String>>(nluSelector).selected,
+        {'gemini'});
     expect(client.reads, 0);
     expect(find.byTooltip('상태 새로고침'), findsOneWidget);
     await tester.tap(find.byTooltip('상태 새로고침'));

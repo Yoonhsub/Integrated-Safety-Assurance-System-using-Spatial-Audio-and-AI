@@ -58,12 +58,12 @@ def _resolve_live(mode: DataMode | None) -> bool:
 
 def _gateway_for(live: bool) -> BusInfoGatewayService:
     """요청별 모드를 강제한 게이트웨이. 전역 env와 무관하게 mock/live를 고정한다."""
-    return BusInfoGatewayService(public_data_service=BusArrivalsService(use_mock=not live))
+    return BusInfoGatewayService(public_data_service=BusArrivalsService(use_mock=not live), allow_cache=not live)
 
 
 def _gateway_for_request(*, live: bool, mode: DataMode | None) -> BusInfoGatewayService:
     """mode 파라미터가 있을 때만 강제 gateway를 만들고, 없으면 주입 가능한 기본 gateway를 쓴다."""
-    if mode is None:
+    if mode is None and not live:
         return _service
     return _gateway_for(live)
 
@@ -575,6 +575,7 @@ def _planning_evidence(
                 stopId=gateway_result.response.stopId,
                 arrivalMinutes=item.arrivalMinutes,
                 arrivalSeconds=item.arrivalSeconds,
+                updatedAt=item.updatedAt,
                 remainingStops=item.remainingStops,
                 lowFloor=item.lowFloor,
                 congestion=item.congestion.value if item.congestion else None,
@@ -708,6 +709,7 @@ def _from_gateway_response(
                 stopId=response.stopId,
                 arrivalMinutes=item.arrivalMinutes,
                 arrivalSeconds=item.arrivalSeconds,
+                updatedAt=item.updatedAt,
                 remainingStops=item.remainingStops,
                 lowFloor=item.lowFloor,
                 congestion=item.congestion.value if item.congestion else None,

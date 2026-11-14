@@ -393,7 +393,7 @@ class V3RoutePlanResponse {
       ),
       agentMessage: _nullableString(json['agentMessage']),
       question: _nullableString(json['question']),
-      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
+      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'UNKNOWN'),
       warnings: _stringList(json['warnings']),
     );
   }
@@ -550,7 +550,7 @@ class V3RoutePlanCandidate {
                 )
                 .toList()
           : const <V3RoutePlanSegment>[],
-      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
+      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'UNKNOWN'),
       planSource: _stringValue(json['planSource'], fallback: 'LOCAL_FALLBACK'),
       provider: _stringValue(json['provider'], fallback: 'LOCAL'),
       verificationStatus: _stringValue(
@@ -627,7 +627,7 @@ class V3RoutePlanSegment {
                 )
                 .toList()
           : const <V3BusArrival>[],
-      arrivalSource: _stringValue(json['arrivalSource'], fallback: 'MOCK'),
+      arrivalSource: _stringValue(json['arrivalSource'], fallback: 'UNKNOWN'),
       arrivalUnknown: json['arrivalUnknown'] == true,
       source: _stringValue(json['source'], fallback: 'LOCAL'),
       providerRouteId: _nullableString(json['providerRouteId']),
@@ -840,6 +840,7 @@ class V3BusArrival {
     this.remainingStops,
     this.lowFloor,
     this.congestion,
+    this.updatedAt,
   });
 
   final String? busId;
@@ -851,6 +852,9 @@ class V3BusArrival {
   final int? remainingStops;
   final bool? lowFloor;
   final String? congestion;
+
+  /// Original provider/cache observation timestamp, not response creation time.
+  final DateTime? updatedAt;
 
   String get displayLabel {
     final bus = busId == null || busId!.isEmpty ? '' : ' · $busId';
@@ -869,6 +873,7 @@ class V3BusArrival {
       remainingStops: _nullableInt(json['remainingStops']),
       lowFloor: json['lowFloor'] is bool ? json['lowFloor'] as bool : null,
       congestion: _nullableString(json['congestion']),
+      updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
     );
   }
 }
@@ -912,7 +917,7 @@ class V3BusArrivalsResponse {
                 )
                 .toList()
           : const <V3BusArrival>[],
-      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'MOCK'),
+      fallbackSource: _stringValue(json['fallbackSource'], fallback: 'UNKNOWN'),
       serviceStatus: V3RouteServiceStatus.fromNullableJson(
         _mapValue(json['serviceStatus']),
       ),
@@ -1394,12 +1399,10 @@ class V3LiveStatus {
       nearbyStops: parseList(json['nearbyStops'], V3NearbyStop.fromJson),
       selectedBoardStop: board == null ? null : V3NearbyStop.fromJson(board),
       selectedAlightStop: alight == null ? null : V3NearbyStop.fromJson(alight),
-      walkingRouteToBoardStop: walking == null
-          ? null
-          : V3WalkingRoute.fromJson(walking),
-      walkingRouteFromAlightStop: egressWalking == null
-          ? null
-          : V3WalkingRoute.fromJson(egressWalking),
+      walkingRouteToBoardStop:
+          walking == null ? null : V3WalkingRoute.fromJson(walking),
+      walkingRouteFromAlightStop:
+          egressWalking == null ? null : V3WalkingRoute.fromJson(egressWalking),
       arrivals: parseList(json['arrivals'], V3BusArrival.fromJson),
       busPositions: parseList(json['busPositions'], V3BusPosition.fromJson),
       serviceStatus: V3RouteServiceStatus.fromNullableJson(

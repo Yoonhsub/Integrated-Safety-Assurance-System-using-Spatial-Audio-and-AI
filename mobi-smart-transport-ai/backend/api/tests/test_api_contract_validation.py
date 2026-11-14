@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -699,7 +700,7 @@ def test_bus_info_gateway_prefers_firebase_bus_arrivals_cache() -> None:
                     "remainingStops": 0,
                     "lowFloor": False,
                     "congestion": "LOW",
-                    "updatedAt": "2026-04-18T14:32:00+09:00",
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
                 }
             ],
         },
@@ -753,9 +754,10 @@ def test_bus_info_gateway_fills_missing_updated_at_from_cache() -> None:
     body = response.json()
     assert body["stopId"] == "stop-missing-updated-at"
     assert body["arrivals"][0]["updatedAt"]
+    assert body["arrivals"][0]["routeId"] != "CACHE-110"
 
 
-def test_bus_info_gateway_returns_empty_arrivals_for_empty_cache_payload() -> None:
+def test_bus_info_gateway_refetches_for_undated_empty_cache_payload() -> None:
     firebase = get_firebase_client()
     firebase.clear_mock_store()
     firebase.set("/busArrivals/stop-empty", {"stopId": "stop-empty"})
@@ -763,7 +765,8 @@ def test_bus_info_gateway_returns_empty_arrivals_for_empty_cache_payload() -> No
     response = client.get("/bus-info/stops/stop-empty/arrivals")
 
     assert response.status_code == 200
-    assert response.json() == {"stopId": "stop-empty", "arrivals": []}
+    assert response.json()["stopId"] == "stop-empty"
+    assert response.json()["arrivals"][0]["routeId"].startswith("MOCK-")
 
 
 def test_bus_info_gateway_converts_public_data_exception_to_backend_error() -> None:
@@ -815,7 +818,7 @@ def test_bus_info_gateway_save_arrivals_persists_normalized_cache_only() -> None
                     remainingStops=3,
                     lowFloor=True,
                     congestion=CongestionLevel.NORMAL,
-                    updatedAt=datetime(2026, 4, 18, 5, 32, tzinfo=timezone.utc),
+                    updatedAt=datetime.now(timezone.utc),
                 )
             ],
         )
@@ -916,3 +919,6 @@ def test_safety_event_rejects_naive_timestamp() -> None:
     )
 
     assert response.status_code == 422
+def test_deferred_tago_diagnostic_routes_are_not_registered():
+    from app.main import app
+    assert not any(getattr(route, "path", "").startswith("/diagnostics/tago") for route in app.routes)

@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.schemas.v3 import AgentIntent, V3BusArrival
 from app.services.v3_agent_tools import (
     classify_agent_intent,
@@ -165,3 +167,50 @@ def test_verify_route_tool_removes_arrival_for_another_route() -> None:
 
     assert verified.recommendedPlan is not None
     assert {arrival.routeNo for arrival in verified.recommendedPlan.segments[0].arrivals} == {"862"}
+
+
+@pytest.mark.parametrize("utterance", [
+    "충북대병원", "사창사거리", "청주대", "상당산성", "사창 사거리 정류장",
+    "모비야 충북대병원", "청주대학교?",
+])
+def test_bare_known_destination_does_not_require_external_nlu(utterance) -> None:
+    result = classify_agent_intent(utterance)
+    assert result.intent == AgentIntent.FIND_ROUTE
+    assert result.explicit_destination
+
+
+@pytest.mark.parametrize(("utterance", "destination"), [
+    ("청주대 가는 버스", "청주대"),
+    ("새로운장소 가는 노선 알려줘", "새로운장소"),
+    ("충북대병원 노선 검색", "충북대병원"),
+    ("사창사거리 경로 검색해줘", "사창사거리"),
+    ("상당산성까지 길찾기", "상당산성"),
+    ("충북대병원 길 찾아줘", "충북대병원"),
+    ("청주대 경로 찾아줘", "청주대"),
+    ("사창사거리 가는 길", "사창사거리"),
+])
+def test_explicit_route_search_extracts_destination(utterance, destination) -> None:
+    result = classify_agent_intent(utterance)
+    assert result.intent == AgentIntent.FIND_ROUTE
+    assert result.explicit_destination == destination
+
+
+@pytest.mark.parametrize("utterance", [
+    "안녕", "고마워", "오늘 날씨 좋다", "충북대병원은 좋은 병원이야",
+    "청주대학교 축제가 재미있었어", "알 수 없는 장소", "아무거나",
+])
+def test_destination_routing_keeps_chatter_unknown(utterance) -> None:
+    assert classify_agent_intent(utterance).intent == AgentIntent.UNKNOWN
+
+
+@pytest.mark.parametrize(("utterance", "intent"), [
+    ("충북대병원 가는 버스 놓쳤어", AgentIntent.REPORT_MISSED_BUS),
+    ("청주대 가는 버스 타도 돼", AgentIntent.ASK_CAN_BOARD_CURRENT_BUS),
+    ("충북대병원 가는 버스 언제 와", AgentIntent.QUERY_ARRIVAL),
+    ("사창사거리 아니라 충북대병원", AgentIntent.CORRECT_DESTINATION),
+    ("청주대 가는 노선으로 변경", AgentIntent.CHANGE_DESTINATION),
+    ("6분 뒤 오는 걸로 안내해줘", AgentIntent.SELECT_ARRIVAL),
+    ("모비야", AgentIntent.WAKE_ONLY),
+])
+def test_expanded_route_grammar_preserves_specific_intent_precedence(utterance, intent) -> None:
+    assert classify_agent_intent(utterance).intent == intent

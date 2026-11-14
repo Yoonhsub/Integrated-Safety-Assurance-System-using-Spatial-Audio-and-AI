@@ -446,6 +446,8 @@ class V3BusArrival(StrictApiModel):
     lowFloor: bool | None = None
     congestion: str | None = None
 
+    updatedAt: datetime | None = None
+
 
 class RoutePlanningEvidence(StrictApiModel):
     source: FallbackSource
