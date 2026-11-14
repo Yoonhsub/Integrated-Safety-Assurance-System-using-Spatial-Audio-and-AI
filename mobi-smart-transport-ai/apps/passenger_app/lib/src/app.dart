@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'pages/passenger_presentation.dart';
+import 'pages/tago_diagnostics_page.dart';
+import 'services/tago_diagnostics_client.dart';
+import 'services/api_base_url.dart';
 import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 import 'pages/agent_name_setup_page.dart';
@@ -220,6 +223,16 @@ class _MobiAppState extends State<MobiApp> {
                 showSignOut: _android,
               )),
       routes: <String, WidgetBuilder>{
+        '/tago-diagnostics': (_) => AuthGate(
+              configurationReady: _firebaseReady,
+              requiredRole: 'passenger',
+              session: widget.authSession,
+              appLabel: 'MOBI TAGO 테스트',
+              builder: (context, account) => TagoDiagnosticsPage(
+                client: TagoDiagnosticsClient(baseUrl: resolveApiBaseUrl()),
+                ownsClient: true,
+              ),
+            ),
         // Local hardware diagnostics carry no server identity or Guidance authority.
         '/device-check': (_) => protectAndroid((_) => const DeviceCheckPage()),
         '/hardware-bus': (_) => protectAndroid((_) => const HardwareBusPage()),

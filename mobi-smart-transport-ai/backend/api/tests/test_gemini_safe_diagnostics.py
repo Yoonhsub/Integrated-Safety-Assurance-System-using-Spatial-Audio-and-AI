@@ -66,7 +66,7 @@ def test_missing_key_no_request(monkeypatch, caplog):
 
 
 def test_success_payload_and_request_unchanged(monkeypatch, caplog):
-    payload = {"candidates": [{"content": {"parts": [{"text": PRIVATE}]}}]}
+    payload = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": PRIVATE}]}}]}
     def post(url, **kwargs):
         assert url.endswith("/test-model:generateContent")
         assert kwargs["headers"] == {"x-goog-api-key": SECRET}

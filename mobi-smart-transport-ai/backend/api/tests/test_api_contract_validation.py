@@ -919,6 +919,3 @@ def test_safety_event_rejects_naive_timestamp() -> None:
     )
 
     assert response.status_code == 422
-def test_deferred_tago_diagnostic_routes_are_not_registered():
-    from app.main import app
-    assert not any(getattr(route, "path", "").startswith("/diagnostics/tago") for route in app.routes)

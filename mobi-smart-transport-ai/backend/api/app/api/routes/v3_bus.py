@@ -33,7 +33,12 @@ from app.services.destination_candidate_resolver import DestinationCandidateReso
 from app.services.route_service_status import evaluate_route_service_status
 from app.services.route_stop_sequence_cache import RouteStopNode
 from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
-from app.services.v3_gemini_service import generate_route_plan_summary, set_nlu_provider
+from app.services.v3_gemini_service import (
+    generate_route_plan_summary,
+    get_last_nlu_model,
+    get_last_nlu_provider,
+    set_nlu_provider,
+)
 
 router = APIRouter()
 _service = BusInfoGatewayService()
@@ -330,8 +335,8 @@ def route_recommend(
     return RouteRecommendResponse(
         recommendations=[recommendation],
         fallbackSource=planning_data_source or FallbackSource.ERROR,
-        usedGemini=planning_result is not None,
-        planningModel=planning_result[0] if planning_result else None,
+        usedGemini=planning_result is not None and get_last_nlu_provider() == "gemini",
+        planningModel=get_last_nlu_model() if planning_result else None,
         planningSummary=planning_result[1] if planning_result else None,
         planningDataSource=planning_data_source,
         mapsGrounded=bool(planning_result[2]) if planning_result else False,

@@ -78,6 +78,7 @@ for method, path in [
 ]:
     POLICY[method, path] = {"admin"}
 for method, path in [
+    ("GET", "/diagnostics/tago/arrivals"), ("GET", "/diagnostics/tago/locations"),
     ("GET", "/bus/destination-candidates"), ("GET", "/bus/route-plan"),
     ("POST", "/bus/route-plan"), ("GET", "/bus/route-recommend"),
     ("GET", "/bus/live-route-status"), ("GET", "/map/nearby-stops"),

@@ -118,7 +118,8 @@ class CheongjuRoutePlanner:
             )
 
         sequence_live = live if use_live_sequences is None else use_live_sequences
-        raw_plans = self._find_plans(destination=destination, sequences=self._route_sequences(live=sequence_live))
+        sequences = self._route_sequences(live=sequence_live)
+        raw_plans = self._find_plans(destination=destination, sequences=sequences)
         candidates = [
             self._to_candidate(index, raw)
             for index, raw in enumerate(raw_plans[:_MAX_RAW_PLANS_TO_ENRICH], start=1)
@@ -126,6 +127,20 @@ class CheongjuRoutePlanner:
         plans = self._ranker.rank(candidates)[:_MAX_PLANS]
         recommended = plans[0] if plans else None
         fallback = _strongest_source([destination.fallbackSource, *(plan.fallbackSource for plan in plans)])
+        cache_status = (
+            self._sequence_cache.live_load_status(_configured_route_nos()) if sequence_live else "MOCK"
+        )
+        sequence_sources = {sequence.source.value for sequence in sequences}
+        route_sequence_source = (
+            "MIXED"
+            if len(sequence_sources) > 1
+            else next(iter(sequence_sources), cache_status)
+        )
+        sequence_status = cache_status if cache_status in {"EMPTY", "ERROR", "PARTIAL"} else route_sequence_source
+        if sequence_live and recommended is None and sequence_status == "ERROR":
+            fallback = FallbackSource.ERROR
+        elif sequence_live and recommended is None and sequence_status == "EMPTY":
+            fallback = FallbackSource.PUBLIC_API
         if recommended is None:
             # 버스 경로가 없더라도 목적지가 도보 가능한 거리면 실패로 끝내지 않고
             # 보행 안내를 제공한다. (짧은 거리에서 "경로를 찾지 못했어"로 막히던 문제)
@@ -151,6 +166,19 @@ class CheongjuRoutePlanner:
             agentMessage=recommended.boardingInstruction if recommended else question,
             question=question,
             fallbackSource=fallback,
+            rawProviderEvidence={
+                "routeSource": (
+                    "TAGO"
+                    if sequence_live and sequence_sources.intersection({"PUBLIC_API", "CACHE"})
+                    else "NONE" if sequence_live else "MOCK"
+                ),
+                "routeSequenceStatus": sequence_status,
+                "routeSequenceSource": route_sequence_source,
+                "destinationSource": destination.fallbackSource.value,
+                "arrivalSources": sorted(
+                    {segment.arrivalSource.value for plan in plans for segment in plan.segments}
+                ),
+            },
         )
 
     def _empty_response(

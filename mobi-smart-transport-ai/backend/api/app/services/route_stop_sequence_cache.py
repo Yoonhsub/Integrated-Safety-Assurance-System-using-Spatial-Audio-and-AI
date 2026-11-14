@@ -42,6 +42,7 @@ class RouteStopSequenceCache:
         self._route_ids_by_no: dict[str, set[str]] = {}
         self._route_ids_by_node: dict[str, set[str]] = {}
         self._loaded_live_route_nos: set[str] = set()
+        self._live_load_errors: set[str] = set()
         self._lock = Lock()
         self._load_lock = Lock()
         for sequence in mock_sequences:
@@ -69,18 +70,29 @@ class RouteStopSequenceCache:
                 sequence = self._sequences_by_route_id.pop(route_id)
                 self._remove_indexes(sequence)
             self._loaded_live_route_nos.clear()
+            self._live_load_errors.clear()
 
     def sequences(self, *, live: bool, route_nos: Iterable[str] = ()) -> list[RouteSequence]:
         requested = {route_no.strip() for route_no in route_nos if route_no.strip()}
         if live and requested:
+            previously_loaded = requested & self._loaded_live_route_nos
             self.load_live_routes(requested)
             live_sequences = [
                 sequence
                 for sequence in self._sequences_by_route_id.values()
-                if sequence.route_no in requested and sequence.source == FallbackSource.PUBLIC_API
+                if sequence.route_no in requested
+                and sequence.source in (FallbackSource.PUBLIC_API, FallbackSource.CACHE)
             ]
             if live_sequences:
+                live_sequences = [
+                    replace(sequence, source=FallbackSource.CACHE)
+                    if sequence.route_no in previously_loaded
+                    else sequence
+                    for sequence in live_sequences
+                ]
                 return sorted(live_sequences, key=lambda sequence: (sequence.route_no, sequence.route_id))
+            # Live requests must never silently consume the demo-only sequence set.
+            return []
 
         mock_sequences = [
             self._sequences_by_route_id[route_id]
@@ -92,6 +104,30 @@ class RouteStopSequenceCache:
     def load_live_routes(self, route_nos: Iterable[str]) -> None:
         with self._load_lock:
             self._load_live_routes(route_nos)
+
+    def live_load_status(self, route_nos: Iterable[str]) -> str:
+        requested = {route_no.strip() for route_no in route_nos if route_no.strip()}
+        sequences = [
+            sequence
+            for sequence in self._sequences_by_route_id.values()
+            if sequence.route_no in requested
+            and sequence.source in (FallbackSource.PUBLIC_API, FallbackSource.CACHE)
+        ]
+        errors = requested & self._live_load_errors
+        if sequences and errors:
+            return "PARTIAL"
+        sources = {sequence.source for sequence in sequences}
+        if sources == {FallbackSource.CACHE}:
+            return "CACHE"
+        if FallbackSource.CACHE in sources and FallbackSource.PUBLIC_API in sources:
+            return "MIXED"
+        if sequences:
+            return "PUBLIC_API"
+        if errors:
+            return "ERROR"
+        if requested and requested.issubset(self._loaded_live_route_nos):
+            return "EMPTY"
+        return "NOT_REQUESTED"
 
     def _load_live_routes(self, route_nos: Iterable[str]) -> None:
         for route_no in sorted({value.strip() for value in route_nos if value.strip()}):
@@ -105,14 +141,16 @@ class RouteStopSequenceCache:
                     else [self._route_service.resolve_route_id(self._city_code, route_no)]
                 )
             except Exception:
-                self._loaded_live_route_nos.add(route_no)
+                self._live_load_errors.add(route_no)
                 continue
+            load_succeeded = True
             for resolved_route_id in resolved_route_ids:
                 if not resolved_route_id:
                     continue
                 try:
                     route_stops = self._route_service.get_route_stops(self._city_code, resolved_route_id)
                 except Exception:
+                    load_succeeded = False
                     continue
                 grouped: dict[str, list[RouteStopNode]] = {}
                 for index, stop in enumerate(route_stops.nodes, start=1):
@@ -136,7 +174,13 @@ class RouteStopSequenceCache:
                                 source=FallbackSource.PUBLIC_API,
                             )
                         )
-            self._loaded_live_route_nos.add(route_no)
+            # A successful lookup with no route IDs/nodes is a real empty result.
+            # Provider failures stay retryable on the next request.
+            if load_succeeded:
+                self._loaded_live_route_nos.add(route_no)
+                self._live_load_errors.discard(route_no)
+            else:
+                self._live_load_errors.add(route_no)
 
     def sequence_for_route(self, route_id: str) -> RouteSequence | None:
         return self._sequences_by_route_id.get(route_id)

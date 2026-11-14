@@ -43,8 +43,12 @@ class RoutePlanEnricher:
         sequences = self._sequence_cache.sequences(live=live, route_nos=route_nos)
         if live:
             # A live ODsay candidate is TAGO-verified only when the matching
-            # route sequence actually came from the public API.
-            sequences = [sequence for sequence in sequences if sequence.source == FallbackSource.PUBLIC_API]
+            # sequence came from TAGO directly or from this process cache.
+            sequences = [
+                sequence
+                for sequence in sequences
+                if sequence.source in (FallbackSource.PUBLIC_API, FallbackSource.CACHE)
+            ]
         warnings: list[str] = []
         enriched_segments: list[RoutePlanSegment] = []
         enriched_legs = list(candidate.legs)

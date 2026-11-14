@@ -291,5 +291,10 @@ class DeviceCheckPage extends StatelessWidget {
         OutlinedButton(
             onPressed: () => Navigator.of(context).pushNamed('/hardware-bus'),
             child: const Text('실기기 연동확인 · BLE/WT901/HRTF')),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).pushNamed('/tago-diagnostics'),
+          child: const Text('TAGO 실데이터 진단'),
+        ),
+
       ])));
 }

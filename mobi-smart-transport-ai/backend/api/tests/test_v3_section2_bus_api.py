@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -42,15 +43,23 @@ def test_route_recommendation_unknown_destination_is_explicit_error() -> None:
     assert body["error"]["detail"]["destination"] == "없는목적지"
 
 
-def test_location_aware_route_recommendation_uses_pro_summary(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("provider", "expected_used_gemini", "model"),
+    [("gemini", True, "gemini-2.5-pro"), ("openai", False, "gpt-test-model")],
+)
+def test_location_aware_route_recommendation_reports_actual_summary_provider(
+    monkeypatch, provider, expected_used_gemini, model
+) -> None:
     from app.api.routes import v3_bus
 
     monkeypatch.setenv("CHEONGJU_BUS_STOPS_ENABLED", "false")
+    monkeypatch.setattr(v3_bus, "get_last_nlu_provider", lambda: provider)
+    monkeypatch.setattr(v3_bus, "get_last_nlu_model", lambda: model)
     monkeypatch.setattr(
         v3_bus,
         "generate_route_plan_summary",
         lambda **_: (
-            "gemini-2.5-pro",
+            model,
             "현재 위치 기준으로 검증된 502번 후보를 우선 안내할게.",
             [{"title": "사창사거리", "uri": "https://maps.google.com/example"}],
         ),
@@ -64,8 +73,8 @@ def test_location_aware_route_recommendation_uses_pro_summary(monkeypatch) -> No
     assert response.status_code == 200
     body = response.json()
     assert body["recommendations"][0]["routeNo"] == "502"
-    assert body["usedGemini"] is True
-    assert body["planningModel"] == "gemini-2.5-pro"
+    assert body["usedGemini"] is expected_used_gemini
+    assert body["planningModel"] == model
     assert body["planningDataSource"] == "MOCK"
     assert body["mapsGrounded"] is True
     assert body["mapsEvidence"][0]["title"] == "사창사거리"
