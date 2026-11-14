@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:mobi_mobile_auth/mobile_auth.dart';
 
 import '../services/speech_priority_coordinator.dart';
+import '../features/hardware_bus/safety_integration_check_page.dart';
 
 const mobiInk = Color(0xFF173550);
 const mobiBlue = Color(0xFF2378F3);
@@ -278,6 +279,11 @@ class DeviceCheckPage extends StatelessWidget {
                           child: const Text('휴대폰 단독 모드 열기')),
                     ]))),
         const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const SafetyIntegrationCheckPage())),
+          child: const Text('안전 중단·재개 통합 점검 (모의)'),
+        ),
         const Text('고급 하드웨어 진단', style: TextStyle(fontWeight: FontWeight.bold)),
         OutlinedButton(
           onPressed: () =>
