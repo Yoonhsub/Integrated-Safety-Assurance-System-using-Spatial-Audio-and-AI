@@ -58,6 +58,9 @@ def prepare_backend(output: Path) -> None:
     for rel in ("backend/api/app", "services/public_data/public_data_client"):
         copy_files(ROOT / rel, output / rel, {".py"})
     copy_files(ROOT / "services/public_data/examples", output / "services/public_data/examples", {".json"})
+    contract = Path("packages/shared_contracts/api/vision_detection.response.schema.json")
+    (output / contract).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / contract, output / contract)
     shutil.copy2(ROOT / "backend/api/requirements.txt", output / "backend/api/requirements.txt")
     # Root-location marker only; no local .env or service-account material is uploaded.
     (output / ".env.example").write_text("# Deployment root marker. Runtime environment supplies configuration.\n", encoding="utf-8")

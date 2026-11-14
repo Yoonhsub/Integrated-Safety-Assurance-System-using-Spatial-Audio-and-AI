@@ -286,3 +286,18 @@ def test_cloud_test_probe_still_denied_before_any_storage(monkeypatch):
     with pytest.raises(HTTPException) as error:
         client.probe()
     assert error.value.status_code == 403
+
+
+def test_backend_bundle_contains_working_vision_validator(tmp_path, monkeypatch):
+    from app.schemas import vision_v2
+    output = tmp_path / "vision-context"
+    bundle.prepare_backend(output)
+    contract = output / "packages/shared_contracts/api/vision_detection.response.schema.json"
+    assert contract.is_file()
+    assert "COPY packages/shared_contracts/api/vision_detection.response.schema.json" in (output / "Dockerfile").read_text()
+    monkeypatch.setattr(vision_v2, "_SCHEMA", contract)
+    vision_v2.detection_validator.cache_clear()
+    try:
+        assert vision_v2.detection_validator() is not None
+    finally:
+        vision_v2.detection_validator.cache_clear()

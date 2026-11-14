@@ -39,6 +39,7 @@ from app.services.v3_agent_tools import (
 from app.services.v3_agent_trace import AgentTraceRecorder
 from app.services.v3_gemini_service import (
     classify_intent,
+    get_last_nlu_provider,
     generate_dynamic_response,
     generate_optional_reply,
     infer_cheongju_destination,
@@ -580,7 +581,7 @@ def _run_converse(
     if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
         intent = AgentIntent(classification["intent"])
         nlp_destination = classification["destination"]
-        reasoning_source = "gemini"
+        reasoning_source = get_last_nlu_provider() or "unknown"
     trace.done(
         intent_event,
         "발화 의도를 먼저 추론한 뒤 처리 단계로 넘어갔어.",
@@ -1024,7 +1025,7 @@ def _local_smalltalk_fallback(session: V3SessionRecord, utterance: str) -> str:
         )
     if session.selected_destination:
         return f"현재 목적지는 {session.selected_destination}로 잡혀 있습니다. 경로가 필요하면 '몇 번 버스 타야 돼요?'처럼 물어봐 주세요."
-    return "장소나 정류장 이름을 말씀해 주시면 버스 경로를 찾아드리겠습니다."
+    return "목적지를 포함해 '충북대병원 어떻게 가?' 또는 '청주대 가는 버스'처럼 말씀해 주세요."
 
 
 def _infer_destination_confirmation(
@@ -1529,7 +1530,11 @@ def _detect_intent(utterance: str, wake_word: str) -> AgentIntent:
 
 
 def _is_explicit_new_route_request(utterance: str, wake_word: str) -> bool:
-    return _detect_intent(utterance, wake_word) in {
+    # Bare names may answer a pending destination choice. Only explicit route
+    # grammar should discard that question before the choice matcher runs.
+    return classify_agent_intent(
+        utterance, wake_word=wake_word, allow_bare_destination=False,
+    ).intent in {
         AgentIntent.FIND_ROUTE,
         AgentIntent.CHANGE_DESTINATION,
         AgentIntent.CORRECT_DESTINATION,

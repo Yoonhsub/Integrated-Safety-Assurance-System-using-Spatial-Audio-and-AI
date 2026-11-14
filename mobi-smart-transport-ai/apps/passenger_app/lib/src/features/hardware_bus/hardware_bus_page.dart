@@ -35,6 +35,7 @@ class _HardwareBusPageState extends State<HardwareBusPage>
   DateTime? _endsAt;
   Duration _scanDuration = const Duration(seconds: 15);
   String _toneBeaconMac = beaconA;
+  bool _stationaryBeacon = false;
   final _clock = Stopwatch()..start();
   final _passages = {beaconA: BusPassage(), beaconB: BusPassage()};
 
@@ -51,8 +52,9 @@ class _HardwareBusPageState extends State<HardwareBusPage>
       _signals[_otherMac]!.rssi >= -60 &&
       (!_fresh(_toneBeaconMac) ||
           _signals[_otherMac]!.rssi >= _signals[_toneBeaconMac]!.rssi + 6);
-  String get _audioMac => _wrongBus ? _otherMac : _toneBeaconMac;
-  bool get _warning => _wrongBus;
+  String get _audioMac =>
+      !_stationaryBeacon && _wrongBus ? _otherMac : _toneBeaconMac;
+  bool get _warning => !_stationaryBeacon && _wrongBus;
   double get _busAngle => _passages[_audioMac]!.angle;
 
   bool _running = false, _busy = false;
@@ -304,6 +306,13 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                 ),
               ],
             ),
+            SwitchListTile(
+              title: const Text('정지 비콘 수동 방향 보정 모드'),
+              subtitle:
+                  const Text('켜짐: 선택한 실제 비콘을 바라보고 보정. 꺼짐: 왼쪽→정면→오른쪽 시뮬레이션.'),
+              value: _stationaryBeacon,
+              onChanged: (value) => setState(() => _stationaryBeacon = value),
+            ),
             WitSensorPanel(
               key: const ValueKey('wit-sensor-panel'),
               ensureReady: _ready,
@@ -313,7 +322,8 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                   _toneBeaconMac == beaconA ? '502번 역할 · A' : '511번 역할 · B',
               busAngle: _busAngle,
               warning: _warning,
-              audioScope: '$_toneBeaconMac/$_epoch',
+              audioScope: '$_toneBeaconMac/$_epoch/$_stationaryBeacon',
+              stationaryBeacon: _stationaryBeacon,
               obstacles: widget.obstacles,
               sessionNow: widget.sessionNow,
             ),

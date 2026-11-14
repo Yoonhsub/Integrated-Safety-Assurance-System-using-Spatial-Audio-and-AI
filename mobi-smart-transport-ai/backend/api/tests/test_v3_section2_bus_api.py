@@ -92,7 +92,7 @@ def test_location_aware_route_recommendation_passes_cached_arrivals_to_pro(monke
                     "remainingStops": 1,
                     "lowFloor": True,
                     "congestion": "LOW",
-                    "updatedAt": "2026-05-30T00:00:00+09:00",
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
                 }
             ],
         },
@@ -254,7 +254,7 @@ def test_cache_fallback_source_wins_over_local_mock_catalog() -> None:
                     "remainingStops": 1,
                     "lowFloor": False,
                     "congestion": "LOW",
-                    "updatedAt": "2026-05-30T00:00:00+09:00",
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
                 }
             ],
         },

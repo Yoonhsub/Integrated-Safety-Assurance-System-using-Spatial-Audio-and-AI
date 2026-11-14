@@ -6,6 +6,16 @@ import 'auth_only_configuration.dart';
 import 'firebase_auth_service.dart';
 
 class AuthGate extends StatefulWidget {
+  static bool canSignOut(BuildContext context) =>
+      context.findAncestorStateOfType<_AuthGateState>() != null;
+
+  /// Uses the enclosing gate's existing sign-out lifecycle and error handling.
+  static Future<void> signOut(BuildContext context) {
+    final gate = context.findAncestorStateOfType<_AuthGateState>();
+    if (gate == null) throw StateError('No enclosing AuthGate');
+    return gate._signOut();
+  }
+
   const AuthGate({
     super.key,
     required this.configurationReady,
@@ -301,7 +311,9 @@ class _AccountStatusPage extends StatelessWidget {
           body: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(title),
-          Text(message, textAlign: TextAlign.center),
+          Semantics(
+              liveRegion: true,
+              child: Text(message, textAlign: TextAlign.center)),
           FilledButton(onPressed: onSignOut, child: const Text('로그아웃')),
         ]),
       ));
@@ -368,7 +380,7 @@ class _SignInPageState extends State<_SignInPage> {
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
-              child: Padding(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -383,6 +395,8 @@ class _SignInPageState extends State<_SignInPage> {
                     const SizedBox(height: 24),
                     TextField(
                       controller: _emailController,
+                      enabled: !_busy,
+                      textInputAction: TextInputAction.next,
                       keyboardType: TextInputType.emailAddress,
                       autofillHints: const [AutofillHints.username],
                       decoration: const InputDecoration(labelText: '이메일'),
@@ -390,6 +404,8 @@ class _SignInPageState extends State<_SignInPage> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _passwordController,
+                      enabled: !_busy,
+                      textInputAction: TextInputAction.done,
                       obscureText: true,
                       autofillHints: const [AutofillHints.password],
                       onSubmitted: (_) => _signIn(),
@@ -397,10 +413,12 @@ class _SignInPageState extends State<_SignInPage> {
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error),
                         ),
                       ),
                     ],
@@ -410,7 +428,8 @@ class _SignInPageState extends State<_SignInPage> {
                       child: _busy
                           ? const SizedBox.square(
                               dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, semanticsLabel: '로그인 중'),
                             )
                           : const Text('로그인'),
                     ),
@@ -439,7 +458,9 @@ class _AuthMessagePage extends StatelessWidget {
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 12),
-                Text(message, textAlign: TextAlign.center),
+                Semantics(
+                    liveRegion: true,
+                    child: Text(message, textAlign: TextAlign.center)),
               ],
             ),
           ),

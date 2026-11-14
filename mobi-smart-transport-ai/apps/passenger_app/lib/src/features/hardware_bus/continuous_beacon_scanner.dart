@@ -7,8 +7,10 @@ class ContinuousBeaconScanner implements BeaconScanner {
   ContinuousBeaconScanner({
     required this.beaconIdResolver,
     this.scanTimeout = const Duration(seconds: 15),
+    this.remoteIds = const ['C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48'],
   });
   final Duration scanTimeout;
+  final List<String> remoteIds;
 
   final BeaconIdResolver beaconIdResolver;
   final _estimator = const BeaconDistanceEstimator();
@@ -78,7 +80,7 @@ class ContinuousBeaconScanner implements BeaconScanner {
         continuousDivisor: 1,
         oneByOne: true,
         androidUsesFineLocation: true,
-        withRemoteIds: const ['C3:00:00:5C:B9:47', 'C3:00:00:5C:B9:48'],
+        withRemoteIds: remoteIds,
       );
       if (_scanning) {
         _timer = Timer(scanTimeout, () => unawaited(stop()));

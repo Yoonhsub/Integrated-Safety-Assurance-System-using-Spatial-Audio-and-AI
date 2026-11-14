@@ -1,10 +1,13 @@
 import json
 import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from app.api.routes import v3_agent
 from app.main import app
-from app.schemas.v3 import AgentTraceEvent
+from app.schemas.v3 import AgentIntent, AgentTraceEvent
+from app.services import v3_gemini_service
 from app.services.v3_agent_trace import AgentTraceRecorder
 from app.services.v3_guidance_store import v3_guidance_store
 
@@ -110,6 +113,32 @@ def test_agent_converse_includes_grounded_route_trace_in_order() -> None:
     indexes = [types.index(event_type) for event_type in expected]
     assert indexes == sorted(indexes)
     assert body["routePlan"]["recommendedPlan"]["segments"][0]["routeNo"] == "862"
+
+
+def test_classify_trace_records_openai_provider_after_auto_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        v3_agent,
+        "classify_agent_intent",
+        lambda *args, **kwargs: SimpleNamespace(intent=AgentIntent.UNKNOWN),
+    )
+    monkeypatch.setattr(v3_gemini_service, "_generate_payload", lambda **_: None)
+    monkeypatch.setattr(
+        v3_gemini_service,
+        "_openai_generate",
+        lambda **_: json.dumps(
+            {"intent": "END_CONVERSATION", "complexity": "GENERAL", "destination": None}
+        ),
+    )
+
+    response = _say("trace-openai-fallback", "ambiguous utterance", nluProvider="auto")
+
+    assert response.status_code == 200
+    classify = next(
+        event for event in response.json()["trace"] if event["type"] == "CLASSIFY_INTENT"
+    )
+    assert classify["safePayload"]["reasoningSource"] == "openai"
 
 
 def test_pending_terminal_choice_trace_records_selected_candidate() -> None:

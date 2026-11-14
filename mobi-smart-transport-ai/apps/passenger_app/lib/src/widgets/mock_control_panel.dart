@@ -49,7 +49,7 @@ class V3MockControlPanel extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Mock Control Panel',
+              '시연 안내 확인',
               style: Theme.of(
                 context,
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
@@ -58,74 +58,23 @@ class V3MockControlPanel extends StatelessWidget {
             Text(
               latestGeofenceMessage ??
                   latestBeaconDecision?.message ??
-                  'mock 이벤트를 실행할 수 있어.',
+                  '모의 이벤트 주입은 자동 테스트에서 확인합니다. 실제 기기의 음성 반복과 도착정보 갱신은 여기서 확인하세요.',
             ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
+                // Deterministic mock event injection is covered by backend
+                // smoke/unit tests; retain only user-facing repeat and refresh.
                 _Button(
-                  label: 'Boarding Prompt',
-                  onPressed: onBoardingPrompt,
-                  isBusy: isBusy,
-                ),
+                    label: 'Repeat Line',
+                    onPressed: onRepeatScript,
+                    isBusy: isBusy),
                 _Button(
-                  label: 'Boarded OK',
-                  onPressed: onBoardedSuccess,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: 'Repeat Line',
-                  onPressed: onRepeatScript,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '도착',
-                  onPressed: onArrivedAtStop,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '대기 범위 이탈',
-                  onPressed: onLeftWaitingArea,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '위험 구역',
-                  onPressed: onDangerZone,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '정류장 복귀',
-                  onPressed: onReturnedToStop,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '잘못된 버스 근접',
-                  onPressed: onWrongBusNear,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '타야 할 버스 중간',
-                  onPressed: onTargetBusMid,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '타야 할 버스 근접',
-                  onPressed: onTargetBusNear,
-                  isBusy: isBusy,
-                ),
-                _Button(label: '비컨 없음', onPressed: onNoBeacon, isBusy: isBusy),
-                _Button(
-                  label: '버스 지나감',
-                  onPressed: onBusPassed,
-                  isBusy: isBusy,
-                ),
-                _Button(
-                  label: '도착정보 갱신',
-                  onPressed: onRefreshArrivals,
-                  isBusy: isBusy,
-                ),
+                    label: '도착정보 갱신',
+                    onPressed: onRefreshArrivals,
+                    isBusy: isBusy),
               ],
             ),
           ],

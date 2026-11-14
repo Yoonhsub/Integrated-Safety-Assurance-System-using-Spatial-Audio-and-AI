@@ -371,3 +371,93 @@ SADIE II v2-1 D2 KEMAR 실측 HRIR을 사용해 수평 5도 간격의 경고음�
 - 시험 앱 target/define 검증, debug 전용 제한, offlinevision 인터넷 차단과 Fake Backend 격리는 #69 가드를 그대로 유지한다.
 - 카메라 모델과 SafetyInterpreter, guidanceEligible=false는 변경하지 않았다. HRTF 데이터/라이선스와 독립 temporary_test_app을 보존했다.
 - 기존 두 PR의 개별 실기기 증거는 통합 APK의 재수락을 대신하지 않는다.
+
+## 로그인 후 홈 화면 점검 (2026-11-13)
+
+- 일반 Android 앱은 기존 Firebase AuthGate로 등록된 승객 계정을 확인한 뒤 홈을 표시합니다. 로그아웃 상태에서 실행하면 로그인 화면이 먼저 나오며, 기존 로그인 세션 복원 정책은 변경하지 않았습니다.
+- 홈의 두 주요 기능은 `노선 정보 검색`과 `장애물 탐지`이며, 오른쪽 위 `로그아웃`은 기존 AuthGate의 로그아웃/실패 재시도 처리를 사용합니다.
+- 두 기능 버튼에 스크린리더 이름·설명·실행 동작을 제공합니다. Android의 기존 한 번 탭 설명 TTS/빠른 두 번 탭 실행과 TalkBack 실행 동작을 유지합니다.
+- 웹 진단 진입 흐름, Firebase 역할 권한, 비전/노선/공간음향 처리 로직은 변경하지 않았습니다. iOS Semantics 테스트는 iOS 앱 포팅이나 실기기 VoiceOver 검증을 의미하지 않습니다.
+- 회귀 확인: `flutter test test/passenger_login_home_test.dart test/android_runtime_configuration_test.dart`. 실제 Firebase 로그인과 Android TalkBack/TTS 청취는 실기기에서 별도 확인합니다.
+
+### UI 정리 및 테스트 버튼 분리 (2026-11-13)
+
+기존 카메라 시작/중지, 하단 고정 중지 버튼, 권한 오류 안내, 요청 중복 차단, 경로 응답 TTS, 화면 음향 Hold 기능을 확인한 뒤 중복 구현하지 않았습니다. 로그인은 큰 글씨와 키보드가 열린 화면에서 스크롤 가능하게 하고, 로그인 오류/카메라 상태/서버 오류를 접근성 상태로 노출했습니다. 모드 선택 실패는 화면에 남는 복구 안내를 표시하며 Android 위치 권한 안내를 추가했습니다. 홈 아이콘은 두 주요 기능이 있는 홈으로 돌아갑니다.
+
+제거한 인앱 테스트 버튼:
+- 모의 geofence/비콘/탑승 이벤트 주입 11개. 서버 상태 전이·이벤트 입력은 `scripts/smoke_v3_guidance.py` 및 backend 테스트에서 기기 없이 확인 가능합니다. 위젯의 기존 콜백 계약과 서버 로직은 유지하고 버튼 노출만 제거했습니다.
+- 사창사거리/충북대병원/상당산성 고정 목적지 테스트 바로가기 3개. 채팅·음성 목적지 입력, 목적지 후보 선택, 경로 안내 시작, 도착정보 갱신은 유지했습니다.
+
+유지한 실기기 점검: BLE 실제 스캔, WT901/HRTF 및 헤드트래킹 보정, 좌우 방향 청취, 한국어 TTS, STOP/세션 종료/백그라운드 잔여음, 시나리오 오디오·Repeat Line. 자동 테스트 통과를 실제 기기·이어폰 청취 완료로 간주하지 않습니다. 안내 반복 간격·Hold의 동작·위험 경보 정책은 변경하지 않았고, 노선 조회 결과를 특정 차량으로 추정 매칭하지 않습니다.
+
+검증용 추가 테스트: `test/passenger_ui_cleanup_test.dart` (모의 버튼 제거/실제 동작 유지, 모드 선택 접근성, 큰 글씨 로그인).
+
+### Route-input fallback regression
+
+- The NLU selector now defaults to the backend's existing `auto` mode (Gemini, then OpenAI fallback), rather than forcing OpenAI. Explicit diagnostic overrides remain available.
+- Known place/stop names and explicit route-search phrases are recognized locally when optional NLU is unavailable. Unknown bare place names still need NLU; use an explicit request such as `청주대 가는 버스` or `충북대병원 어떻게 가?`.
+- Local regression tests isolate external services. They do not verify deployed API credentials, live transit results, microphone recognition, or on-device playback. No deployment is included.
+
+### Camera direction audio integration (2026-11-14)
+
+The normal camera entry retains selected-object directional audio: three consecutive
+frames, verified parent-bus containment for doors, and the existing obstacle-first
+selection/preemption policy. Scene-summary mode is not the default. Existing STOP,
+Hold, freshness, ownership and authentication/session shutdown remain in force.
+Screen directions and bounding-box presentation ranking are not measured road
+directions, distance or collision risk. Preview remains guidanceEligible=false.
+
+The separate stationary hardware diagnostic may summarize multiple objects. It
+filters doors through the same parent-bus validation before scene summarization;
+an unsupported door must not suppress a valid obstacle. This diagnostic is not
+automatic navigation or proof of real-device safety. Android and headphone
+listening remain separate acceptance tests.
+
+Historical build record (before this integration fix):
+Build verification: `:app:compileDebugKotlin` passed offline using the installed Android Studio bundled JDK 21, with explicit `-Ptarget=lib/main.dart`. Set `JAVA_HOME` for the current terminal/process only when reproducing. JDK 23 failed in the existing CameraX Java compiler task before app Kotlin; the same source passed with JDK 21, so no dependency, global Java setting or Gradle configuration change was made. This was compile-only, not APK packaging, installation or listening validation.
+
+### Stationary beacon target-heading demonstration
+
+The hardware screen has an explicit stationary-beacon mode, separate from the simulated left/front/right bus passage. Select the actual beacon, establish the WT sensor reference/sign, then look toward the fixed beacon and press the target-heading calibration button. Start playback separately. Remain in the same location and rotate only the head; if the user or target moves, stop and recalibrate. This feature does not track translation, measure bearing from RSSI, or authenticate a vehicle.
+
+The stored target heading and current head yaw use the same sign/reference convention. Turning the head right moves a fixed forward target to the left output. Existing five-way stereo output is retained; targets outside its supported front/side field do not become fictional rear-direction cues.
+
+RSSI affects cadence only, with per-radio-sample smoothing and a 60 ms interval deadband. The existing provisional bounds are 1,400–220 ms; stronger signal can shorten the interval, but reflections/body blocking mean it does not prove approaching distance. Proximity remains `UNKNOWN`. Target/reference/sign/session changes and lost or stale sensor/beacon data invalidate calibration and stop target playback. Existing explicit obstacle-warning priority is preserved and is not gated on beacon calibration. Recovered data alone must not restart an old calibration.
+
+The normal camera entry preserves the existing obstacle priority policy. Hardware diagnostics remain separate; local tests do not establish APK/device listening or live safety validation.
+
+
+### Temporary concurrent hardware test
+
+The headphone/device-check screen entry `동시 기기 테스트 (임시)` opens a dedicated, authenticated
+Android diagnostic screen. This screen is separate from production route and
+obstacle guidance. BLE scan, WT connection and local camera detection have
+independent controls; starting one must not unmount or stop another. The compact
+`버스·WT` and `카메라` views retain their device state when switching views.
+Pairing and extended information are opened explicitly rather than filling a long
+main page. Normal phone layouts use no vertical main-page scrolling. At large
+accessibility text sizes or short displays, `확대 보기` provides a bounded scrolling
+dialog so controls are not clipped; sensor owners remain mounted outside that dialog. Audio
+requests are coordinated, not mixed through competing native audio owners.
+
+Enter the test bus number and its confirmed Android beacon MAC in the temporary
+screen before starting the scan; it creates no automatic mapping from a bus number.
+Enable the bus demonstration voice separately. Camera audio is also opt-in, with
+separate start/stop controls and a ping-only option.
+
+The existing 502 / 511 beacon assignments are demonstration roles, not verified
+vehicle identities. A matching Android BLE MAC only proves receipt of a configured
+demo signal. It cannot establish real bus approach, distance, boarding permission,
+or travel safety. Do not use this test screen while navigating traffic.
+
+The integrated camera policy is a controlled, stationary informational scene
+summary, not a navigation or hazard-priority system. It groups current reliable
+detections into screen left/center/right and reports single, multiple, uncertain
+or unavailable scenes. It never estimates physical range from box size or asserts
+that a path is clear. `자세히 듣기` describes only the current fresh scene; stale
+observations are not queued or replayed. STOP retires pending and active output.
+
+Freshness is based on the application's frame-receipt timestamp, not a verified
+camera exposure timestamp. TTS completion events describe software callbacks, not
+sound arrival at the listener's ear. Physical audio latency, BLE/camera concurrency
+and Shokz stereo perception still require controlled device measurements.

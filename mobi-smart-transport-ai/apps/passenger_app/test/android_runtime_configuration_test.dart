@@ -61,8 +61,7 @@ void main() {
       expect(engine.playing!.isCompleted, isTrue);
       final accessibleButton = tester.widget<Semantics>(
         find.byWidgetPredicate(
-          (widget) =>
-              widget is Semantics && widget.properties.label == '노선 정보 검색',
+          (widget) => widget is Semantics && widget.properties.label == '노선 정보 검색',
         ),
       );
       accessibleButton.properties.onTap!();
@@ -128,6 +127,8 @@ void main() {
       final buttons = find.byWidgetPredicate(
           (widget) => widget is FilledButton || widget is OutlinedButton);
       expect(buttons, findsNWidgets(2));
+      expect(find.text('TAGO 실데이터 테스트'), findsNothing);
+      expect(find.text('동시 기기 테스트 (임시)'), findsNothing);
       for (final button in tester.widgetList<ButtonStyleButton>(buttons)) {
         final foreground = button.style!.foregroundColor!.resolve({})!;
         final background = button.style!.backgroundColor!.resolve({})!;
@@ -146,7 +147,7 @@ void main() {
       expect(find.text('실제 API 데이터 테스트'), findsNothing);
       expect(find.text('온라인 서비스'), findsOneWidget);
       expect(find.text('이 이름으로 시작'), findsOneWidget);
-      await tester.tap(find.byType(BackButton).first);
+      await tester.tap(find.byTooltip('홈으로').first);
       await tester.pumpAndSettle();
       await tester.tap(find.descendant(
           of: find.byType(AppBar), matching: find.text('로그아웃')));

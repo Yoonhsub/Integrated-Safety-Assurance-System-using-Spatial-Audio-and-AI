@@ -16,13 +16,23 @@ abstract interface class DirectionalCueOutput {
   Future<bool> playCue(TestDirection direction);
 }
 
+/// Informational class distinction only, never a danger or distance estimate.
+enum InformationalCueTone { neutral, obstacle }
+
+abstract interface class InformationalDirectionalCueOutput {
+  Future<bool> playInformationalCue(
+      TestDirection direction, InformationalCueTone tone);
+}
+
 abstract interface class HeadTrackedCueOutput {
   Future<bool> playHeadTrackedCue(double azimuthDegrees);
 }
 
 class _GuidanceRequest {
-  _GuidanceRequest(
-      this.guidance, this.isCurrent, this.admit, this.phase, this.spokenText);
+  _GuidanceRequest(this.guidance, this.isCurrent, this.admit, this.phase,
+      this.spokenText, this.cueOnly, this.informationalTone);
+  final bool cueOnly;
+  final InformationalCueTone? informationalTone;
   final bool Function()? admit;
   final void Function(String)? phase;
   final String? spokenText;
@@ -47,8 +57,18 @@ class SpatialVerificationEngine implements SpeechEngine {
       DirectionalGuidance guidance, bool Function() isCurrent,
       {bool Function()? admit,
       void Function(String)? phase,
-      String? spokenText}) {
+      String? spokenText,
+      bool cueOnly = false,
+      InformationalCueTone? informationalTone}) {
     guidance.validate();
+    if (cueOnly && !guidance.hasReviewedDirection) {
+      throw ArgumentError('Cue-only requests require reviewed direction');
+    }
+    if (informationalTone != null &&
+        guidance.provenance != DirectionalGuidance.screenProvenance) {
+      throw ArgumentError(
+          'Informational tones require camera-screen provenance');
+    }
     if (_disposed || !isCurrent() || _seen.contains(guidance.scopeKey)) {
       return null;
     }
@@ -58,8 +78,8 @@ class SpatialVerificationEngine implements SpeechEngine {
     _seen.add(guidance.scopeKey);
     if (_seen.length > 128) _seen.remove(_seen.first);
     final command = '@guidance:${++_nextGuidance}';
-    _guidanceRequests[command] =
-        _GuidanceRequest(guidance, isCurrent, admit, phase, spokenText);
+    _guidanceRequests[command] = _GuidanceRequest(guidance, isCurrent, admit,
+        phase, spokenText, cueOnly, informationalTone);
     return command;
   }
 
@@ -95,8 +115,13 @@ class SpatialVerificationEngine implements SpeechEngine {
               ? await (output as HeadTrackedCueOutput)
                   .playHeadTrackedCue(azimuth)
               : throw StateError('Head-tracked HRTF capability missing')
-          : await (output as DirectionalCueOutput)
-              .playCue(guidance.testDirection!);
+          : request.informationalTone != null &&
+                  output is InformationalDirectionalCueOutput
+              ? await (output as InformationalDirectionalCueOutput)
+                  .playInformationalCue(
+                      guidance.testDirection!, request.informationalTone!)
+              : await (output as DirectionalCueOutput)
+                  .playCue(guidance.testDirection!);
       _guidanceCheck(request, revision);
       if (!complete) throw SpeechCancelled();
       _trace(request, 'CUE_COMPLETED');
@@ -105,6 +130,7 @@ class SpatialVerificationEngine implements SpeechEngine {
       _guidanceCheck(request, revision);
       _trace(request, 'CUE_STOP_CONFIRMED');
     }
+    if (request.cueOnly) return;
     await tts.prepare(requireKoreanVoice: true);
     _guidanceCheck(request, revision);
     if (!(request.admit?.call() ?? true)) throw SpeechCancelled();

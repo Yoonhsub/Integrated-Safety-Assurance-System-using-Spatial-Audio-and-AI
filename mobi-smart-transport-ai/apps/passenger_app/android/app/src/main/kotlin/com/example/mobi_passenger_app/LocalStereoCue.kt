@@ -74,7 +74,9 @@ internal class LocalStereoCue(private val context: Context, private val channel:
                     val id = call.argument<Int>("id") ?: error("Run id required")
                     val direction = call.argument<String>("direction") ?: error("Direction required")
                     require(direction in setOf("LEFT", "CENTER", "RIGHT"))
-                    play(owner, id, direction)
+                    val tone = call.argument<String>("informationalTone")
+                    require(tone == null || tone in setOf("neutral", "obstacle"))
+                    play(owner, id, direction, tone)
                     result.success(snapshot())
                 }
                 "stop", "dispose" -> {
@@ -93,21 +95,27 @@ internal class LocalStereoCue(private val context: Context, private val channel:
             result.error("NATIVE_AUDIO_BLOCKED", error.javaClass.simpleName, null)
         }
     }
-    private fun pcm(direction: String): ShortArray {
+    private fun pcm(direction: String, tone: String?): ShortArray {
         val frames = 28800
         val pcm = ShortArray(frames * 2)
         val left = if (direction == "RIGHT") 0.0 else if (direction == "CENTER") 0.70710678 else 1.0
         val right = if (direction == "LEFT") 0.0 else if (direction == "CENTER") 0.70710678 else 1.0
         for (i in 0 until frames) {
-            val fade = min(1.0, min(i / 480.0, (frames - 1 - i) / 480.0))
-            val sample = 32767.0 * 0.10 * fade * sin(2.0 * PI * 440.0 * i / 48000.0)
+            // Provisional class cues, not calibrated danger/distance signals.
+            // Keep the existing 600 ms completion marker, owner, focus and watchdog.
+            val local = if (tone == "obstacle" && i >= 11520) i - 11520 else i
+            val pulseFrames = when (tone) { "neutral" -> 8640; "obstacle" -> 5760; else -> frames }
+            val active = local < pulseFrames && (tone != "obstacle" || i < 5760 || i >= 11520)
+            val fade = if (active) min(1.0, min(local / 480.0, (pulseFrames - 1 - local) / 480.0)) else 0.0
+            val frequency = when (tone) { "neutral" -> 700.0; "obstacle" -> 1100.0; else -> 440.0 }
+            val sample = 32767.0 * 0.10 * fade * sin(2.0 * PI * frequency * local / 48000.0)
             pcm[2 * i] = (sample * left).toInt().toShort()
             pcm[2 * i + 1] = (sample * right).toInt().toShort()
         }
         return pcm
     }
-    private fun play(owner: String, id: Int, direction: String) {
-        val data = pcm(direction)
+    private fun play(owner: String, id: Int, direction: String, tone: String?) {
+        val data = pcm(direction, tone)
         val track = AudioTrack.Builder().setAudioAttributes(attributes)
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())

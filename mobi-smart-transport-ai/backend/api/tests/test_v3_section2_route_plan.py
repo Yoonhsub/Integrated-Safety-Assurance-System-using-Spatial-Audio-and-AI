@@ -141,7 +141,7 @@ def test_route_plan_keeps_cache_arrival_source_for_first_boarding_segment() -> N
                     "remainingStops": 1,
                     "lowFloor": True,
                     "congestion": "LOW",
-                    "updatedAt": "2026-06-01T00:00:00+09:00",
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
                 }
             ],
         },

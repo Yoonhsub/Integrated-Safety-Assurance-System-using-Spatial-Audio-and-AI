@@ -54,7 +54,11 @@ class _AndroidCuePort implements NativeCuePort {
 
 /// Stereo only. No HRTF, head tracking, device forcing or microphone capture.
 class NativeDirectionalCueOutput
-    implements SpatialTestOutput, DirectionalCueOutput, HeadTrackedCueOutput {
+    implements
+        SpatialTestOutput,
+        DirectionalCueOutput,
+        HeadTrackedCueOutput,
+        InformationalDirectionalCueOutput {
   NativeDirectionalCueOutput(
       {NativeCuePort? port, HeadTrackedCuePort? headTrackedPort})
       : _port = port ?? _AndroidCuePort.instance,
@@ -116,7 +120,15 @@ class NativeDirectionalCueOutput
   }
 
   @override
-  Future<bool> playCue(TestDirection direction) async {
+  Future<bool> playCue(TestDirection direction) => _playStereo(direction);
+
+  @override
+  Future<bool> playInformationalCue(
+          TestDirection direction, InformationalCueTone tone) =>
+      _playStereo(direction, tone: tone);
+
+  Future<bool> _playStereo(TestDirection direction,
+      {InformationalCueTone? tone}) async {
     _ensureOpen();
     if (!_ready || _playing != null || _stopBarrier != null) {
       throw StateError('Prepare first; simultaneous cues forbidden');
@@ -136,7 +148,12 @@ class NativeDirectionalCueOutput
     };
     try {
       final data = await _port.invoke(
-          'play', _args({'id': id, 'direction': direction.name.toUpperCase()}));
+          'play',
+          _args({
+            'id': id,
+            'direction': direction.name.toUpperCase(),
+            if (tone != null) 'informationalTone': tone.name
+          }));
       if (!_closed && id == _id && identical(_playing, pending)) {
         _probe = {..._probe, ...data, 'phase': 'playing'};
       }

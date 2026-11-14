@@ -124,7 +124,7 @@ class _StandaloneVisionPageState extends State<StandaloneVisionPage>
   @override
   Widget build(BuildContext context) {
     final appBar = AppBar(
-      title: const Text('AI 비전 · 공간음향'),
+      title: const Text('장애물 탐지'),
       actions: [
         IconButton(
           tooltip: '이어폰·BLE 기기 점검',
@@ -155,11 +155,20 @@ class _StandaloneVisionPageState extends State<StandaloneVisionPage>
         FilledButton.icon(
           onPressed: _cameraOpen ? null : _openCamera,
           icon: const Icon(Icons.camera_alt_outlined),
-          label: const Text('로컬 카메라·음향 시작'),
+          label: Text(_cameraOpen ? '카메라 화면 준비 중' : '로컬 카메라·음향 시작'),
         ),
         const Text(
             '모델은 앱에 포함되어 있습니다. 카메라 시작 후 화면 음향 시연 스위치를 직접 켜세요. 한국어 오프라인 TTS 음성이 설치되어 있어야 합니다.'),
-        if (_error != null) Text(_error!),
+        if (_cameraOpen)
+          Semantics(
+              liveRegion: true,
+              child: LinearProgressIndicator(semanticsLabel: '카메라 화면 준비 중')),
+        if (_error != null)
+          Semantics(
+              liveRegion: true,
+              child: Text(_error!,
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error))),
         if (!_cameraOpen) ...[
           const Divider(),
           const Text('BLE · 서버 없이 실제 스캔 / 로컬 시연 매핑만 사용'),

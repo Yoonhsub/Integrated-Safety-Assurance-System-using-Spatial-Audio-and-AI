@@ -10,6 +10,7 @@ COPY .env.example .env.example
 COPY backend/api/app backend/api/app
 COPY services/public_data/public_data_client services/public_data/public_data_client
 COPY services/public_data/examples services/public_data/examples
+COPY packages/shared_contracts/api/vision_detection.response.schema.json packages/shared_contracts/api/vision_detection.response.schema.json
 USER mobi
 EXPOSE 8080
 CMD ["python", "-B", "-m", "app.cloud_run"]

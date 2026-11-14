@@ -1,3 +1,5 @@
+import 'hardware_test_settings.dart';
+import 'compact_control_surface.dart';
 import 'obstacle_cue_input.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -21,9 +23,13 @@ class WitSensorPanel extends StatefulWidget {
     this.warning = false,
     this.busEnabled = true,
     this.audioScope = '',
+    this.stationaryBeacon = false,
     this.obstacles,
     this.sessionNow,
     this.stateOnly = false,
+    this.compact = false,
+    this.allowConfiguration = false,
+    this.settingsStore,
   });
   final Future<bool> Function() ensureReady;
   final int? beaconRssi;
@@ -32,9 +38,13 @@ class WitSensorPanel extends StatefulWidget {
   final double busAngle;
   final bool warning, busEnabled;
   final String audioScope;
+  final bool stationaryBeacon;
   final ObstacleCueSnapshot? obstacles;
   final Duration Function()? sessionNow;
   final bool stateOnly;
+  final bool compact;
+  final bool allowConfiguration;
+  final HardwareTestSettingsStore? settingsStore;
 
   @override
   State<WitSensorPanel> createState() => _WitSensorPanelState();
@@ -44,7 +54,14 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     with AutomaticKeepAliveClientMixin<WitSensorPanel>, WidgetsBindingObserver {
   @override
   bool get wantKeepAlive => true;
-  final _device = BluetoothDevice.fromId(witSensorMac);
+  BluetoothDevice _device = BluetoothDevice.fromId(witSensorMac);
+  String _address = witSensorMac;
+  late final HardwareTestSettingsStore _settings;
+  bool _loadingSettings = false, _savingSettings = false, _settingsOpen = false;
+  bool _settingsLoadFailed = false;
+  bool get _idle => !_connecting && !_connected && !_closing;
+  bool get _configurationReady =>
+      !_loadingSettings && !_savingSettings && !_settingsOpen;
   final _decoder = WitSensorDecoder();
   final _age = Stopwatch();
   final _clock = Stopwatch()..start();
@@ -55,7 +72,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   Timer? _ticker;
   WitAngles? _latest;
   double? _reference;
-  int _generation = 0, _frames = 0;
+  int _generation = 0, _frames = 0, _referenceRevision = 0;
   bool _connecting = false, _connected = false, _closing = false;
   bool _disposed = false;
   bool _listeningCheck = false;
@@ -90,6 +107,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   @override
   void initState() {
     super.initState();
+    _settings =
+        widget.settingsStore ?? SharedPreferencesHardwareTestSettingsStore();
+    if (widget.allowConfiguration) unawaited(_loadSettings());
     WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(
       const Duration(milliseconds: 150),
@@ -97,8 +117,143 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     );
   }
 
+  void _applyAddress(String address) {
+    _settingsLoadFailed = false;
+    ++_generation;
+    ++_referenceRevision;
+    _latest = null;
+    _reference = null;
+    _filteredYaw = null;
+    _frames = 0;
+    _decoder.reset();
+    _yawFilter.reset();
+    _age
+      ..stop()
+      ..reset();
+    _status = 'WT 주소 적용 완료. 센서 연결을 눌러 연결하세요.';
+    _publish(HeadTrackingStatus.disconnected);
+    _address = address;
+    _device = BluetoothDevice.fromId(address);
+  }
+
+  Future<void> _loadSettings() async {
+    _loadingSettings = true;
+    _status = 'WT 주소 설정 불러오는 중';
+    try {
+      final saved = await _settings.loadWit();
+      if (!mounted || _disposed) return;
+      final normalized = saved == null
+          ? witSensorMac
+          : HardwareTestSettings.normalizeMac(saved);
+      if (normalized == null) {
+        _settingsLoadFailed = true;
+        _status = '저장된 WT 주소 오류: 연결이 차단되었습니다. 주소를 저장하거나 기본값을 복원하세요.';
+      } else {
+        _applyAddress(normalized);
+      }
+    } catch (_) {
+      if (mounted && !_disposed) {
+        _settingsLoadFailed = true;
+        _status = 'WT 주소 읽기 실패: 연결이 차단되었습니다. 주소를 저장하거나 기본값을 복원하세요.';
+      }
+    } finally {
+      _loadingSettings = false;
+      _refresh();
+    }
+  }
+
+  Future<void> _configure() async {
+    if (!widget.allowConfiguration || !_idle || !_configurationReady) return;
+    _settingsOpen = true;
+    _refresh();
+    final input = TextEditingController(text: _address);
+    String? error;
+    try {
+      final route = DialogRoute<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) =>
+              StatefulBuilder(builder: (context, update) {
+                Future<void> save(bool reset) async {
+                  if (_savingSettings || !_idle || _disposed) return;
+                  final address = reset
+                      ? witSensorMac
+                      : HardwareTestSettings.normalizeMac(input.text);
+                  if (address == null) {
+                    update(
+                        () => error = 'AA:BB:CC:DD:EE:FF 형식의 MAC 주소를 입력하세요.');
+                    return;
+                  }
+                  _savingSettings = true;
+                  update(() => error = null);
+                  _refresh();
+                  try {
+                    if (reset) {
+                      await _settings.resetWit();
+                    } else {
+                      await _settings.saveWit(address);
+                    }
+                    if (!mounted || _disposed || !dialogContext.mounted) return;
+                    if (!_idle) throw StateError('Sensor is not idle');
+                    _applyAddress(address);
+                    Navigator.pop(dialogContext);
+                  } catch (_) {
+                    if (dialogContext.mounted && !_disposed) {
+                      update(
+                          () => error = '저장하지 못했습니다. 기존 주소를 유지합니다. 다시 시도하세요.');
+                    }
+                  } finally {
+                    _savingSettings = false;
+                    if (dialogContext.mounted && !_disposed) update(() {});
+                    _refresh();
+                  }
+                }
+
+                return PopScope(
+                    canPop: !_savingSettings,
+                    child: AlertDialog(
+                        title: const Text('WT 주소 설정'),
+                        content: SingleChildScrollView(
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                              const Text(
+                                  '이 기기에만 저장합니다. 연결 중에는 변경할 수 없습니다. 주소를 바꾼 뒤 다시 연결하고 정면을 보정하세요.'),
+                              TextField(
+                                  controller: input,
+                                  enabled: !_savingSettings,
+                                  decoration: InputDecoration(
+                                      labelText: 'WT MAC 주소',
+                                      errorText: error)),
+                              if (_savingSettings) const Text('저장 중'),
+                            ])),
+                        actions: [
+                          TextButton(
+                              onPressed: _savingSettings
+                                  ? null
+                                  : () => Navigator.pop(dialogContext),
+                              child: const Text('취소')),
+                          TextButton(
+                              onPressed:
+                                  _savingSettings ? null : () => save(true),
+                              child: const Text('기본값 복원')),
+                          FilledButton(
+                              onPressed:
+                                  _savingSettings ? null : () => save(false),
+                              child: const Text('저장')),
+                        ]));
+              }));
+      await Navigator.of(context, rootNavigator: true).push(route);
+      await route.completed;
+    } finally {
+      input.dispose();
+      _settingsOpen = false;
+      _refresh();
+    }
+  }
+
   Future<void> _connect() async {
-    if (_connecting || _connected || _closing) return;
+    if (!_idle || !_configurationReady || _settingsLoadFailed) return;
     final generation = ++_generation;
     _connecting = true;
     _latest = null;
@@ -222,11 +377,17 @@ class _WitSensorPanelState extends State<WitSensorPanel>
         : HeadTrackingStatus.disconnected);
     _refresh();
     try {
-      await _notifications?.cancel();
-      await _connection?.cancel();
+      final notifications = _notifications;
+      final connection = _connection;
       _notifications = null;
       _connection = null;
-      await _device.disconnect().timeout(const Duration(seconds: 5));
+      // Attempt every cleanup even if stream cancellation fails.
+      await Future.wait<void>([
+        if (notifications != null) Future<void>.sync(notifications.cancel),
+        if (connection != null) Future<void>.sync(connection.cancel),
+        Future<void>.sync(
+            () => _device.disconnect().timeout(const Duration(seconds: 5))),
+      ]);
     } catch (e) {
       _status = '$message (연결 정리 확인 필요: $e)';
     } finally {
@@ -246,6 +407,80 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   Widget build(BuildContext context) {
     super.build(context);
     final reading = _latest;
+    if (widget.compact && widget.stateOnly) {
+      return CompactControlSurface(
+          label: 'WT 센서',
+          child: Card(
+              child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        const Expanded(child: Text('WT 자세 센서')),
+                        if (widget.allowConfiguration)
+                          IconButton(
+                              tooltip: 'WT 주소 설정',
+                              icon: const Icon(Icons.settings),
+                              onPressed: _idle && _configurationReady
+                                  ? _configure
+                                  : null),
+                        IconButton(
+                            tooltip: '센서 상태 자세히',
+                            icon: const Icon(Icons.info_outline),
+                            onPressed: () => showDialog<void>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                      title: const Text('WT 센서 상태'),
+                                      content: SingleChildScrollView(
+                                          child: Text(
+                                              '$_address\n$_status\n수신 $_frames 프레임\nYaw: ${_filteredYaw?.toStringAsFixed(2) ?? "없음"}°\n기준: ${_reference?.toStringAsFixed(2) ?? "미설정"}\n정면을 보고 기준을 설정하세요. 화면 전환은 센서 연결을 끊지 않습니다.')),
+                                      actions: [
+                                        TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context),
+                                            child: const Text('닫기'))
+                                      ],
+                                    ))),
+                      ]),
+                      if (_settingsLoadFailed)
+                        const Text('주소 설정 오류 · 설정에서 저장/복원 필요'),
+                      Text(_connected
+                          ? (_fresh ? '연결됨 · 실시간 수신' : '연결됨 · 최신 데이터 없음')
+                          : (_connecting ? '연결 중' : '연결 안 됨')),
+                      Row(children: [
+                        Expanded(
+                            child: FilledButton(
+                                onPressed: !_idle ||
+                                        !_configurationReady ||
+                                        _settingsLoadFailed
+                                    ? null
+                                    : _connect,
+                                child: const Text('센서 연결'))),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: OutlinedButton(
+                                onPressed: _connecting || _connected
+                                    ? () => unawaited(_close('센서 연결을 종료했습니다.'))
+                                    : null,
+                                child: const Text('연결 중지')))
+                      ]),
+                      SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                              onPressed: _fresh
+                                  ? () => setState(() {
+                                        _reference = _filteredYaw!;
+                                        _referenceRevision++;
+                                        _publish(HeadTrackingStatus.ready,
+                                            message: '정면 설정 완료');
+                                      })
+                                  : null,
+                              child: const Text('현재 방향을 정면으로 설정'))),
+                    ],
+                  ))));
+    }
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -256,7 +491,11 @@ class _WitSensorPanelState extends State<WitSensorPanel>
               '자세 센서 · WT901BLE68',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            const SelectableText(witSensorMac),
+            SelectableText(_address),
+            if (widget.allowConfiguration)
+              OutlinedButton(
+                  onPressed: _idle && _configurationReady ? _configure : null,
+                  child: const Text('WT 주소 설정')),
             Text(_status),
             Text('각도 프레임: $_frames개'),
             const SizedBox(height: 8),
@@ -285,7 +524,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
               children: [
                 FilledButton(
                   onPressed:
-                      _connecting || _connected || _closing ? null : _connect,
+                      !_idle || !_configurationReady || _settingsLoadFailed
+                          ? null
+                          : _connect,
                   child: const Text('센서 연결'),
                 ),
                 OutlinedButton(
@@ -298,6 +539,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                   onPressed: _fresh
                       ? () => setState(() {
                             _reference = _filteredYaw!;
+                            _referenceRevision++;
                             _publish(HeadTrackingStatus.ready,
                                 message: '정면 보정 완료');
                           })
@@ -322,7 +564,9 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                 busAngle: widget.busAngle,
                 warning: widget.warning,
                 busEnabled: widget.busEnabled,
-                audioScope: widget.audioScope,
+                audioScope:
+                    '${widget.audioScope}/$_generation/$_referenceRevision',
+                stationaryBeacon: widget.stationaryBeacon,
                 obstacles: widget.obstacles,
                 sessionNow: widget.sessionNow,
               ),

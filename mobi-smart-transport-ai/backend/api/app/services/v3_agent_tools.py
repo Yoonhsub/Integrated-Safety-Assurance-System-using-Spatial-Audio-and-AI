@@ -19,7 +19,10 @@ from app.schemas.v3 import (
     V3BusArrival,
     V3BusArrivalsResponse,
 )
-from app.services.destination_candidate_resolver import DestinationCandidateResolver
+from app.services.destination_candidate_resolver import (
+    DestinationCandidateResolver,
+    is_known_destination_name,
+)
 from app.services.route_service_status import evaluate_route_service_status
 from app.services.transit_planner_orchestrator import TransitPlannerOrchestrator
 from app.services.v3_agent_trace import AgentTraceRecorder
@@ -84,6 +87,7 @@ def classify_agent_intent(
     session_state: GuidanceSessionState | None = None,
     *,
     wake_word: str = "모비",
+    allow_bare_destination: bool = True,
 ) -> AgentIntentResult:
     normalized = normalize_user_utterance(utterance, wake_word=wake_word)
     text = normalized.cleaned_utterance
@@ -122,13 +126,21 @@ def classify_agent_intent(
         return AgentIntentResult(AgentIntent.SELECT_ARRIVAL, normalized)
     if any(
         term in compact
-        for term in ("몇번", "가야", "가려면", "가고싶", "가자", "가는법", "어떻게가", "타야")
+        for term in (
+            "몇번", "가야", "가려면", "가고싶", "가자", "가는법", "어떻게가", "타야",
+            "가는버스", "가는노선", "가는길", "노선검색", "경로검색", "길찾기",
+            "길찾아줘", "경로찾아줘",
+        )
     ):
         return AgentIntentResult(
             AgentIntent.FIND_ROUTE,
             normalized,
             normalized.destination_candidate_text,
         )
+    # A bare known place is a destination request, not small talk. Match the
+    # original cleaned text exactly rather than an aggressively stripped phrase.
+    if allow_bare_destination and is_known_destination_name(text):
+        return AgentIntentResult(AgentIntent.FIND_ROUTE, normalized, text.strip(" .,?!~…"))
     return AgentIntentResult(AgentIntent.UNKNOWN, normalized)
 
 
@@ -738,6 +750,7 @@ def _destination_candidate_text(utterance: str) -> str | None:
     if "아니라" in cleaned:
         cleaned = cleaned.split("아니라", 1)[1].strip()
     patterns = [
+        r"(으로|로|까지)?\s*(노선\s*검색|경로\s*검색|길\s*찾기|(?:길|경로)\s*찾아\s*줘).*$",
         r"(으로|로)?\s*가고\s*싶어.*$",
         r"(으로|로|에)?\s*가려면.*$",
         r"(으로|로)?\s*가야\s*(하는데|돼|해)?.*$",

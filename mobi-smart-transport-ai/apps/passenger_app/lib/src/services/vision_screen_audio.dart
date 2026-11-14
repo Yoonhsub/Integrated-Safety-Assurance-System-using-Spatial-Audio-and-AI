@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'vision_scene_summary.dart';
 import 'package:flutter/foundation.dart';
 import 'directional_guidance.dart';
 import 'session_guidance_audio.dart';
@@ -21,6 +22,8 @@ class VisionScreenAudio extends ChangeNotifier {
     this.confirmationFrames = 1,
     this.requireDoorInBus = false,
     this.prioritizeByDistance = false,
+    this.sceneMode = false,
+    this.pingOnly = false,
   })  : headTracking = headTracking ?? sharedHeadTrackingState,
         horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
         _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
@@ -30,6 +33,8 @@ class VisionScreenAudio extends ChangeNotifier {
     if (confirmationFrames < 1) {
       throw ArgumentError('confirmationFrames must be >= 1');
     }
+    _sceneTracker =
+        VisionSceneSummaryTracker(confirmationFrames: confirmationFrames);
     this.headTracking.resetForSession();
     priority.addListener(_priorityChanged);
     this.headTracking.addListener(_headTrackingChanged);
@@ -48,6 +53,20 @@ class VisionScreenAudio extends ChangeNotifier {
   final int confirmationFrames;
   final bool requireDoorInBus;
   final bool prioritizeByDistance;
+  final bool sceneMode, pingOnly;
+  late final VisionSceneSummaryTracker _sceneTracker;
+  Timer? _sceneTimer;
+  DateTime? lastSceneReceivedAt;
+  Map<String, Object?> sceneOutputDiagnostic = const {};
+  String? _sceneMeaning;
+  int _sceneSequence = 0;
+  VisionSceneSummary get scene =>
+      _sceneTracker.snapshot(DateTime.now().toUtc());
+  bool get canDescribeScene =>
+      !busy &&
+      isCurrent() &&
+      !priority.priorityActive &&
+      scene.isFresh(DateTime.now().toUtc());
   final HeadTrackingState headTracking;
   final double horizontalFovDegrees;
   final int Function() _now;
@@ -161,6 +180,17 @@ class VisionScreenAudio extends ChangeNotifier {
         x + w <= 1.000000001 &&
         y + h <= 1.000000001;
   }
+
+  /// The same strict parent-bus condition is shared with diagnostic previews.
+  /// Unverified doors are omitted, never used to suppress a valid obstacle.
+  static List<dynamic> verifiedDoorDetections(List<dynamic> rows) => rows
+      .where((row) =>
+          row is! Map ||
+          row['classId'] != 'bus_door' ||
+          (row['bbox'] is Map &&
+              _isValidBoxMap(row['bbox'] as Map) &&
+              _parentBusBox(row['bbox'] as Map, rows) != null))
+      .toList(growable: false);
 
   /// Returns the bbox of the parent `bus` containing at least [minDoorInBusOverlap]
   /// of [doorBox], preferring largest intersection area then largest bus area.
@@ -397,12 +427,19 @@ class VisionScreenAudio extends ChangeNotifier {
   }
 
   Future<void> stop({bool notify = true}) {
+    _sceneTimer?.cancel();
+    _sceneTracker.invalidate(reason: 'stopped');
+    _sceneMeaning = null;
     enabled = false;
     _revision++;
     _streakMeaning = null;
     _streakCount = 0;
     _hold?.release();
     _hold = null;
+    sceneOutputDiagnostic = {
+      ...sceneOutputDiagnostic,
+      'phase': 'STOP_REQUESTED'
+    };
     status = '화면 음향 시연 STOP · 후속 TTS 없음';
     if (notify) _notify();
     return _stopOwned();
@@ -423,8 +460,21 @@ class VisionScreenAudio extends ChangeNotifier {
     _notify();
   }
 
-  void observe(Map<String, Object?> result, {required Duration age}) {
-    if (_disposed || !enabled || !isCurrent()) return;
+  void observe(Map<String, Object?> result,
+      {required Duration age,
+      DateTime? receivedAt,
+      double? inferenceMs,
+      double? processingMs}) {
+    if (_disposed || !isCurrent()) return;
+    if (sceneMode || pingOnly) {
+      _observeScene(result,
+          age: age,
+          receivedAt: receivedAt,
+          inferenceMs: inferenceMs,
+          processingMs: processingMs);
+      return;
+    }
+    if (!enabled) return;
     if (result['status'] != 'ok') {
       unawaited(stop());
       return;
@@ -643,10 +693,264 @@ class VisionScreenAudio extends ChangeNotifier {
     }());
   }
 
+  int? _sceneDeadline;
+  Map? _sceneBox;
+  bool _sceneFresh() =>
+      isCurrent() &&
+      _sceneDeadline != null &&
+      _now() < _sceneDeadline! &&
+      scene.isFresh(DateTime.now().toUtc());
+
+  void _observeScene(Map<String, Object?> result,
+      {required Duration age,
+      DateTime? receivedAt,
+      double? inferenceMs,
+      double? processingMs}) {
+    final now = DateTime.now().toUtc();
+    final rows = result['detections'];
+    final size = result['imageSize'];
+    // The local wire field is historically named capturedAt, but its producer
+    // records the host camera callback receipt time, never sensor exposure.
+    final receipt = receivedAt ??
+        DateTime.tryParse(result['receivedAt']?.toString() ??
+            result['capturedAt']?.toString() ??
+            '');
+    if (result['status'] != 'ok' ||
+        result['source'] != 'android_camera' ||
+        result['frameId'] is! String ||
+        rows is! List ||
+        receipt == null ||
+        size is! Map ||
+        size['width'] is! int ||
+        size['height'] is! int ||
+        size['width'] <= 0 ||
+        size['height'] <= 0 ||
+        age.isNegative ||
+        age >= const Duration(seconds: 2)) {
+      _expireScene('현재 화면을 확인하기 어렵습니다');
+      return;
+    }
+    if (result['frameId'] == _lastFrame) return;
+    _lastFrame = result['frameId'] as String;
+    final unsupportedDoor = requireDoorInBus &&
+        rows.any((row) =>
+            row is Map &&
+            row['classId'] == 'bus_door' &&
+            (row['bbox'] is! Map ||
+                !_isValidBoxMap(row['bbox'] as Map) ||
+                _parentBusBox(row['bbox'] as Map, rows) == null));
+    // Preserve parent-bus validation without silently omitting a doubtful door.
+    final snapshot = _sceneTracker.update(
+        frameId: _lastFrame!,
+        receivedAt: receipt,
+        now: now,
+        detections: unsupportedDoor ? [<String, Object?>{}] : rows);
+    if (!snapshot.isFresh(now)) {
+      _expireScene('현재 화면을 확인하기 어렵습니다');
+      return;
+    }
+    lastSceneReceivedAt = snapshot.receivedAt;
+    _sceneDeadline =
+        _now() + const Duration(seconds: 2).inMicroseconds - age.inMicroseconds;
+    _sceneTimer?.cancel();
+    _sceneTimer = Timer(const Duration(seconds: 2) - age,
+        () => _expireScene('새 관찰 없음 · 현재 화면을 확인하기 어렵습니다'));
+    final meaning = snapshot.signature;
+    if (_sceneMeaning != meaning && busy) {
+      _revision++;
+      unawaited(_stopOwned());
+    }
+    _sceneMeaning = meaning;
+    _sceneBox = null;
+    if (snapshot.status == VisionSceneStatus.single) {
+      final id = snapshot.groups.single.classCounts.keys.single;
+      final matching = rows
+          .whereType<Map>()
+          .where((row) =>
+              row['classId'] == id &&
+              row['bbox'] is Map &&
+              _isValidBoxMap(row['bbox'] as Map) &&
+              row['confidence'] is num &&
+              (row['confidence'] as num) >= .5)
+          .toList();
+      if (matching.length == 1) _sceneBox = matching.single['bbox'] as Map;
+    }
+    diagnostic = {
+      'frameId': result['frameId'],
+      'receivedAt': snapshot.receivedAt?.toIso8601String(),
+      'clockProvenance': 'HOST_CAMERA_CALLBACK_RECEIPT_NOT_CAPTURE',
+      'receiptAgeAtObservationMs': age.inMilliseconds,
+      if (inferenceMs != null && inferenceMs.isFinite && inferenceMs >= 0)
+        'inferenceMs': inferenceMs,
+      if (processingMs != null && processingMs.isFinite && processingMs >= 0)
+        'processingMs': processingMs,
+      'sceneStatus': snapshot.status.name,
+      'proximity': 'UNKNOWN',
+      'risk': 'NOT_ESTIMATED',
+      'text': snapshot.briefText,
+      'provenance': DirectionalGuidance.screenProvenance,
+      'guidanceEligible': false,
+    };
+    status = snapshot.briefText;
+    _notify();
+    if (!enabled ||
+        busy ||
+        priority.priorityActive ||
+        priority.outputUncertain ||
+        snapshot.reason == 'confirming') {
+      return;
+    }
+    if ((!pingOnly && _lastMeaning == meaning) ||
+        (_lastStarted != null &&
+            _now() - _lastStarted! < minimumInterval.inMicroseconds)) {
+      return;
+    }
+    unawaited(_speakScene(snapshot, details: false));
+  }
+
+  void _expireScene(String reason) {
+    _sceneTimer?.cancel();
+    _sceneDeadline = null;
+    _sceneTracker.invalidate(reason: 'expired_or_invalid_result');
+    _sceneMeaning = null;
+    _revision++;
+    status = reason;
+    diagnostic = {
+      ...diagnostic,
+      'sceneStatus': 'unavailable',
+      'proximity': 'UNKNOWN'
+    };
+    unawaited(_stopOwned());
+    _notify();
+  }
+
+  Future<void> describeScene() async {
+    if (!canDescribeScene || !_sceneFresh()) return;
+    await _speakScene(scene, details: true);
+  }
+
+  Future<void> _speakScene(VisionSceneSummary snapshot,
+      {required bool details}) async {
+    if ((!enabled && !details) ||
+        busy ||
+        priority.priorityActive ||
+        priority.outputUncertain ||
+        !_sceneFresh()) {
+      return;
+    }
+    // A multi-object scene has no single physical or screen target. Do not pan
+    // a grouped summary or invent a direction for an uncertain observation.
+    final single = snapshot.status == VisionSceneStatus.single;
+    if (pingOnly && !single && !details) return;
+    final revision = _revision, meaning = snapshot.signature;
+    bool valid() =>
+        !_disposed &&
+        (enabled || details) &&
+        revision == _revision &&
+        _sceneFresh() &&
+        _sceneMeaning == meaning &&
+        !priority.priorityActive;
+    final text = details ? snapshot.detailText : snapshot.briefText;
+    final direction = single && !details
+        ? switch (snapshot.groups.single.side) {
+            VisionSceneSide.left => TestDirection.left,
+            VisionSceneSide.center => TestDirection.center,
+            VisionSceneSide.right => TestDirection.right,
+          }
+        : null;
+    double? correctedAngle;
+    final box = _sceneBox;
+    if (single &&
+        !details &&
+        headTrackingEnabled &&
+        canActivateHeadTracking &&
+        box != null) {
+      correctedAngle = headTrackedAngleForMount(
+          cameraAngle: horizontalAngleForNormalizedBbox(
+              x: (box['x'] as num).toDouble(),
+              width: (box['w'] as num).toDouble(),
+              horizontalFovDegrees: horizontalFovDegrees),
+          sensor: headTracking.snapshot,
+          now: DateTime.now().toUtc(),
+          calibration: mountCalibration);
+    }
+    final guidance = DirectionalGuidance(
+      guidanceId: 'scene-${++_sceneSequence}',
+      sessionGeneration: sessionGeneration,
+      authEpoch: 0,
+      priority: GuidancePriority.observation,
+      text: text,
+      provenance: DirectionalGuidance.screenProvenance,
+      testDirection: direction,
+      headTrackedAzimuthDegrees: correctedAngle,
+      directionEvidence: direction == null
+          ? DirectionEvidence.unverified
+          : DirectionEvidence.cameraScreenBbox,
+    );
+    var started = false;
+    final requestStarted = _now();
+    sceneOutputDiagnostic = {
+      'phase': 'REQUESTED',
+      'requestId': guidance.guidanceId,
+      'clockProvenance': 'SOFTWARE_CALLBACK_NOT_ACOUSTIC'
+    };
+    final command = engine.registerGuidance(guidance, valid,
+        phase: (phase) {
+          if (!valid()) return;
+          sceneOutputDiagnostic = {
+            'phase': phase,
+            'requestId': guidance.guidanceId,
+            'callbackObservedAt': DateTime.now().toUtc().toIso8601String(),
+            'requestElapsedMicros': _now() - requestStarted,
+            'clockProvenance': 'SOFTWARE_CALLBACK_NOT_ACOUSTIC'
+          };
+          _notify();
+        },
+        cueOnly: pingOnly && !details && single,
+        informationalTone:
+            direction == null ? null : InformationalCueTone.neutral,
+        admit: () {
+          if (!valid()) return false;
+          if (!started) {
+            started = true;
+            admitted++;
+            _lastStarted = _now();
+            _lastMeaning = meaning;
+          }
+          return true;
+        });
+    if (command == null) return;
+    busy = true;
+    _activeHeadTracked = correctedAngle != null;
+    _notify();
+    try {
+      final ok = await priority.speakObservation(_owner, command, valid);
+      if (ok) completed++;
+      if (!ok && revision == _revision) {
+        sceneOutputDiagnostic = {
+          ...sceneOutputDiagnostic,
+          'phase': 'CANCELLED'
+        };
+      }
+    } catch (error) {
+      if (valid()) {
+        status = '장면 음성 출력 실패 · 오디오 연결을 확인하세요';
+        sceneOutputDiagnostic = {...sceneOutputDiagnostic, 'phase': 'FAILED'};
+      }
+    } finally {
+      engine.retireGuidance(command);
+      busy = false;
+      _activeHeadTracked = false;
+      _notify();
+    }
+  }
+
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _sceneTimer?.cancel();
+    _sceneTracker.clear();
     enabled = false;
     _revision++;
     priority.removeListener(_priorityChanged);

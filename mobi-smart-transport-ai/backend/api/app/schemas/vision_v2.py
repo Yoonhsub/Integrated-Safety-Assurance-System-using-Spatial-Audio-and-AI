@@ -17,8 +17,8 @@ _SCHEMA = Path(__file__).resolve().parents[4] / "packages/shared_contracts/api/v
 
 @lru_cache(maxsize=1)
 def detection_validator():
-    # Production packaging need not include this local-only contract. Do not
-    # break unrelated API startup; a missing validator must fail closed on use.
+    # Deployment bundles include this contract. Still fail closed if packaging
+    # is incomplete, without breaking unrelated API startup.
     try:
         schema = json.loads(_SCHEMA.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)

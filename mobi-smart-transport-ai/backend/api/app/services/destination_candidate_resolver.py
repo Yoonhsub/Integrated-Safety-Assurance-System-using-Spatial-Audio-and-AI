@@ -373,6 +373,24 @@ class KakaoLocalSearchProvider:
         return candidates
 
 
+def is_known_destination_name(text: str) -> bool:
+    """Recognize exact local names only, without geocoding or resolving a route.
+
+    Aliases still go through normal resolution/confirmation after intent routing.
+    Do not use fuzzy matches here: ordinary conversation must remain UNKNOWN.
+    """
+    compact = re.sub(r"\s+", "", text).strip(" .,?!~…")
+    return any(
+        compact == re.sub(r"\s+", "", name)
+        for place in _KNOWN_PLACES
+        for name in (place.name, *place.aliases)
+    ) or any(
+        compact == re.sub(r"\s+", "", name)
+        for stop in _SEED_STOPS
+        for name in (stop.stop_name, *stop.aliases)
+    )
+
+
 class DestinationCandidateResolver:
     """목적지 발화를 장소명/주소/정류장명 후보로 해석하고 주변 정류장 후보를 반환한다."""
 

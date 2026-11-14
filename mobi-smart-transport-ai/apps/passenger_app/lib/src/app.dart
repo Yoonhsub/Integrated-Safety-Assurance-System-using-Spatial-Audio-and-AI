@@ -11,6 +11,7 @@ import 'services/agent_name_store.dart';
 import 'local_vision/local_vision_page.dart';
 import 'pages/standalone_vision_page.dart';
 import 'features/hardware_bus/hardware_bus_page.dart';
+import 'features/hardware_bus/concurrent_hardware_entry.dart';
 
 class MobiApp extends StatefulWidget {
   const MobiApp({
@@ -104,7 +105,7 @@ class _MobiAppState extends State<MobiApp> {
   void _resetToModeSelection() {
     setState(() {
       _selectedDataMode = null;
-      if (_android) _onlineSelected = false;
+      _onlineSelected = false;
     });
   }
 
@@ -189,7 +190,9 @@ class _MobiAppState extends State<MobiApp> {
           ? Scaffold(
               appBar: AppBar(
                 title: const Text('온라인 서비스'),
-                leading: BackButton(
+                leading: IconButton(
+                  icon: const Icon(Icons.home_outlined),
+                  tooltip: '홈으로',
                   onPressed: () => setState(() => _onlineSelected = false),
                 ),
               ),
@@ -220,6 +223,8 @@ class _MobiAppState extends State<MobiApp> {
         // Local hardware diagnostics carry no server identity or Guidance authority.
         '/device-check': (_) => protectAndroid((_) => const DeviceCheckPage()),
         '/hardware-bus': (_) => protectAndroid((_) => const HardwareBusPage()),
+        '/concurrent-hardware-test': (_) =>
+            protectAndroid((_) => const ConcurrentHardwareTestPage()),
         '/standalone-vision': (_) =>
             protectAndroid((_) => const StandaloneVisionPage()),
         '/native-audio': (_) => AuthGate(

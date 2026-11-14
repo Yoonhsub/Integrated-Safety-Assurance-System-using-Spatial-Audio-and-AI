@@ -7,11 +7,15 @@ import contextvars
 import difflib
 import io
 import json
+import logging
 import os
 import re
 import wave
 
 import httpx
+
+
+_gemini_diagnostic_logger = logging.getLogger(__name__ + ".diagnostics")
 
 
 # NLU(의도분류·자연어 응답)용 OpenAI 텍스트 모델. 빠름·저렴·JSON·한국어가 중요해 4.1-mini 기본.
@@ -22,6 +26,14 @@ _DEFAULT_OPENAI_GROUNDING_MODEL = "gpt-4.1"
 # 요청별 NLU 제공자. converse 라우트가 요청마다 set_nlu_provider로 심는다.
 # "auto"=Gemini 우선→실패 시 OpenAI 폴백, "gemini"=Gemini만, "openai"=OpenAI만.
 _nlu_provider: contextvars.ContextVar[str] = contextvars.ContextVar("nlu_provider", default="auto")
+_last_nlu_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "last_nlu_provider", default=None
+)
+
+
+def get_last_nlu_provider() -> str | None:
+    """Return the provider that supplied the most recent successful NLU result."""
+    return _last_nlu_provider.get()
 
 
 def set_nlu_provider(provider: str | None) -> None:
@@ -850,6 +862,7 @@ def _generate(
     history: list[dict] | None = None,
 ) -> str | None:
     provider = _nlu_provider.get()
+    _last_nlu_provider.set(None)
     if provider != "openai":
         payload = _generate_payload(
             model=model,
@@ -862,16 +875,20 @@ def _generate(
         )
         text = _extract_text(payload) if payload else None
         if text is not None:
+            _last_nlu_provider.set("gemini")
             return text
         if provider == "gemini":
             return None
     # provider == "openai"(강제) 또는 "auto"에서 Gemini 실패 → OpenAI NLU 폴백.
-    return _openai_generate(
+    text = _openai_generate(
         system_instruction=system_instruction,
         prompt=prompt,
         max_output_tokens=max_output_tokens,
         history=history,
     )
+    if text is not None:
+        _last_nlu_provider.set("openai")
+    return text
 
 
 def _openai_history(history: list[dict] | None) -> list[dict]:
@@ -1035,6 +1052,7 @@ def _generate_payload(
 ) -> dict | None:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
+        _gemini_diagnostic_logger.warning("gemini_diagnostic category=missing_configuration http_status=none")
         return None
 
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -1066,10 +1084,39 @@ def _generate_payload(
             timeout=timeout_seconds,
         )
         response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        # Log only protocol status and fixed categories, never exception/URL/body.
+        status = error.response.status_code
+        category = {
+            400: "invalid_request", 401: "authentication", 403: "permission",
+            404: "not_found", 429: "rate_or_quota",
+        }.get(status, "upstream_server" if 500 <= status <= 599 else "http_error")
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=%s http_status=%d", category, status
+        )
+        return None
+    except httpx.TimeoutException:
+        _gemini_diagnostic_logger.warning("gemini_diagnostic category=timeout http_status=none")
+        return None
     except httpx.HTTPError:
+        _gemini_diagnostic_logger.warning("gemini_diagnostic category=transport http_status=none")
         return None
 
-    decoded = response.json()
+    try:
+        decoded = response.json()
+    except ValueError:
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=invalid_json http_status=%d", response.status_code
+        )
+        raise  # Preserve the existing exception behavior.
+    if not isinstance(decoded, dict):
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=unexpected_payload_type http_status=%d", response.status_code
+        )
+    else:
+        _gemini_diagnostic_logger.info(
+            "gemini_diagnostic category=payload_received http_status=%d", response.status_code
+        )
     return decoded if isinstance(decoded, dict) else None
 
 
