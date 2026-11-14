@@ -35,9 +35,11 @@ void main() {
       await t
           .pumpWidget(MobiApp(firebaseInitialization: initialization.future));
       await flush(t);
-      await t.ensureVisible(find.text('장애물 탐지'));
+      await t.ensureVisible(find.text('테스트'));
       await t.pumpAndSettle();
-      await t.tap(find.text('장애물 탐지'));
+      await t.tap(find.text('테스트'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('서버 미연결 카메라·BLE 시연'));
       await t.pump();
       await t.pumpAndSettle();
       expect(find.byType(StandaloneVisionPage), findsOneWidget);

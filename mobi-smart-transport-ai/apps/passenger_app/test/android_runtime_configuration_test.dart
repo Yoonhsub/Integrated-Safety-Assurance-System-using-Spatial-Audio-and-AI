@@ -126,7 +126,7 @@ void main() {
       expect(find.text('노선 정보 검색'), findsOneWidget);
       final buttons = find.byWidgetPredicate(
           (widget) => widget is FilledButton || widget is OutlinedButton);
-      expect(buttons, findsNWidgets(2));
+      expect(buttons, findsNWidgets(3));
       expect(find.text('TAGO 실데이터 테스트'), findsNothing);
       expect(find.text('동시 기기 테스트 (임시)'), findsNothing);
       for (final button in tester.widgetList<ButtonStyleButton>(buttons)) {
@@ -145,9 +145,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Mock 데이터 테스트'), findsNothing);
       expect(find.text('실제 API 데이터 테스트'), findsNothing);
-      expect(find.text('온라인 서비스'), findsOneWidget);
+      expect(find.text('홈으로 가기'), findsOneWidget);
       expect(find.text('이 이름으로 시작'), findsOneWidget);
-      await tester.tap(find.byTooltip('홈으로').first);
+      await tester.tap(find.text('홈으로 가기'));
       await tester.pumpAndSettle();
       await tester.tap(find.descendant(
           of: find.byType(AppBar), matching: find.text('로그아웃')));

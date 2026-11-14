@@ -1,3 +1,4 @@
+import 'described_action.dart';
 import 'package:flutter/material.dart';
 
 /// A single message in the chat conversation.
@@ -155,14 +156,19 @@ class _ChatOverlayState extends State<ChatOverlay>
                                   Icon(
                                     Icons.chat_bubble_outline,
                                     size: 48,
-                                    color: colorScheme.onSurface.withValues(alpha: 0.3),
+                                    color: colorScheme.onSurface
+                                        .withValues(alpha: 0.3),
                                   ),
                                   const SizedBox(height: 16),
                                   Text(
                                     '채팅으로 에이전트에게 질문해보세요.\n음성으로 답변해 드릴게요!',
                                     textAlign: TextAlign.center,
-                                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                          color: colorScheme.onSurface.withValues(alpha: 0.5),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyLarge
+                                        ?.copyWith(
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.5),
                                         ),
                                   ),
                                 ],
@@ -177,7 +183,8 @@ class _ChatOverlayState extends State<ChatOverlay>
                             ),
                             itemCount: widget.messages.length,
                             itemBuilder: (context, index) {
-                              return _ChatBubble(message: widget.messages[index]);
+                              return _ChatBubble(
+                                  message: widget.messages[index]);
                             },
                           ),
                   ),
@@ -269,7 +276,8 @@ class _ChatBubble extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.more_horiz,
-                  size: 14, color: colorScheme.onSurface.withValues(alpha: 0.45)),
+                  size: 14,
+                  color: colorScheme.onSurface.withValues(alpha: 0.45)),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -288,12 +296,10 @@ class _ChatBubble extends StatelessWidget {
     }
     final isUser = message.isUser;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final bgColor = isUser
-        ? colorScheme.primary
-        : colorScheme.secondaryContainer;
-    final textColor = isUser
-        ? colorScheme.onPrimary
-        : colorScheme.onSecondaryContainer;
+    final bgColor =
+        isUser ? colorScheme.primary : colorScheme.secondaryContainer;
+    final textColor =
+        isUser ? colorScheme.onPrimary : colorScheme.onSecondaryContainer;
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -409,7 +415,8 @@ class _ChatInputBar extends StatelessWidget {
                     color: colorScheme.onSurface.withValues(alpha: 0.4),
                   ),
                   filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  fillColor: colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.5),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 10,
@@ -423,33 +430,37 @@ class _ChatInputBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Material(
-              color: colorScheme.primary,
-              borderRadius: BorderRadius.circular(24),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(24),
-                onTap: isBusy ? null : onSend,
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  alignment: Alignment.center,
-                  child: isBusy
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: colorScheme.onPrimary,
-                          ),
-                        )
-                      : Icon(
-                          Icons.send_rounded,
-                          color: colorScheme.onPrimary,
-                          size: 20,
-                        ),
-                ),
-              ),
-            ),
+            DescribedAction(
+                label: '질문 전송',
+                description: '입력한 질문을 보내고 답변을 요청합니다.',
+                onActivate: isBusy ? null : onSend,
+                child: Material(
+                  color: colorScheme.primary,
+                  borderRadius: BorderRadius.circular(24),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: isBusy ? null : onSend,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      child: isBusy
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colorScheme.onPrimary,
+                              ),
+                            )
+                          : Icon(
+                              Icons.send_rounded,
+                              color: colorScheme.onPrimary,
+                              size: 20,
+                            ),
+                    ),
+                  ),
+                )),
           ],
         ),
       ),

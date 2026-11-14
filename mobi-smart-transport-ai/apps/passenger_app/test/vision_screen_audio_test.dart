@@ -337,6 +337,36 @@ void main() {
     priority.dispose();
   });
   testWidgets(
+      'online object audio hides test calibration but retains explicit enable',
+      (t) async {
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: native.Port()), speech.FakeTts());
+    final priority = SpeechPriorityCoordinator(engine);
+    final audio = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true);
+    await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: VisionScreenAudioPanel(
+                audio: audio, cameraActive: true, diagnostics: false))));
+    expect(find.text('객체 음성·방향음 안내'), findsOneWidget);
+    expect(find.text('카메라 장착 방식'), findsNothing);
+    expect(find.text('화면 음향 Live Hold'), findsNothing);
+    expect(audio.enabled, isFalse);
+    await t.tap(find.byType(Switch));
+    await t.pump();
+    expect(audio.enabled, isTrue);
+    await t.tap(find.byType(Switch));
+    await t.pump();
+    expect(audio.enabled, isFalse);
+    await t.pumpWidget(const SizedBox());
+    audio.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+  testWidgets(
       'camera screen controls use the existing Coordinator for STOP and Hold',
       (t) async {
     final port = native.Port(), tts = speech.FakeTts();

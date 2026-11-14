@@ -82,11 +82,9 @@ void main() {
     await tester.pumpAndSettle();
     // PR #69 keeps online mode selection behind authentication. The local
     // hardware entry must remain directly reachable without a backend.
-    expect(find.text('장애물 탐지'), findsOneWidget);
-    await tester.tap(find.text('장애물 탐지'));
-    await tester.tap(find.text('장애물 탐지'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('이어폰·BLE 기기 점검'));
+    expect(find.text('테스트'), findsOneWidget);
+    await tester.tap(find.text('테스트'));
+    await tester.tap(find.text('테스트'));
     await tester.pumpAndSettle();
     final hardwareEntry = find.text('실기기 연동확인 · BLE/WT901/HRTF');
     await tester.scrollUntilVisible(hardwareEntry, 180);

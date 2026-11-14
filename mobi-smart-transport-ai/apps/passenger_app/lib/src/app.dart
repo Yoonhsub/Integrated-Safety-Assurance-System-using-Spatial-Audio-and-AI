@@ -1,3 +1,4 @@
+import 'widgets/app_navigation.dart';
 import 'package:flutter/foundation.dart';
 import 'pages/passenger_presentation.dart';
 import 'pages/tago_diagnostics_page.dart';
@@ -37,6 +38,7 @@ class MobiApp extends StatefulWidget {
 }
 
 class _MobiAppState extends State<MobiApp> {
+  final _navigation = AppNavigationObserver();
   final AgentNameStore _agentNameStore = AgentNameStore();
   String? _agentName;
   bool _isLoadingAgentName = true;
@@ -188,17 +190,15 @@ class _MobiAppState extends State<MobiApp> {
 
     return MaterialApp(
       title: 'MOBI Passenger App',
+      navigatorObservers: [_navigation],
+      builder: (context, child) => AppNavigationBar(
+          observer: _navigation,
+          atHome: !_onlineSelected,
+          onHome: _resetToModeSelection,
+          child: child ?? const SizedBox()),
       theme: passengerTheme(),
       home: _onlineSelected
           ? Scaffold(
-              appBar: AppBar(
-                title: const Text('온라인 서비스'),
-                leading: IconButton(
-                  icon: const Icon(Icons.home_outlined),
-                  tooltip: '홈으로',
-                  onPressed: () => setState(() => _onlineSelected = false),
-                ),
-              ),
               body: widget.onlineConfigurationIssue != null
                   ? Center(
                       child: Text(
@@ -238,6 +238,18 @@ class _MobiAppState extends State<MobiApp> {
         '/hardware-bus': (_) => protectAndroid((_) => const HardwareBusPage()),
         '/concurrent-hardware-test': (_) =>
             protectAndroid((_) => const ConcurrentHardwareTestPage()),
+        '/online-vision': (_) => AuthGate(
+              configurationReady: _firebaseReady,
+              requiredRole: 'passenger',
+              session: widget.authSession,
+              appLabel: 'MOBI 장애물 탐지',
+              builder: (context, account) => V3GuidancePage(
+                agentName: agentName ?? '모비',
+                onReturnToModeSelection: _resetToModeSelection,
+                dataMode: 'live',
+                visionOnly: true,
+              ),
+            ),
         '/standalone-vision': (_) =>
             protectAndroid((_) => const StandaloneVisionPage()),
         '/native-audio': (_) => AuthGate(

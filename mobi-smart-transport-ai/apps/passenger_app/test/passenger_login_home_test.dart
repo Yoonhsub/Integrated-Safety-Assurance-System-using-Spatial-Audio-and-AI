@@ -101,7 +101,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: PassengerLanding(onOnline: () => opened++),
         routes: {
-          '/standalone-vision': (_) =>
+          '/online-vision': (_) =>
               const Scaffold(body: Text('vision destination'))
         },
       ));

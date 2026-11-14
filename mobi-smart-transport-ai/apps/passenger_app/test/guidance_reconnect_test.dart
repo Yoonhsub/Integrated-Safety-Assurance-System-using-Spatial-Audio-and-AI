@@ -119,7 +119,9 @@ void main() {
     }
     expect(client.starts, 1);
     expect(find.byTooltip('서버 다시 연결'), findsOneWidget);
-    await tester.tap(find.byTooltip('서버 다시 연결'));
+    await tester.tapAt(tester.getCenter(find.byTooltip('서버 다시 연결')));
+    await tester.pump();
+    await tester.tapAt(tester.getCenter(find.byTooltip('서버 다시 연결')));
     for (var i = 0; i < 5; i++) {
       await tester.pump();
     }
@@ -130,17 +132,37 @@ void main() {
         widget.segments.any((segment) => segment.value == 'auto'));
     expect(nluSelector, findsOneWidget);
     expect(tester.widget<SegmentedButton<String>>(nluSelector).selected,
-        {'auto'});
-    tester.widget<SegmentedButton<String>>(nluSelector)
+        {'gemini'});
+    tester
+        .widget<SegmentedButton<String>>(nluSelector)
         .onSelectionChanged!({'gemini'});
     await tester.pump();
     expect(tester.widget<SegmentedButton<String>>(nluSelector).selected,
         {'gemini'});
     expect(client.reads, 0);
     expect(find.byTooltip('상태 새로고침'), findsOneWidget);
-    await tester.tap(find.byTooltip('상태 새로고침'));
+    await tester.tapAt(tester.getCenter(find.byTooltip('상태 새로고침')));
+    await tester.pump();
+    await tester.tapAt(tester.getCenter(find.byTooltip('상태 새로고침')));
     await tester.pump();
     expect(client.reads, 1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    // Vision uses the same authenticated transport contract without route UI.
+    await tester.pumpWidget(MaterialApp(
+        home: V3GuidancePage(
+            agentName: 'mobi',
+            onReturnToModeSelection: () {},
+            dataMode: 'live',
+            visionOnly: true,
+            localRuntime: runtime)));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump();
+    }
+    expect(find.text('장애물 탐지'), findsOneWidget);
+    expect(find.textContaining('카메라로 객체를 감지'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.byType(SegmentedButton<String>), findsNothing);
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
     priority.dispose();

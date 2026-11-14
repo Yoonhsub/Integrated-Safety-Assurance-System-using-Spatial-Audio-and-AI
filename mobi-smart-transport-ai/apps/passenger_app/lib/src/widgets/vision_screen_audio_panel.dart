@@ -1,3 +1,4 @@
+import 'described_action.dart';
 import 'package:flutter/material.dart';
 import '../services/head_tracking_direction.dart';
 import '../services/vision_screen_audio.dart';
@@ -9,10 +10,12 @@ class VisionScreenAudioPanel extends StatelessWidget {
     required this.audio,
     required this.cameraActive,
     this.showStopButton = true,
+    this.diagnostics = true,
   });
   final VisionScreenAudio audio;
   final bool cameraActive;
   final bool showStopButton;
+  final bool diagnostics;
 
   Future<void> _recordMeasuredOffset(BuildContext context) async {
     final controller = TextEditingController();
@@ -58,6 +61,29 @@ class VisionScreenAudioPanel extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: audio,
         builder: (context, _) {
+          if (!diagnostics) {
+            return Card(
+                child: Column(children: [
+              SwitchListTile(
+                title: const Text('객체 음성·방향음 안내'),
+                subtitle:
+                    const Text('화면 기준 객체 정보입니다. 거리나 안전한 이동 방향을 판단하지 않습니다.'),
+                value: audio.enabled,
+                onChanged: cameraActive ? audio.setEnabled : null,
+              ),
+              Text(audio.status),
+              if (audio.sceneMode)
+                DescribedAction.button(
+                    label: '현재 장면 듣기',
+                    description: '현재 인식된 객체와 화면 위치를 음성으로 설명합니다.',
+                    immediate: false,
+                    child: OutlinedButton(
+                        onPressed: cameraActive && audio.canDescribeScene
+                            ? audio.describeScene
+                            : null,
+                        child: const Text('현재 장면 듣기'))),
+            ]));
+          }
           final d = audio.diagnostic;
           return Card(
             child: Padding(

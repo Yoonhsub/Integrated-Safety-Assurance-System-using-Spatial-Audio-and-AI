@@ -1,3 +1,4 @@
+import '../widgets/described_action.dart';
 import '../services/route_data_presentation.dart';
 import '../widgets/route_data_status.dart';
 import 'dart:async';
@@ -52,8 +53,10 @@ class V3GuidancePage extends StatefulWidget {
     required this.onReturnToModeSelection,
     required this.dataMode,
     this.localRuntime,
+    this.visionOnly = false,
   });
 
+  final bool visionOnly;
   final String agentName;
   final VoidCallback onReturnToModeSelection;
   final String dataMode;
@@ -158,7 +161,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   // 보이스 모델(테스트 비교용): 'realtime'=gpt-realtime-2, 'mini'=gpt-4o-mini-tts, 'gemini'=Gemini TTS.
   String _voiceChoice = 'realtime';
   // 서버의 기존 자동 폴백을 기본으로 사용한다. 특정 제공자는 비교 시에만 고른다.
-  String _nluProvider = 'auto';
+  String _nluProvider = 'gemini';
   bool _isListening = false;
   String? _nextLiveScriptLineId;
   String _voiceStatusMessage = '마이크 버튼을 누르고 목적지를 말씀해 주세요.';
@@ -244,9 +247,13 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     _bootstrap();
     // 웹: 지속 위치 추적(watchPosition)을 시작해 권한이 있는 동안 최신 좌표를 계속
     // 캐시한다(일회성 실패로 좌표가 비는 '들쭉날쭉' 방지).
-    if (widget.localRuntime == null && kIsWeb) startWebGeoWatch();
+    if (widget.localRuntime == null && !widget.visionOnly && kIsWeb) {
+      startWebGeoWatch();
+    }
     // 위치는 첫 접속 시점에 한 번 요청해 둔다(경로 탐색 버튼을 누를 때가 아니라).
-    if (widget.localRuntime == null) _ensureLocation(forceRequest: true);
+    if (widget.localRuntime == null && !widget.visionOnly) {
+      _ensureLocation(forceRequest: true);
+    }
   }
 
   @override
@@ -385,7 +392,9 @@ class _V3GuidancePageState extends State<V3GuidancePage>
       });
       if (_androidAudio) {
         // Bootstrap happens once per successfully created session, never build().
-        unawaited(_speakAgentMessage('안내가 시작되었습니다. 목적지를 말씀하거나 입력해 주세요.')
+        unawaited(_speakAgentMessage(widget.visionOnly
+                ? '장애물 탐지 화면입니다. 카메라 시작을 눌러 주세요.'
+                : '안내가 시작되었습니다. 목적지를 말씀하거나 입력해 주세요.')
             .catchError((Object error) {
           if (mounted) setState(() => _errorMessage = '한국어 음성을 준비하지 못했습니다.');
           debugPrint('Guidance start speech failure: ${error.runtimeType}');
@@ -507,13 +516,15 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => LiveVoicePage(
-          agentName: _wakeWord,
-          processor: _processLiveUtterance,
-          speak: _speakLiveOnly,
-          stopAudio: _stopAllCueAudio,
-          onExit: _onLiveVoiceExit,
-        ),
+        builder: (_) => ActionSpeechScope(
+            speech: _priority,
+            child: LiveVoicePage(
+              agentName: _wakeWord,
+              processor: _processLiveUtterance,
+              speak: _speakLiveOnly,
+              stopAudio: _stopAllCueAudio,
+              onExit: _onLiveVoiceExit,
+            )),
       ),
     );
     if (!mounted) return;
@@ -1604,6 +1615,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   }
 
   Future<void> _stopAllCueAudio() async {
+    DescribedAction.cancelDescriptions();
     _speechScope.invalidate();
     _routeRequestScope.invalidate();
     _safetyLifecycle.silence();
@@ -2061,343 +2073,385 @@ class _V3GuidancePageState extends State<V3GuidancePage>
         _lastBeaconDecision?.message ??
         'V3 버스 탑승 보조 에이전트가 대기 중이에요.';
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isLiveMode ? '모비 실시간 버스 안내' : 'V3 버스 탑승 보조'),
-        actions: [
-          IconButton(
-            tooltip: '초기 화면으로',
-            onPressed: () {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-              widget.onReturnToModeSelection();
-            },
-            icon: const Icon(Icons.home_outlined),
-          ),
-          IconButton(
-            tooltip: _sessionId.isEmpty ? '서버 다시 연결' : '상태 새로고침',
-            onPressed: _isBusy
-                ? null
-                : _sessionId.isEmpty
-                    ? _bootstrap
-                    : () => _runGuarded(_refreshState),
-            icon: const Icon(Icons.refresh),
-          ),
-          IconButton(
-            tooltip: '세션 초기화',
-            onPressed: _isBusy ? null : _resetSession,
-            icon: const Icon(Icons.restart_alt),
-          ),
-          IconButton(
-            tooltip: '로그아웃',
-            onPressed: () async {
-              final logoutGuard = _captureAuthGuard();
-              _client.invalidateVisionSession(_sessionId);
-              _safetyLifecycle.dispose();
-              _speechAuthValid = false;
-              try {
-                await _stopAllCueAudio();
-              } catch (_) {
-                // Logout still invalidates all pending voice requests.
-              } finally {
-                try {
-                  if (logoutGuard()) await _client.revokeVisionLease();
-                } on VisionLeaseException {
-                  // Local admission is closed even when remote cleanup failed;
-                  // the server lease expiry remains authoritative.
-                } finally {
-                  if (logoutGuard()) await _auth.signOut();
-                }
-              }
-            },
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
-      // Mock 화면은 기존 채팅 FAB를 유지한다. 실제 API 화면은 질문 수단 카드에 통합한다.
-      floatingActionButton: _isLiveMode || _isChatOpen
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () => setState(() => _isChatOpen = true),
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('채팅'),
-              tooltip: '실시간 채팅 열기',
-            ),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              controller: _bodyScrollController,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (!kIsWeb &&
-                      defaultTargetPlatform == TargetPlatform.android)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: FilledButton.icon(
-                        onPressed: _sessionId.isEmpty || _isBusy || _cameraOpen
+    return ActionSpeechScope(
+        speech: _priority,
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(widget.visionOnly ? '장애물 탐지' : '노선 정보 검색'),
+            actions: [
+              IconButton(
+                tooltip: '초기 화면으로',
+                onPressed: () {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  widget.onReturnToModeSelection();
+                },
+                icon: const Icon(Icons.home_outlined),
+              ),
+              DescribedAction.icon(
+                      label: _sessionId.isEmpty ? '서버 다시 연결' : '상태 새로고침',
+                      description: '서버 연결 또는 현재 안내 상태를 다시 확인합니다.',
+                      child: IconButton(
+                        tooltip: _sessionId.isEmpty ? '서버 다시 연결' : '상태 새로고침',
+                        onPressed: _isBusy
                             ? null
-                            : _openPassengerCamera,
-                        icon: const Icon(Icons.camera_alt_outlined),
-                        label: const Text('버스 카메라 시작'),
-                      ),
-                    ),
-                  if (_androidAudio)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Wrap(spacing: 8, runSpacing: 8, children: [
-                        OutlinedButton.icon(
-                            onPressed: () => _audioAction(_stopAllCueAudio),
-                            icon: const Icon(Icons.stop_circle_outlined),
-                            label: const Text('음성 중지 (STOP)')),
-                        OutlinedButton.icon(
-                            onPressed: () => _audioAction(_toggleGuidanceHold),
-                            icon: Icon(_guidanceHold == null
-                                ? Icons.pause_circle_outline
-                                : Icons.play_circle_outline),
-                            label: Text(_guidanceHold == null
-                                ? '안내 일시 정지 (Live Hold)'
-                                : '새 안내 허용')),
-                      ]),
-                    ),
-                  if (_androidAudio && _sessionId.isNotEmpty && !_cameraOpen)
-                    GuidanceBeaconPanel(
-                      sessionId: _sessionId,
-                      scopeVersion: _visionSpeechGeneration,
-                      ownerUid: _safetySessionUid ?? '',
-                      targetBusId: state?.targetBusId,
-                      routeNo: state?.selectedRouteNo,
-                      priority: _priority,
-                      captureGuard: () => _safetySessionGuard ?? () => false,
-                      captureAudioGuard: () {
-                        final request = _speechRequest();
-                        return () => request.valid;
-                      },
-                      authChanges: _auth.authStateChanges,
-                      scanner: widget.localRuntime?.beaconScanner,
-                      mockInput: widget.localRuntime != null,
-                      demoMapping: _demoBeaconMapping,
-                      identities:
-                          widget.localRuntime?.beaconIdentities ?? const [],
-                    ),
-                  if (widget.localRuntime != null && _sessionId.isNotEmpty)
-                    widget.localRuntime!.controls(_sessionId,
-                        () => _cueService.speakLocal('검증용 Live Hold 안내입니다.'),
-                        () async {
-                      _safetyLifecycle.silence();
-                      await _stopAllCueAudio();
-                    }),
-                  if (_sessionId.isNotEmpty &&
-                      !_cameraOpen &&
-                      _client.visionSessionReady(_sessionId))
-                    ScenarioObservationBuilder(
-                      controller: _mockScenarioController,
-                      builder: (context, isPlaying) => VisionObservationPanel(
+                            : _sessionId.isEmpty
+                                ? _bootstrap
+                                : () => _runGuarded(_refreshState),
+                        icon: const Icon(Icons.refresh),
+                      )),
+              DescribedAction.icon(
+                      label: '세션 초기화',
+                      description: '현재 안내 세션을 초기화합니다.',
+                      child: IconButton(
+                        tooltip: '세션 초기화',
+                        onPressed: _isBusy ? null : _resetSession,
+                        icon: const Icon(Icons.restart_alt),
+                      )),
+              IconButton(
+                tooltip: '로그아웃',
+                onPressed: () async {
+                  final logoutGuard = _captureAuthGuard();
+                  _client.invalidateVisionSession(_sessionId);
+                  _safetyLifecycle.dispose();
+                  _speechAuthValid = false;
+                  try {
+                    await _stopAllCueAudio();
+                  } catch (_) {
+                    // Logout still invalidates all pending voice requests.
+                  } finally {
+                    try {
+                      if (logoutGuard()) await _client.revokeVisionLease();
+                    } on VisionLeaseException {
+                      // Local admission is closed even when remote cleanup failed;
+                      // the server lease expiry remains authoritative.
+                    } finally {
+                      if (logoutGuard()) await _auth.signOut();
+                    }
+                  }
+                },
+                icon: const Icon(Icons.logout),
+              ),
+            ],
+          ),
+          // Mock 화면은 기존 채팅 FAB를 유지한다. 실제 API 화면은 질문 수단 카드에 통합한다.
+          floatingActionButton: widget.visionOnly || _isLiveMode || _isChatOpen
+              ? null
+              : FloatingActionButton.extended(
+                  onPressed: () => setState(() => _isChatOpen = true),
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  label: const Text('채팅'),
+                  tooltip: '실시간 채팅 열기',
+                ),
+          body: SafeArea(
+            child: Stack(
+              children: [
+                SingleChildScrollView(
+                  controller: _bodyScrollController,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (widget.visionOnly) ...[
+                        const Text(
+                            '카메라로 객체를 감지하고 연결된 서버에 결과를 전송합니다. 화면 기준 방향 음향은 실제 이동 안전을 보장하지 않습니다.'),
+                        if (_errorMessage != null) Text(_errorMessage!),
+                      ],
+                      if (widget.visionOnly &&
+                          !kIsWeb &&
+                          defaultTargetPlatform == TargetPlatform.android)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: DescribedAction.button(
+                              label: '카메라 시작',
+                              description: '카메라를 열어 객체를 감지하고 서버에 결과를 전송합니다.',
+                              immediate: false,
+                              child: FilledButton.icon(
+                                onPressed:
+                                    _sessionId.isEmpty || _isBusy || _cameraOpen
+                                        ? null
+                                        : _openPassengerCamera,
+                                icon: const Icon(Icons.camera_alt_outlined),
+                                label: const Text('카메라 시작'),
+                              )),
+                        ),
+                      if (_androidAudio)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Wrap(spacing: 8, runSpacing: 8, children: [
+                            OutlinedButton.icon(
+                                onPressed: () => _audioAction(_stopAllCueAudio),
+                                icon: const Icon(Icons.stop_circle_outlined),
+                                label: const Text('음성 중지 (STOP)')),
+                            OutlinedButton.icon(
+                                onPressed: () =>
+                                    _audioAction(_toggleGuidanceHold),
+                                icon: Icon(_guidanceHold == null
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline),
+                                label: Text(_guidanceHold == null
+                                    ? '안내 일시 정지 (Live Hold)'
+                                    : '새 안내 허용')),
+                          ]),
+                        ),
+                      if (widget.localRuntime != null &&
+                          _androidAudio &&
+                          _sessionId.isNotEmpty &&
+                          !_cameraOpen)
+                        GuidanceBeaconPanel(
                           sessionId: _sessionId,
                           scopeVersion: _visionSpeechGeneration,
-                          speechPriority: _priority,
-                          priorityBlocked: isPlaying,
-                          ownerUid: _auth.currentAccount?.uid,
-                          captureAuthGuard: _captureAuthGuard,
-                          authChanges: _auth.authStateChanges
-                              .map((account) => account?.uid),
-                          fetch: _client.fetchVisionObservations),
-                    ),
-                  if (_sessionId.isNotEmpty && _safetySessionUid != null)
-                    SessionSafetyHost(
-                      lifecycle: _safetyLifecycle,
-                      priority: _priority,
-                      audio: widget.localRuntime?.audio ??
-                          SessionGuidanceAudio(priority: _priority),
-                      allowSynthetic: widget.localRuntime != null,
-                      openTransport: _client.openSafetyPolling,
-                      sessionId: _sessionId,
-                      ownerUid: _safetySessionUid!,
-                      captureGuard: () => _safetySessionGuard ?? () => false,
-                      authChanges: _auth.authStateChanges,
-                      fetch: _client.fetchSafetyEvents,
-                    ),
-                  _HeroStatusCard(
-                    isBusy: _isBusy,
-                    stateLabel: state?.state ?? 'LOADING',
-                    destination: state?.selectedDestination,
-                    routeNo: state?.selectedRouteNo,
-                    stopName: state?.selectedStopName,
-                    targetBusId: state?.targetBusId,
-                    message: lastMessage,
-                    errorMessage: _errorMessage,
-                  ),
-                  if (_isLiveMode) ...[
-                    const SizedBox(height: 12),
-                    _LiveQuestionMethodsCard(
-                      isBusy: _isBusy,
-                      isListening: _isListening,
-                      voiceStatusMessage: _voiceStatusMessage,
-                      onOpenChat: () => setState(() => _isChatOpen = true),
-                      onToggleVoice: _toggleVoiceInput,
-                    ),
-                    if (_chatMessages.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      _ConversationLogCard(messages: _chatMessages),
+                          ownerUid: _safetySessionUid ?? '',
+                          targetBusId: state?.targetBusId,
+                          routeNo: state?.selectedRouteNo,
+                          priority: _priority,
+                          captureGuard: () =>
+                              _safetySessionGuard ?? () => false,
+                          captureAudioGuard: () {
+                            final request = _speechRequest();
+                            return () => request.valid;
+                          },
+                          authChanges: _auth.authStateChanges,
+                          scanner: widget.localRuntime?.beaconScanner,
+                          mockInput: widget.localRuntime != null,
+                          demoMapping: _demoBeaconMapping,
+                          identities:
+                              widget.localRuntime?.beaconIdentities ?? const [],
+                        ),
+                      if (widget.localRuntime != null && _sessionId.isNotEmpty)
+                        widget.localRuntime!.controls(
+                            _sessionId,
+                            () =>
+                                _cueService.speakLocal('검증용 Live Hold 안내입니다.'),
+                            () async {
+                          _safetyLifecycle.silence();
+                          await _stopAllCueAudio();
+                        }),
+                      if (widget.visionOnly &&
+                          _sessionId.isNotEmpty &&
+                          !_cameraOpen &&
+                          _client.visionSessionReady(_sessionId))
+                        ScenarioObservationBuilder(
+                          controller: _mockScenarioController,
+                          builder: (context, isPlaying) =>
+                              VisionObservationPanel(
+                                  sessionId: _sessionId,
+                                  scopeVersion: _visionSpeechGeneration,
+                                  speechPriority: _priority,
+                                  priorityBlocked: isPlaying,
+                                  ownerUid: _auth.currentAccount?.uid,
+                                  captureAuthGuard: _captureAuthGuard,
+                                  authChanges: _auth.authStateChanges
+                                      .map((account) => account?.uid),
+                                  fetch: _client.fetchVisionObservations),
+                        ),
+                      if (_sessionId.isNotEmpty && _safetySessionUid != null)
+                        Offstage(
+                            offstage: widget.localRuntime == null,
+                            child: SessionSafetyHost(
+                              lifecycle: _safetyLifecycle,
+                              priority: _priority,
+                              audio: widget.localRuntime?.audio ??
+                                  SessionGuidanceAudio(priority: _priority),
+                              allowSynthetic: widget.localRuntime != null,
+                              openTransport: _client.openSafetyPolling,
+                              sessionId: _sessionId,
+                              ownerUid: _safetySessionUid!,
+                              captureGuard: () =>
+                                  _safetySessionGuard ?? () => false,
+                              authChanges: _auth.authStateChanges,
+                              fetch: _client.fetchSafetyEvents,
+                            )),
+                      if (!widget.visionOnly) ...[
+                        _HeroStatusCard(
+                          isBusy: _isBusy,
+                          stateLabel: state?.state ?? 'LOADING',
+                          destination: state?.selectedDestination,
+                          routeNo: state?.selectedRouteNo,
+                          stopName: state?.selectedStopName,
+                          targetBusId: state?.targetBusId,
+                          message: lastMessage,
+                          errorMessage: _errorMessage,
+                        ),
+                        if (_isLiveMode) ...[
+                          const SizedBox(height: 12),
+                          _LiveQuestionMethodsCard(
+                            isBusy: _isBusy,
+                            isListening: _isListening,
+                            voiceStatusMessage: _voiceStatusMessage,
+                            onOpenChat: () =>
+                                setState(() => _isChatOpen = true),
+                            onToggleVoice: _toggleVoiceInput,
+                          ),
+                          if (_chatMessages.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            _ConversationLogCard(messages: _chatMessages),
+                          ],
+                        ],
+                        if (_locationDenied) ...[
+                          const SizedBox(height: 12),
+                          _LocationNeededBanner(
+                            detail: _locationError,
+                            onRetry: _isBusy
+                                ? null
+                                : () => _ensureLocation(forceRequest: true),
+                          ),
+                        ],
+                        if (_betterRoutePlan != null &&
+                            _liveRoutePanelVisible &&
+                            !_navStopped) ...[
+                          const SizedBox(height: 12),
+                          _BetterRouteCard(
+                            candidate: _betterRoutePlan!,
+                            etaMinutes: _planEtaMinutes(_betterRoutePlan),
+                            onAccept: _acceptBetterRoute,
+                            onDecline: _declineBetterRoute,
+                          ),
+                        ],
+                        if (_liveRoutePanelVisible && !_navStopped) ...[
+                          const SizedBox(height: 12),
+                          _RealtimeNavCard(
+                            key: _navCardKey,
+                            status: _liveStatus,
+                            routePlan: _lastRoutePlan,
+                            userPosition: _cachedPosition ?? _lastRoutePosition,
+                            isLoading: _isLiveRouteLoading,
+                            errorMessage: _liveRouteError,
+                            onStop: _stopNavigation,
+                          ),
+                        ],
+                        if (_navStopped) ...[
+                          const SizedBox(height: 12),
+                          _NavStoppedNotice(),
+                        ],
+                        if (!_isLiveMode) ...[
+                          const SizedBox(height: 12),
+                          if (widget.localRuntime != null)
+                            _MockScenarioSimulationCard(
+                              controller: _mockScenarioController,
+                            ),
+                          const SizedBox(height: 12),
+                          _ArrivalCard(
+                            routeRecommendation: _lastRouteRecommendation,
+                            routePlan: _lastRoutePlan,
+                            routePlanningStatus: _routePlanningStatus,
+                            arrivals: _lastArrivals,
+                            onRecommendSachang: () => _routeRecommend('사창사거리'),
+                            onRecommendHospital: () => _routeRecommend('충북대병원'),
+                            onRecommendSangdang: () => _routeRecommend('상당산성'),
+                            onRefreshArrivals: _refreshArrivals,
+                            onChooseDestination: (candidate) =>
+                                _sendUtterance(candidate),
+                            onStartGuidance: _startGuidance,
+                            isBusy: _isBusy,
+                          ),
+                          const SizedBox(height: 12),
+                          _CombinedChatControlCard(
+                            controller: _utteranceController,
+                            isBusy: _isBusy,
+                            wakeWord: _wakeWord,
+                            voiceChoice: _voiceChoice,
+                            onVoiceChoiceChanged: (value) =>
+                                setState(() => _voiceChoice = value),
+                            nluProvider: _nluProvider,
+                            onNluProviderChanged: (value) =>
+                                setState(() => _nluProvider = value),
+                            onSend: () => _sendUtterance(),
+                            onQuickAction: (text) => _sendUtterance(text),
+                          ),
+                          const SizedBox(height: 12),
+                          if (widget.localRuntime != null)
+                            _DebugExpansionPanel(
+                              isBusy: _isBusy,
+                              dataMode: widget.dataMode,
+                              traceId: _lastAgentResponse?.traceId,
+                              traceEvents: _lastAgentResponse?.trace,
+                              isAgentTraceExpanded: _isAgentTraceExpanded,
+                              onToggleTrace: () => setState(() {
+                                _isAgentTraceExpanded = !_isAgentTraceExpanded;
+                              }),
+                              onArrivedAtStop: () =>
+                                  _mockGeofence('ARRIVED_AT_STOP'),
+                              onLeftWaitingArea: () =>
+                                  _mockGeofence('LEFT_WAITING_AREA'),
+                              onDangerZone: () => _mockGeofence('DANGER_ZONE'),
+                              onReturnedToStop: () =>
+                                  _mockGeofence('RETURNED_TO_STOP'),
+                              onWrongBusNear: () =>
+                                  _mockBeacons(const <V3BeaconSignal>[
+                                V3BeaconSignal(
+                                  busId: 'BUS_1',
+                                  routeNo: '511',
+                                  rssi: -50,
+                                  distanceMeters: 1.8,
+                                ),
+                                V3BeaconSignal(
+                                  busId: 'BUS_2',
+                                  routeNo: '502',
+                                  rssi: -70,
+                                  distanceMeters: 6.0,
+                                ),
+                              ]),
+                              onTargetBusMid: () =>
+                                  _mockBeacons(const <V3BeaconSignal>[
+                                V3BeaconSignal(
+                                  busId: 'BUS_2',
+                                  routeNo: '502',
+                                  rssi: -70,
+                                  distanceMeters: 6.0,
+                                ),
+                              ]),
+                              onTargetBusNear: () =>
+                                  _mockBeacons(const <V3BeaconSignal>[
+                                V3BeaconSignal(
+                                  busId: 'BUS_2',
+                                  routeNo: '502',
+                                  rssi: -52,
+                                  distanceMeters: 1.4,
+                                ),
+                              ]),
+                              onNoBeacon: () =>
+                                  _mockBeacons(const <V3BeaconSignal>[]),
+                              onBusPassed: _mockBusPassed,
+                              onBoardingPrompt: _mockBoardingPrompt,
+                              onBoardedSuccess: _mockBoardedSuccess,
+                              onRepeatScript: _repeatMockScript,
+                              onRefreshArrivals: _refreshArrivals,
+                              latestBeaconDecision: _lastBeaconDecision,
+                              latestGeofenceMessage: _latestGeofenceMessage,
+                              headTracking: _headTracking,
+                              useMockHeadTracking: _useMockHeadTracking,
+                              onToggleMockHeadTracking: _toggleMockHeadTracking,
+                              apiBaseUrl: _apiBaseUrl,
+                              healthMessage: _healthStatus?.message ?? '확인 전',
+                              sessionState: _sessionState,
+                              lastAgentResponse: _lastAgentResponse,
+                              lastArrivals: _lastArrivals,
+                              activeCueType: _cueService.activeCueType,
+                            ),
+                        ],
+                      ],
                     ],
-                  ],
-                  if (_locationDenied) ...[
-                    const SizedBox(height: 12),
-                    _LocationNeededBanner(
-                      detail: _locationError,
-                      onRetry: _isBusy
-                          ? null
-                          : () => _ensureLocation(forceRequest: true),
-                    ),
-                  ],
-                  if (_betterRoutePlan != null &&
-                      _liveRoutePanelVisible &&
-                      !_navStopped) ...[
-                    const SizedBox(height: 12),
-                    _BetterRouteCard(
-                      candidate: _betterRoutePlan!,
-                      etaMinutes: _planEtaMinutes(_betterRoutePlan),
-                      onAccept: _acceptBetterRoute,
-                      onDecline: _declineBetterRoute,
-                    ),
-                  ],
-                  if (_liveRoutePanelVisible && !_navStopped) ...[
-                    const SizedBox(height: 12),
-                    _RealtimeNavCard(
-                      key: _navCardKey,
-                      status: _liveStatus,
-                      routePlan: _lastRoutePlan,
-                      userPosition: _cachedPosition ?? _lastRoutePosition,
-                      isLoading: _isLiveRouteLoading,
-                      errorMessage: _liveRouteError,
-                      onStop: _stopNavigation,
-                    ),
-                  ],
-                  if (_navStopped) ...[
-                    const SizedBox(height: 12),
-                    _NavStoppedNotice(),
-                  ],
-                  if (!_isLiveMode) ...[
-                    const SizedBox(height: 12),
-                    _MockScenarioSimulationCard(
-                      controller: _mockScenarioController,
-                    ),
-                    const SizedBox(height: 12),
-                    _ArrivalCard(
-                      routeRecommendation: _lastRouteRecommendation,
-                      routePlan: _lastRoutePlan,
-                      routePlanningStatus: _routePlanningStatus,
-                      arrivals: _lastArrivals,
-                      onRecommendSachang: () => _routeRecommend('사창사거리'),
-                      onRecommendHospital: () => _routeRecommend('충북대병원'),
-                      onRecommendSangdang: () => _routeRecommend('상당산성'),
-                      onRefreshArrivals: _refreshArrivals,
-                      onChooseDestination: (candidate) =>
-                          _sendUtterance(candidate),
-                      onStartGuidance: _startGuidance,
-                      isBusy: _isBusy,
-                    ),
-                    const SizedBox(height: 12),
-                    _CombinedChatControlCard(
-                      controller: _utteranceController,
-                      isBusy: _isBusy,
-                      wakeWord: _wakeWord,
-                      voiceChoice: _voiceChoice,
-                      onVoiceChoiceChanged: (value) =>
-                          setState(() => _voiceChoice = value),
-                      nluProvider: _nluProvider,
-                      onNluProviderChanged: (value) =>
-                          setState(() => _nluProvider = value),
-                      onSend: () => _sendUtterance(),
-                      onQuickAction: (text) => _sendUtterance(text),
-                    ),
-                    const SizedBox(height: 12),
-                    _DebugExpansionPanel(
-                      isBusy: _isBusy,
-                      dataMode: widget.dataMode,
-                      traceId: _lastAgentResponse?.traceId,
-                      traceEvents: _lastAgentResponse?.trace,
-                      isAgentTraceExpanded: _isAgentTraceExpanded,
-                      onToggleTrace: () => setState(() {
-                        _isAgentTraceExpanded = !_isAgentTraceExpanded;
-                      }),
-                      onArrivedAtStop: () => _mockGeofence('ARRIVED_AT_STOP'),
-                      onLeftWaitingArea: () =>
-                          _mockGeofence('LEFT_WAITING_AREA'),
-                      onDangerZone: () => _mockGeofence('DANGER_ZONE'),
-                      onReturnedToStop: () => _mockGeofence('RETURNED_TO_STOP'),
-                      onWrongBusNear: () => _mockBeacons(const <V3BeaconSignal>[
-                        V3BeaconSignal(
-                          busId: 'BUS_1',
-                          routeNo: '511',
-                          rssi: -50,
-                          distanceMeters: 1.8,
-                        ),
-                        V3BeaconSignal(
-                          busId: 'BUS_2',
-                          routeNo: '502',
-                          rssi: -70,
-                          distanceMeters: 6.0,
-                        ),
-                      ]),
-                      onTargetBusMid: () => _mockBeacons(const <V3BeaconSignal>[
-                        V3BeaconSignal(
-                          busId: 'BUS_2',
-                          routeNo: '502',
-                          rssi: -70,
-                          distanceMeters: 6.0,
-                        ),
-                      ]),
-                      onTargetBusNear: () =>
-                          _mockBeacons(const <V3BeaconSignal>[
-                        V3BeaconSignal(
-                          busId: 'BUS_2',
-                          routeNo: '502',
-                          rssi: -52,
-                          distanceMeters: 1.4,
-                        ),
-                      ]),
-                      onNoBeacon: () => _mockBeacons(const <V3BeaconSignal>[]),
-                      onBusPassed: _mockBusPassed,
-                      onBoardingPrompt: _mockBoardingPrompt,
-                      onBoardedSuccess: _mockBoardedSuccess,
-                      onRepeatScript: _repeatMockScript,
-                      onRefreshArrivals: _refreshArrivals,
-                      latestBeaconDecision: _lastBeaconDecision,
-                      latestGeofenceMessage: _latestGeofenceMessage,
-                      headTracking: _headTracking,
-                      useMockHeadTracking: _useMockHeadTracking,
-                      onToggleMockHeadTracking: _toggleMockHeadTracking,
-                      apiBaseUrl: _apiBaseUrl,
-                      healthMessage: _healthStatus?.message ?? '확인 전',
-                      sessionState: _sessionState,
-                      lastAgentResponse: _lastAgentResponse,
-                      lastArrivals: _lastArrivals,
-                      activeCueType: _cueService.activeCueType,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (_isRoutePlanning)
-              const Positioned.fill(
-                child: _RoutePlanningOverlay(message: _routePlanningMessage),
-              ),
-            // 실시간 채팅 오버레이
-            if (_isChatOpen)
-              Positioned.fill(
-                child: ChatOverlay(
-                  messages: _chatMessages,
-                  isBusy: _isBusy,
-                  onSendMessage: _sendChatMessage,
-                  onClose: () => setState(() => _isChatOpen = false),
+                  ),
                 ),
-              ),
-          ],
-        ),
-      ),
-    );
+                if (_isRoutePlanning)
+                  const Positioned.fill(
+                    child:
+                        _RoutePlanningOverlay(message: _routePlanningMessage),
+                  ),
+                // 실시간 채팅 오버레이
+                if (_isChatOpen)
+                  Positioned.fill(
+                    child: ChatOverlay(
+                      messages: _chatMessages,
+                      isBusy: _isBusy,
+                      onSendMessage: _sendChatMessage,
+                      onClose: () => setState(() => _isChatOpen = false),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ));
   }
 }
 
@@ -2732,11 +2786,14 @@ class _LocationNeededBanner extends StatelessWidget {
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.my_location),
-                label: const Text('위치 권한 다시 시도'),
-              ),
+              child: DescribedAction.button(
+                      label: '위치 다시 확인',
+                      description: '휴대폰 위치 권한과 현재 위치를 다시 확인합니다.',
+                      child: TextButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.my_location),
+                        label: const Text('위치 권한 다시 시도'),
+                      )),
             ),
           ],
         ),
@@ -2888,29 +2945,38 @@ class _LiveQuestionMethodsCard extends StatelessWidget {
             const SizedBox(height: 14),
             SizedBox(
               height: 56,
-              child: FilledButton.icon(
-                onPressed: isBusy ? null : onOpenChat,
-                icon: const Icon(Icons.chat_bubble_outline),
-                label: const Text(
-                  '채팅으로 질문하기',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                ),
-              ),
+              child: DescribedAction.button(
+                  label: '채팅으로 질문하기',
+                  description: '글로 버스 노선과 도착 정보를 질문하는 채팅을 엽니다.',
+                  immediate: false,
+                  child: FilledButton.icon(
+                    onPressed: isBusy ? null : onOpenChat,
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    label: const Text(
+                      '채팅으로 질문하기',
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                  )),
             ),
             const SizedBox(height: 10),
             SizedBox(
               height: 56,
-              child: OutlinedButton.icon(
-                onPressed: isBusy ? null : onToggleVoice,
-                icon: Icon(isListening ? Icons.stop_circle : Icons.mic),
-                label: Text(
-                  isListening ? '음성 인식 종료하고 질문하기' : '음성으로 질문하기',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
+              child: DescribedAction.button(
+                  label: isListening ? '음성 인식 종료하고 질문하기' : '음성으로 질문하기',
+                  description: '마이크로 버스 노선과 도착 정보를 질문합니다.',
+                  immediate: isListening,
+                  child: OutlinedButton.icon(
+                    onPressed: isBusy ? null : onToggleVoice,
+                    icon: Icon(isListening ? Icons.stop_circle : Icons.mic),
+                    label: Text(
+                      isListening ? '음성 인식 종료하고 질문하기' : '음성으로 질문하기',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  )),
             ),
             const SizedBox(height: 10),
             Row(
@@ -2987,14 +3053,23 @@ class _BetterRouteCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onAccept,
-                    icon: const Icon(Icons.swap_horiz),
-                    label: const Text('이 경로로 바꾸기'),
-                  ),
+                  child: DescribedAction.button(
+                      label: '이 경로로 바꾸기',
+                      description: '추천된 새 경로를 선택하여 안내 경로를 변경합니다.',
+                      immediate: false,
+                      child: FilledButton.icon(
+                        onPressed: onAccept,
+                        icon: const Icon(Icons.swap_horiz),
+                        label: const Text('이 경로로 바꾸기'),
+                      )),
                 ),
                 const SizedBox(width: 10),
-                OutlinedButton(onPressed: onDecline, child: const Text('유지')),
+                DescribedAction.button(
+                    label: '유지',
+                    description: '새 경로로 변경하지 않고 현재 경로를 유지합니다.',
+                    immediate: false,
+                    child: OutlinedButton(
+                        onPressed: onDecline, child: const Text('유지'))),
               ],
             ),
           ],
@@ -4456,11 +4531,14 @@ class _CombinedChatControlCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: isBusy ? null : onSend,
-                  icon: const Icon(Icons.send),
-                  tooltip: '전송',
-                ),
+                DescribedAction.icon(
+                        label: '질문 전송',
+                        description: '입력한 질문을 보내고 답변을 요청합니다.',
+                        child: IconButton.filled(
+                          onPressed: isBusy ? null : onSend,
+                          icon: const Icon(Icons.send),
+                          tooltip: '전송',
+                        )),
               ],
             ),
             const SizedBox(height: 12),
@@ -4732,12 +4810,16 @@ class _ArrivalCard extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   for (final candidate in routePlan!.destination!.candidates)
-                    OutlinedButton(
-                      onPressed: isBusy
-                          ? null
-                          : () => onChooseDestination(candidate.name),
-                      child: Text('${candidate.name} 선택'),
-                    ),
+                    DescribedAction.button(
+                        label: '${candidate.name} 선택',
+                        description: '${candidate.name}을 목적지로 선택합니다.',
+                        immediate: false,
+                        child: OutlinedButton(
+                          onPressed: isBusy
+                              ? null
+                              : () => onChooseDestination(candidate.name),
+                          child: Text('${candidate.name} 선택'),
+                        )),
                 ],
               ),
             ],
@@ -4745,11 +4827,15 @@ class _ArrivalCard extends StatelessWidget {
               const SizedBox(height: 12),
               _RoutePlanCard(plan: routePlan!.recommendedPlan!),
               const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: isBusy ? null : onStartGuidance,
-                icon: const Icon(Icons.navigation),
-                label: const Text('이 경로로 안내 시작'),
-              ),
+              DescribedAction.button(
+                  label: '이 경로로 안내 시작',
+                  description: '선택한 경로로 버스 안내를 시작합니다.',
+                  immediate: false,
+                  child: FilledButton.icon(
+                    onPressed: isBusy ? null : onStartGuidance,
+                    icon: const Icon(Icons.navigation),
+                    label: const Text('이 경로로 안내 시작'),
+                  )),
             ],
             if (routePlan?.alternatives.isNotEmpty == true) ...[
               const SizedBox(height: 12),
@@ -4807,10 +4893,14 @@ class _ArrivalCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton(
-                  onPressed: isBusy ? null : onRefreshArrivals,
-                  child: const Text('도착정보 갱신'),
-                ),
+                DescribedAction.button(
+                    label: '도착정보 갱신',
+                    description: '선택한 정류장의 버스 도착정보를 다시 조회합니다.',
+                    immediate: false,
+                    child: OutlinedButton(
+                      onPressed: isBusy ? null : onRefreshArrivals,
+                      child: const Text('도착정보 갱신'),
+                    )),
               ],
             ),
           ],

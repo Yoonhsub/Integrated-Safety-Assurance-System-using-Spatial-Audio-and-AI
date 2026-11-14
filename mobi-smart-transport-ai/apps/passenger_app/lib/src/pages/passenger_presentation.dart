@@ -50,7 +50,7 @@ class PassengerLanding extends StatefulWidget {
   State<PassengerLanding> createState() => _PassengerLandingState();
 }
 
-enum _LandingDestination { routeInfo, vision }
+enum _LandingDestination { routeInfo, vision, tests }
 
 class _PassengerLandingState extends State<PassengerLanding> {
   final _speechOwner = Object();
@@ -97,7 +97,10 @@ class _PassengerLandingState extends State<PassengerLanding> {
       if (destination == _LandingDestination.routeInfo) {
         widget.onOnline();
       } else {
-        await Navigator.of(context).pushNamed('/standalone-vision');
+        await Navigator.of(context).pushNamed(
+            destination == _LandingDestination.vision
+                ? '/online-vision'
+                : '/device-check');
       }
     } finally {
       _opening = false;
@@ -230,6 +233,23 @@ class _PassengerLandingState extends State<PassengerLanding> {
           ),
           const SizedBox(height: 8),
           const Text(_visionDescription),
+          const SizedBox(height: 24),
+          _screenReaderButton(
+            _LandingDestination.tests,
+            '테스트',
+            '기능별 점검 화면을 엽니다. 모의 입력은 실제 안내와 구분됩니다.',
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: mobiInk,
+                backgroundColor: Colors.white,
+                side: const BorderSide(color: mobiInk, width: 2),
+              ),
+              onPressed: () =>
+                  _tap(_LandingDestination.tests, '기능별 점검 화면을 엽니다.'),
+              icon: const Icon(Icons.fact_check_outlined),
+              label: const Text('테스트'),
+            ),
+          ),
         ])),
       );
 }
@@ -238,69 +258,26 @@ class DeviceCheckPage extends StatelessWidget {
   const DeviceCheckPage({super.key});
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('기기 점검')),
-      body: SafeArea(
-          child: ListView(padding: const EdgeInsets.all(24), children: [
-        Text('소리와 연결을 확인하세요', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 12),
-        const Text('실제 연결 상태는 각 점검 화면에서 확인합니다. 여기서 자동으로 소리나 스캔을 시작하지 않습니다.',
-            style: TextStyle(height: 1.7)),
-        const SizedBox(height: 24),
-        Card(
-            child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.volume_up_outlined),
-                          title: Text('음성·방향 소리'),
-                          subtitle: Text('기존 Android 오디오 점검 · 온라인 로그인 필요')),
-                      OutlinedButton(
-                          onPressed: () =>
-                              Navigator.of(context).pushNamed('/native-audio'),
-                          child: const Text('음성·방향 확인 (Android)')),
-                    ]))),
-        Card(
-            child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.bluetooth_searching),
-                          title: Text('BLE 비콘 점검'),
-                          subtitle: Text('휴대폰 단독 모드에서 등록된 시연 매핑을 확인합니다.')),
-                      OutlinedButton(
-                          onPressed: () => Navigator.of(context)
-                              .pushNamed('/standalone-vision'),
-                          child: const Text('휴대폰 단독 모드 열기')),
-                    ]))),
-        const SizedBox(height: 16),
-        OutlinedButton(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => const SafetyIntegrationCheckPage())),
-          child: const Text('안전 중단·재개 통합 점검 (모의)'),
-        ),
-        const Text('고급 하드웨어 진단', style: TextStyle(fontWeight: FontWeight.bold)),
-        OutlinedButton(
-          onPressed: () =>
-              Navigator.of(context).pushNamed('/concurrent-hardware-test'),
-          child: const Text('동시 기기 테스트 (임시)'),
-        ),
-        const Text(
-            'BLE/WT901/HRTF · 테스트 매핑과 가정 방향을 사용합니다. 실제 위험 Guidance와 구분됩니다.',
-            style: TextStyle(height: 1.7)),
-        const SizedBox(height: 12),
-        OutlinedButton(
-            onPressed: () => Navigator.of(context).pushNamed('/hardware-bus'),
-            child: const Text('실기기 연동확인 · BLE/WT901/HRTF')),
-        OutlinedButton(
-          onPressed: () => Navigator.of(context).pushNamed('/tago-diagnostics'),
-          child: const Text('TAGO 실데이터 진단'),
-        ),
-
-      ])));
+        appBar: AppBar(title: const Text('테스트')),
+        body: SafeArea(
+            child: ListView(padding: const EdgeInsets.all(24), children: [
+          const Text('각 테스트는 별도 화면에서 실행합니다. 모의 결과는 실제 검증과 구분합니다.'),
+          const SizedBox(height: 16),
+          OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                      builder: (_) => const SafetyIntegrationCheckPage())),
+              child: const Text('안전 중단·재개 통합 점검 (모의)')),
+          for (final entry in const <String, String>{
+            '/native-audio': '음성·방향 확인 (Android)',
+            '/standalone-vision': '서버 미연결 카메라·BLE 시연',
+            '/hardware-bus': '실기기 연동확인 · BLE/WT901/HRTF',
+            '/concurrent-hardware-test': '동시 기기 테스트 (임시)',
+            '/tago-diagnostics': 'TAGO 실데이터 진단',
+          }.entries)
+            OutlinedButton(
+                onPressed: () => Navigator.of(context).pushNamed(entry.key),
+                child: Text(entry.value)),
+        ])),
+      );
 }
