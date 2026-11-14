@@ -123,6 +123,16 @@ class VisionBindingService:
         self._session_revisions: dict[str, int] = {}
         self._identities: set[str] = set()
 
+    def has_camera_reservation(self) -> bool:
+        """Conservative process load guard, NOT proof of fresh/safe camera input.
+
+        Any unexpired server binding reserves camera capacity, including between
+        frames. Never use this to authorize Guidance or clear an obstacle.
+        """
+        with self._lock:
+            now, mono = self._now(), self._mono()
+            return any(now < b.expires_at and mono < b.deadline for b in self._bindings.values())
+
     def _identity(self):
         for _ in range(8):
             value = str(uuid4())

@@ -27,7 +27,7 @@ from services.public_data.public_data_client import BusArrivalsService, BusLocat
 
 from app.services import cheongju_route_catalog
 from app.services.bus_info_gateway_service import BusInfoGatewayResult, BusInfoGatewayService
-from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
+from app.services.cheongju_bus_stops_service import get_shared_bus_stops_service
 from app.services.cheongju_route_planner import _mock_route_sequences
 from app.services.destination_candidate_resolver import DestinationCandidateResolver
 from app.services.route_service_status import evaluate_route_service_status
@@ -42,7 +42,7 @@ from app.services.v3_gemini_service import (
 
 router = APIRouter()
 _service = BusInfoGatewayService()
-_stop_catalog = CheongjuBusStopsService()
+_stop_catalog = get_shared_bus_stops_service()
 _destination_resolver = DestinationCandidateResolver(stop_catalog=_stop_catalog)
 DataMode = Literal["mock", "live"]
 
@@ -290,6 +290,11 @@ def route_recommend(
     set_nlu_provider(nluProvider)
     _validate_origin_pair(originLat, originLng)
     live = _resolve_live(mode)
+    from app.services.vision_binding_service import vision_binding_service
+    if live and vision_binding_service.has_camera_reservation():
+        raise HTTPException(status_code=409, detail={"error": {
+            "code": "ROUTE_SEARCH_DEFERRED_FOR_CAMERA",
+            "message": "카메라를 종료한 뒤 새 경로를 검색해 주세요."}})
     canonical = _DESTINATION_ALIASES.get(_key(destination))
     recommendation = _recommendation_for(canonical, live=live) if canonical else None
     if recommendation is None:

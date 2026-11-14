@@ -94,6 +94,16 @@ class TransitPlannerOrchestrator:
         origin_lng: float | None = None,
         live: bool = False,
     ) -> RoutePlanResponse:
+        from app.services.vision_binding_service import vision_binding_service
+        if live and vision_binding_service.has_camera_reservation():
+            destination = self._resolver.resolve(heard_text=heard_text, origin_lat=origin_lat,
+                                                 origin_lng=origin_lng, live=live)
+            # Stop-cache readiness alone does not prove that sequence/arrival
+            # enrichment can finish without I/O. Defer new route search entirely.
+            return self._local_planner._empty_response(
+                status=RoutePlanStatus.NOT_FOUND, destination=destination.model_copy(update={"fallbackSource": FallbackSource.ERROR}),
+                heard_text=heard_text,
+                question="카메라 사용 중에는 새 경로 검색을 보류합니다. 카메라를 종료한 뒤 다시 검색해 주세요.")
         use_odsay = live and self._odsay_enabled()
         local_response = self._local_planner.plan(
             heard_text=heard_text,
