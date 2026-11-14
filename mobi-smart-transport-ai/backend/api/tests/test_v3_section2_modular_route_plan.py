@@ -1,12 +1,14 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.api.routes.v3_bus import route_plan_post
 from app.schemas.v3 import (
     FallbackSource,
     RoutePlanCandidate,
     RoutePlanSegment,
     RoutePlanStop,
     RoutePlanType,
+    RoutePlanRequest,
     V3BusArrival,
     V3BusArrivalsResponse,
 )
@@ -67,6 +69,18 @@ def test_route_stop_sequence_cache_loads_all_live_direction_variants() -> None:
     assert cache.route_ids_for_route_no("502") == {"route-west", "route-east"}
     cached_sequences = cache.sequences(live=True, route_nos=["502"])
     assert {sequence.source for sequence in cached_sequences} == {FallbackSource.CACHE}
+    assert cache.live_load_status(["502"]) == "CACHE"
+
+
+def test_live_route_sequence_lookup_with_no_route_numbers_never_returns_mocks() -> None:
+    cache = RouteStopSequenceCache(
+        mock_sequences=[
+            RouteSequence("mock-route-502", "502", (RouteStopNode("mock-a", "A", 1),))
+        ],
+    )
+
+    assert cache.sequences(live=True, route_nos=[]) == []
+    assert [sequence.route_id for sequence in cache.sequences(live=False)] == ["mock-route-502"]
 
 
 def test_live_route_sequence_lookup_never_falls_back_to_mock_sequences() -> None:
@@ -150,6 +164,22 @@ def test_route_plan_post_accepts_json_request_and_exposes_ready_readiness() -> N
     assert body["status"] == "RESOLVED"
     assert body["readiness"] == "READY"
     assert body["recommendedPlan"]["segments"][0]["routeNo"] == "862"
+
+
+def test_mock_route_plan_post_handler_returns_ready_without_testclient() -> None:
+    response = route_plan_post(
+        RoutePlanRequest(
+            destinationText="상당산성",
+            originLat=36.6359,
+            originLng=127.4596,
+            mode="mock",
+        )
+    )
+
+    assert response.status.value == "RESOLVED"
+    assert response.readiness.value == "READY"
+    assert response.recommendedPlan is not None
+    assert response.recommendedPlan.segments[0].routeNo == "862"
 
 
 def test_route_plan_keeps_route_when_arrival_lookup_returns_unknown() -> None:

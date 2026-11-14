@@ -1082,7 +1082,10 @@ def _generate_payload(
         "temperature": 0.3,
         "maxOutputTokens": max_output_tokens,
     }
-    if thinking_budget is not None:
+    if model == "gemini-3.5-flash-lite":
+        # Gemini 3.5 Flash-Lite uses the enum level field, not a numeric budget.
+        generation_config["thinkingConfig"] = {"thinkingLevel": "MINIMAL"}
+    elif thinking_budget is not None:
         generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
 
     payload = {

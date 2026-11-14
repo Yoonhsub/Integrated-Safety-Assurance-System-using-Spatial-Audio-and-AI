@@ -1,3 +1,5 @@
+import pytest
+
 from app.services import v3_gemini_service as gemini
 
 
@@ -15,6 +17,51 @@ def test_gemini_only_accepts_stop_and_rejects_truncated_or_refused_text() -> Non
     assert gemini._extract_text(_payload("MAX_TOKENS", "미완성 안내")) is None
     assert gemini._extract_text(_payload("SAFETY", "거절된 안내")) is None
     assert gemini._extract_text({"candidates": [{"content": {"parts": [{"text": "unknown"}]}}]}) is None
+
+
+@pytest.mark.parametrize("budget", [None, 0, 128])
+def test_gemini_35_payload_uses_level_and_preserves_25_budget(monkeypatch, budget) -> None:
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"candidates": []}
+
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(kwargs)
+        return Response()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "unit-test-only")
+    monkeypatch.setattr(gemini.httpx, "post", post)
+    assert gemini._generate_payload(
+        model="gemini-3.5-flash-lite",
+        system_instruction="test",
+        prompt="test",
+        max_output_tokens=64,
+        thinking_budget=budget,
+    ) == {"candidates": []}
+    assert calls[0]["json"]["generationConfig"]["thinkingConfig"] == {
+        "thinkingLevel": "MINIMAL"
+    }
+
+    calls.clear()
+    assert gemini._generate_payload(
+        model="gemini-2.5-flash",
+        system_instruction="test",
+        prompt="test",
+        max_output_tokens=64,
+        thinking_budget=budget,
+    ) == {"candidates": []}
+    config = calls[0]["json"]["generationConfig"]
+    if budget is None:
+        assert "thinkingConfig" not in config
+    else:
+        assert config["thinkingConfig"] == {"thinkingBudget": budget}
 
 
 def test_overlength_gemini_and_openai_text_is_rejected_without_clipping(monkeypatch) -> None:
