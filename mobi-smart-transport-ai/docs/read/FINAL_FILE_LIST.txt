@@ -851,3 +851,4 @@ backend/api/app/services/tago_diagnostics_service.py
 backend/api/tests/test_gemini_completion_and_provider.py
 backend/api/tests/test_tago_diagnostics.py
 docs/rw/TAGO_DIAGNOSTICS.md
+backend/api/tests/test_tago_stop_provider.py

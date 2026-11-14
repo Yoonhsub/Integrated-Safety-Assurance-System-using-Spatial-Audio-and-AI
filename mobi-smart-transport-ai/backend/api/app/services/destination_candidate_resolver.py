@@ -18,7 +18,7 @@ from app.schemas.v3 import (
     FallbackSource,
     NearbyStopCandidate,
 )
-from app.services.cheongju_bus_stops_service import CheongjuBusStopMatch, CheongjuBusStopsService
+from app.services.cheongju_bus_stops_service import CheongjuBusStopMatch, CheongjuBusStopsService, get_shared_bus_stops_service, stop_cache_only, stop_cache_only_active
 
 
 _CONFIRMATION_THRESHOLD = 0.72
@@ -400,10 +400,25 @@ class DestinationCandidateResolver:
         stop_catalog: CheongjuBusStopsService | None = None,
         local_search: KakaoLocalSearchProvider | None = None,
     ) -> None:
-        self._stop_catalog = stop_catalog or CheongjuBusStopsService()
+        self._stop_catalog = stop_catalog or get_shared_bus_stops_service()
         self._local_search = local_search or KakaoLocalSearchProvider()
 
-    def resolve(
+    def resolve(self, *, heard_text: str, origin_lat=None, origin_lng=None, live=False):
+        from app.services.vision_binding_service import vision_binding_service
+        if live and vision_binding_service.has_camera_reservation():
+            if getattr(self._stop_catalog, "requires_public_stops", False):
+                with stop_cache_only():
+                    result = self._resolve(heard_text=heard_text, origin_lat=origin_lat,
+                                           origin_lng=origin_lng, live=live)
+                if result.originStops and result.destinationStops:
+                    return result
+            return DestinationResolveResponse(
+                status=DestinationResolveStatus.NOT_FOUND, heardText=heard_text,
+                normalizedText=_normalize(heard_text), fallbackSource=FallbackSource.ERROR,
+                question="카메라 사용 중에는 외부 경로 정보를 새로 조회하지 않습니다. 카메라를 종료한 뒤 경로 정보를 준비해 주세요.")
+        return self._resolve(heard_text=heard_text, origin_lat=origin_lat, origin_lng=origin_lng, live=live)
+
+    def _resolve(
         self,
         *,
         heard_text: str,
@@ -520,6 +535,8 @@ class DestinationCandidateResolver:
         live: bool,
     ) -> list[DestinationCandidate]:
         candidates: list[DestinationCandidate] = []
+        if live and stop_cache_only_active():
+            return self._public_stop_candidates(query)
 
         # 교통 거점 일반어("터미널" 등)는 상호명 부분일치에 밀리지 않도록 알려진 거점만
         # 후보로 올려 고속/시외 중 어디인지 묻는다(NEEDS_CHOICE).
@@ -532,6 +549,18 @@ class DestinationCandidateResolver:
         seed_candidates = _seed_stop_name_candidates(normalized)
 
         if live:
+            public_candidates = self._public_stop_candidates(query)
+            # An exact verified stop name needs no fuzzy known-place verification.
+            # Keep exact known places/aliases and their existing ranking semantics.
+            # Preserve exact known campus names even when stop display names are shortened.
+            if getattr(self._stop_catalog, "requires_public_stops", False) and any(
+                item.confidence == 0.96 and _normalize(item.name) == normalized
+                for item in public_candidates
+            ) and not any(_normalize(item.name) == normalized for item in known_candidates):
+                known_candidates = [
+                    item for item in known_candidates
+                    if _is_unambiguous_known_alias(normalized, item.name)
+                ]
             candidates.extend(
                 self._verified_live_known_candidates(
                     known_candidates,
@@ -548,7 +577,7 @@ class DestinationCandidateResolver:
                 for item in seed_candidates
                 if _normalize(item.name) == normalized
             )
-            candidates.extend(self._public_stop_candidates(query))
+            candidates.extend(public_candidates)
             candidates.extend(
                 self._local_search.search(
                     query,
@@ -615,6 +644,8 @@ class DestinationCandidateResolver:
                 update={
                     "latitude": stop_match.latitude,
                     "longitude": stop_match.longitude,
+                    "fetchedAt": stop_match.fetched_at,
+                    "cacheHit": stop_match.cache_hit,
                     "source": FallbackSource.PUBLIC_API,
                 }
             )
@@ -679,6 +710,8 @@ class DestinationCandidateResolver:
                     latitude=match.latitude,
                     longitude=match.longitude,
                     stopId=match.service_id,
+                    fetchedAt=match.fetched_at,
+                    cacheHit=match.cache_hit,
                     source=FallbackSource.PUBLIC_API,
                 )
             )
@@ -710,6 +743,9 @@ class DestinationCandidateResolver:
         if public_matches:
             return [_nearby_from_public(match) for match in public_matches]
 
+        if live and getattr(self._stop_catalog, "requires_public_stops", False):
+            return []
+
         return _seed_stops_near(
             lat=candidate.latitude,
             lng=candidate.longitude,
@@ -740,6 +776,9 @@ class DestinationCandidateResolver:
                 matches = []
             if matches:
                 return [_nearby_from_public(match) for match in matches]
+
+        if live and getattr(self._stop_catalog, "requires_public_stops", False):
+            return []
 
         return _seed_stops_near(
             lat=origin_lat,
@@ -868,6 +907,8 @@ def _nearby_from_public(match: CheongjuBusStopMatch) -> NearbyStopCandidate:
         longitude=match.longitude,
         distanceMeters=round(match.distance_meters, 1) if match.distance_meters is not None else None,
         source=FallbackSource.PUBLIC_API,
+        fetchedAt=match.fetched_at,
+        cacheHit=match.cache_hit,
         directionHint=None,
         sideHint=None,
         visionRequiredForSideHint=False,

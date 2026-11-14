@@ -53,6 +53,8 @@ class NearbyStop(StrictApiModel):
     longitude: float
     distanceMeters: float = Field(ge=0)
     source: str = "PUBLIC_API"
+    fetchedAt: datetime | None = None
+    cacheHit: bool = False
 
 
 class NearbyStopsResponse(StrictApiModel):

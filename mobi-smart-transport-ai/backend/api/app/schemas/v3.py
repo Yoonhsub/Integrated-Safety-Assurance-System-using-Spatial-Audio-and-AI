@@ -230,6 +230,8 @@ class NearbyStopCandidate(StrictApiModel):
     longitude: float
     distanceMeters: float | None = Field(default=None, ge=0)
     source: FallbackSource = FallbackSource.MOCK
+    fetchedAt: datetime | None = None
+    cacheHit: bool = False
     directionHint: str | None = None
     sideHint: str | None = None
     visionRequiredForSideHint: bool = False
@@ -245,6 +247,8 @@ class DestinationCandidate(StrictApiModel):
     address: str | None = None
     stopId: str | None = None
     source: FallbackSource = FallbackSource.MOCK
+    fetchedAt: datetime | None = None
+    cacheHit: bool = False
 
 
 class DestinationResolveResponse(StrictApiModel):

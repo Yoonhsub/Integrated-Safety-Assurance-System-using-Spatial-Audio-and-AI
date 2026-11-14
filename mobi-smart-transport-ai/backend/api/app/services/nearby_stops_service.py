@@ -10,9 +10,9 @@ import re
 
 from app.schemas.v3 import FallbackSource, utc_now
 from app.schemas.v3_map import GeoPoint, NearbyStop, NearbyStopsResponse
-from app.services.cheongju_bus_stops_service import CheongjuBusStopsService
+from app.services.cheongju_bus_stops_service import get_shared_bus_stops_service
 
-_service = CheongjuBusStopsService()
+_service = get_shared_bus_stops_service()
 
 
 def find_named_stop(
@@ -47,6 +47,8 @@ def find_named_stop(
         longitude=match.longitude,
         distanceMeters=round(match.distance_meters or 0.0, 1),
         source="PUBLIC_API",
+        fetchedAt=match.fetched_at,
+        cacheHit=match.cache_hit,
     )
 
 
@@ -87,10 +89,12 @@ def find_nearby_stops(
                     longitude=match.longitude,
                     distanceMeters=round(match.distance_meters or 0.0, 1),
                     source="PUBLIC_API",
+                    fetchedAt=match.fetched_at,
+                    cacheHit=match.cache_hit,
                 )
             )
         if not stops:
-            fallback = FallbackSource.CACHE
+            fallback = FallbackSource.PUBLIC_API if getattr(_service, "requires_public_stops", False) and _service._is_enabled() else FallbackSource.ERROR
     except Exception:
         fallback = FallbackSource.ERROR
         stops = []
