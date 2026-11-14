@@ -63,7 +63,75 @@ def test_route_stop_sequence_cache_loads_all_live_direction_variants() -> None:
     sequences = cache.sequences(live=True, route_nos=["502"])
 
     assert {sequence.route_id for sequence in sequences} == {"route-west", "route-east"}
+    assert {sequence.source for sequence in sequences} == {FallbackSource.PUBLIC_API}
     assert cache.route_ids_for_route_no("502") == {"route-west", "route-east"}
+    cached_sequences = cache.sequences(live=True, route_nos=["502"])
+    assert {sequence.source for sequence in cached_sequences} == {FallbackSource.CACHE}
+
+
+def test_live_route_sequence_lookup_never_falls_back_to_mock_sequences() -> None:
+    cache = RouteStopSequenceCache(
+        route_service=type("EmptyRouteService", (), {"resolve_route_ids": lambda self, city, route: []})(),
+        mock_sequences=[
+            RouteSequence("mock-route-502", "502", (RouteStopNode("mock-a", "A", 1),))
+        ],
+    )
+
+    assert cache.sequences(live=True, route_nos=["502"]) == []
+    assert cache.live_load_status(["502"]) == "EMPTY"
+    assert [sequence.route_id for sequence in cache.sequences(live=False)] == ["mock-route-502"]
+
+
+def test_live_route_sequence_lookup_retries_after_provider_resolution_error() -> None:
+    class FlakyRouteService:
+        attempts = 0
+
+        def resolve_route_ids(self, city_code: str, route_no: str) -> list[str]:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("temporary provider error")
+            return ["route-502"]
+
+        def get_route_stops(self, city_code: str, route_id: str) -> NormalizedBusRouteStopsResponse:
+            return NormalizedBusRouteStopsResponse(
+                routeId=route_id,
+                nodes=[NormalizedBusRouteNode(nodeId="node-1", nodeNm="Stop 1", nodeOrd=1)],
+            )
+
+    service = FlakyRouteService()
+    cache = RouteStopSequenceCache(route_service=service)
+
+    assert cache.sequences(live=True, route_nos=["502"]) == []
+    assert cache.live_load_status(["502"]) == "ERROR"
+    sequences = cache.sequences(live=True, route_nos=["502"])
+
+    assert [sequence.route_id for sequence in sequences] == ["route-502"]
+    assert cache.live_load_status(["502"]) == "PUBLIC_API"
+
+
+def test_live_route_sequence_lookup_retries_after_route_stops_error() -> None:
+    class FlakyRouteService:
+        attempts = 0
+
+        def resolve_route_ids(self, city_code: str, route_no: str) -> list[str]:
+            return ["route-502"]
+
+        def get_route_stops(self, city_code: str, route_id: str) -> NormalizedBusRouteStopsResponse:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("temporary provider error")
+            return NormalizedBusRouteStopsResponse(
+                routeId=route_id,
+                nodes=[NormalizedBusRouteNode(nodeId="node-1", nodeNm="Stop 1", nodeOrd=1)],
+            )
+
+    service = FlakyRouteService()
+    cache = RouteStopSequenceCache(route_service=service)
+
+    assert cache.sequences(live=True, route_nos=["502"]) == []
+    assert cache.live_load_status(["502"]) == "ERROR"
+    assert [sequence.route_id for sequence in cache.sequences(live=True, route_nos=["502"])] == ["route-502"]
+    assert service.attempts == 2
 
 
 def test_route_plan_post_accepts_json_request_and_exposes_ready_readiness() -> None:

@@ -841,3 +841,13 @@ backend/api/tests/test_gemini_safe_diagnostics.py
 apps/passenger_app/lib/src/features/hardware_bus/concurrent_hardware_entry.dart
 apps/passenger_app/lib/src/features/hardware_bus/unsupported_concurrent_hardware_test_page.dart
 apps/passenger_app/test/unsupported_concurrent_hardware_test.dart
+apps/passenger_app/lib/src/pages/tago_diagnostics_page.dart
+apps/passenger_app/lib/src/services/tago_diagnostics_client.dart
+apps/passenger_app/test/tago_diagnostics_client_test.dart
+apps/passenger_app/test/tago_diagnostics_page_test.dart
+backend/api/app/api/routes/tago_diagnostics.py
+backend/api/app/schemas/tago_diagnostics.py
+backend/api/app/services/tago_diagnostics_service.py
+backend/api/tests/test_gemini_completion_and_provider.py
+backend/api/tests/test_tago_diagnostics.py
+docs/rw/TAGO_DIAGNOSTICS.md

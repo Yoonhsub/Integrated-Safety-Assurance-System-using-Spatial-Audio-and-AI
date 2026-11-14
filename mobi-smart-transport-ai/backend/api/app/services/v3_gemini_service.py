@@ -29,11 +29,20 @@ _nlu_provider: contextvars.ContextVar[str] = contextvars.ContextVar("nlu_provide
 _last_nlu_provider: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "last_nlu_provider", default=None
 )
+_last_nlu_model: contextvars.ContextVar[str | None] = contextvars.ContextVar("last_nlu_model", default=None)
+_last_nlu_finish_reason: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "last_nlu_finish_reason", default=None
+)
 
 
 def get_last_nlu_provider() -> str | None:
     """Return the provider that supplied the most recent successful NLU result."""
     return _last_nlu_provider.get()
+
+
+def get_last_nlu_model() -> str | None:
+    """Return the model that supplied the most recent complete NLU result."""
+    return _last_nlu_model.get()
 
 
 def set_nlu_provider(provider: str | None) -> None:
@@ -310,6 +319,9 @@ def generate_route_plan_summary(
 ) -> tuple[str, str, list[dict[str, str]]] | None:
     """Use Pro to explain a location-aware choice without inventing transit data."""
 
+    _last_nlu_provider.set(None)
+    _last_nlu_model.set(None)
+    _last_nlu_finish_reason.set(None)
     model = _model_from_env("GEMINI_PRO_MODEL", _DEFAULT_PRO_MODEL)
     candidates = "\n".join(f"- {candidate}" for candidate in validated_candidates)
     arrivals = "\n".join(f"- {arrival}" for arrival in arrival_context) or "- 조회된 도착 정보 없음"
@@ -386,12 +398,9 @@ def generate_route_plan_summary(
     summary = _without_vision_claims(summary)
     if not summary:
         return None
-    if used_websearch:
-        result_model = os.getenv("OPENAI_GROUNDING_MODEL", _DEFAULT_OPENAI_GROUNDING_MODEL)
-    elif provider == "openai":
-        result_model = os.getenv("OPENAI_NLU_MODEL", _DEFAULT_OPENAI_NLU_MODEL)
-    else:
-        result_model = model
+    result_model = get_last_nlu_model()
+    if result_model is None:
+        return None
     return result_model, summary, maps_sources
 
 
@@ -445,7 +454,9 @@ def generate_route_plan_reply(
         timeout_seconds=6.0,
         history=history,
     )
-    if not reply:
+    if not reply and _last_nlu_finish_reason.get() not in {
+        "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"
+    }:
         flash_model = _model_from_env("GEMINI_FLASH_MODEL", _DEFAULT_FLASH_MODEL)
         if flash_model != model:
             reply = _generate(
@@ -863,6 +874,8 @@ def _generate(
 ) -> str | None:
     provider = _nlu_provider.get()
     _last_nlu_provider.set(None)
+    _last_nlu_model.set(None)
+    _last_nlu_finish_reason.set(None)
     if provider != "openai":
         payload = _generate_payload(
             model=model,
@@ -876,7 +889,12 @@ def _generate(
         text = _extract_text(payload) if payload else None
         if text is not None:
             _last_nlu_provider.set("gemini")
+            _last_nlu_model.set(model)
             return text
+        if _last_nlu_finish_reason.get() in {
+            "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"
+        }:
+            return None
         if provider == "gemini":
             return None
     # provider == "openai"(강제) 또는 "auto"에서 Gemini 실패 → OpenAI NLU 폴백.
@@ -888,6 +906,7 @@ def _generate(
     )
     if text is not None:
         _last_nlu_provider.set("openai")
+        _last_nlu_model.set(_model_from_env("OPENAI_NLU_MODEL", _DEFAULT_OPENAI_NLU_MODEL))
     return text
 
 
@@ -947,14 +966,17 @@ def _openai_generate(
     choices = decoded.get("choices")
     if not isinstance(choices, list) or not choices:
         return None
-    message = choices[0].get("message")
+    choice = choices[0]
+    if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
+        return None
+    message = choice.get("message")
     if not isinstance(message, dict):
         return None
     content = message.get("content")
     if not isinstance(content, str):
         return None
     content = content.strip()
-    return content[:_MAX_REPLY_LENGTH] if content else None
+    return content if content and len(content) <= _MAX_REPLY_LENGTH else None
 
 
 def _openai_websearch_grounding(
@@ -1125,7 +1147,24 @@ def _extract_text(payload: dict) -> str | None:
     if not isinstance(candidates, list) or not candidates:
         return None
 
-    content = candidates[0].get("content")
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        return None
+    finish_reason = candidate.get("finishReason")
+    _last_nlu_finish_reason.set(finish_reason if isinstance(finish_reason, str) else None)
+    if finish_reason in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}:
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=response_refused finish_reason=%s", finish_reason
+        )
+        return None
+    if finish_reason != "STOP":
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=response_incomplete finish_reason=%s",
+            "MAX_TOKENS" if finish_reason == "MAX_TOKENS" else "UNKNOWN_OR_MISSING",
+        )
+        return None
+
+    content = candidate.get("content")
     if not isinstance(content, dict):
         return None
 
@@ -1136,7 +1175,12 @@ def _extract_text(payload: dict) -> str | None:
     text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
     if not text:
         return None
-    return text[:_MAX_REPLY_LENGTH]
+    if len(text) > _MAX_REPLY_LENGTH:
+        _gemini_diagnostic_logger.warning(
+            "gemini_diagnostic category=response_overlength chars=%d", len(text)
+        )
+        return None
+    return text
 
 
 def _extract_pcm(payload: dict) -> bytes | None:

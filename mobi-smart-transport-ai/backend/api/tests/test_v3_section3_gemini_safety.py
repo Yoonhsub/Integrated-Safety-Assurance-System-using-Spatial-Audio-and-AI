@@ -352,7 +352,7 @@ class _OpenAIChatResponse:
         return None
 
     def json(self) -> dict:
-        return {"choices": [{"message": {"content": self._content}}]}
+        return {"choices": [{"finish_reason": "stop", "message": {"content": self._content}}]}
 
 
 def test_generate_nlu_openai_provider_uses_chat_completions(monkeypatch):

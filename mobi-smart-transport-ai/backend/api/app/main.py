@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import (
+    tago_diagnostics,
     ai_vision_events,
     vision_v2,
     bus_info_gateway,
@@ -141,6 +142,7 @@ app.include_router(firebase_admin.router, prefix="/firebase", tags=["firebase-ad
 app.include_router(v3_guidance.router, prefix="/guidance", tags=["v3-guidance"])
 app.include_router(v3_agent.router, prefix="/agent", tags=["v3-agent"])
 app.include_router(v3_bus.router, prefix="/bus", tags=["v3-bus"])
+app.include_router(tago_diagnostics.router, prefix="/diagnostics/tago", tags=["tago-diagnostics"])
 app.include_router(v3_beacon.router, prefix="/beacon", tags=["v3-beacon"])
 app.include_router(v3_beacon_ingest.router, prefix="/api/v3/beacon", tags=["v3-beacon-ingest"])
 app.include_router(v3_mock.router, prefix="/mock", tags=["v3-mock"])

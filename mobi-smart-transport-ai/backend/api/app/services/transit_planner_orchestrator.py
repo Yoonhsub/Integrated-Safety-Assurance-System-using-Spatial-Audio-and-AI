@@ -100,8 +100,9 @@ class TransitPlannerOrchestrator:
             origin_lat=origin_lat,
             origin_lng=origin_lng,
             live=live,
-            # ODsay already supplies the live route candidates. Loading every
-            # configured TAGO route before that search adds tens of seconds.
+            # ODsay is the primary route provider when enabled. Avoid loading
+            # every TAGO route unless we actually need a local fallback; live
+            # fallback calls below still prohibit demo sequences.
             use_live_sequences=live and not use_odsay,
         )
         if not use_odsay:
@@ -114,7 +115,13 @@ class TransitPlannerOrchestrator:
             or local_response.destination.topCandidate.latitude is None
             or local_response.destination.topCandidate.longitude is None
         ):
-            return local_response
+            return self._local_planner.plan(
+                heard_text=heard_text,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+                live=live,
+                use_live_sequences=live,
+            )
 
         destination = local_response.destination.topCandidate
         try:
@@ -131,13 +138,16 @@ class TransitPlannerOrchestrator:
                 live=live,
             )
         except OdsayUnavailableError as exc:
-            return _local_fallback_response(local_response, warning="ODsay unavailable; local planner fallback used", error=exc)
+            fallback = self._live_local_fallback(heard_text, origin_lat, origin_lng, live=live)
+            return _local_fallback_response(fallback, warning="ODsay unavailable; local planner fallback used", error=exc)
         except Exception as exc:
-            return _local_fallback_response(local_response, warning="ODsay unavailable; local planner fallback used", error=exc)
+            fallback = self._live_local_fallback(heard_text, origin_lat, origin_lng, live=live)
+            return _local_fallback_response(fallback, warning="ODsay unavailable; local planner fallback used", error=exc)
 
         if not mapped:
+            fallback = self._live_local_fallback(heard_text, origin_lat, origin_lng, live=live)
             return _local_fallback_response(
-                local_response,
+                fallback,
                 warning="ODsay returned no usable bus candidates; local planner fallback used",
             )
 
@@ -179,6 +189,22 @@ class TransitPlannerOrchestrator:
     def _odsay_enabled(self) -> bool:
         enabled = getattr(self._odsay_client, "is_enabled", None)
         return bool(enabled()) if callable(enabled) else bool(getattr(self._odsay_client, "enabled", False))
+
+    def _live_local_fallback(
+        self,
+        heard_text: str,
+        origin_lat: float | None,
+        origin_lng: float | None,
+        *,
+        live: bool,
+    ) -> RoutePlanResponse:
+        return self._local_planner.plan(
+            heard_text=heard_text,
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+            live=live,
+            use_live_sequences=live,
+        )
 
     def _enrich_with_deadline(
         self,
@@ -235,7 +261,7 @@ def _local_fallback_response(
     return response.model_copy(
         update={
             "warnings": _dedupe([*response.warnings, warning]),
-            "rawProviderEvidence": evidence,
+            "rawProviderEvidence": {**response.rawProviderEvidence, **evidence},
         }
     )
 
