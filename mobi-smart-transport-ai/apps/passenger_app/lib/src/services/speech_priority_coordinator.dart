@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'speech_engine.dart';
 export 'speech_engine.dart';
@@ -18,7 +19,8 @@ class FlutterSpeechEngine implements SpeechEngine {
     this.diagnostic,
     bool Function()? browserActive,
     void Function()? browserCancel,
-  })  : _tts = tts ?? FlutterTts(),
+  })  : _ownsPlatformChannel = tts == null,
+        _tts = tts ?? FlutterTts(),
         _web = webPlatform ?? kIsWeb,
         _browserActive = browserActive ?? browserSpeechStillActive,
         _browserCancel = browserCancel ?? cancelBrowserSpeech {
@@ -38,6 +40,35 @@ class FlutterSpeechEngine implements SpeechEngine {
       }
     });
   }
+  // flutter_tts installs one process-wide callback handler. A page-local
+  // instance must reclaim it on use, and retired pages must not stop its owner.
+  static FlutterSpeechEngine? _platformOwner;
+  static Future<void> _handoff = Future<void>.value();
+  final bool _ownsPlatformChannel;
+  bool get _managedNative => !_web && _ownsPlatformChannel;
+  void _bindPlatformCallbacks() {
+    const MethodChannel('flutter_tts')
+        .setMethodCallHandler(_tts.platformCallHandler);
+  }
+
+  Future<void> _claimPlatform() {
+    if (!_managedNative) return Future<void>.value();
+    final next = _handoff.then((_) async {
+      final previous = _platformOwner;
+      if (previous != null && !identical(previous, this)) {
+        if (previous._unavailable) {
+          throw StateError('이전 음성 종료를 확인할 수 없습니다');
+        }
+        previous._bindPlatformCallbacks();
+        await previous.stop(); // Keep the old callback until stop is confirmed.
+      }
+      _platformOwner = this;
+      _bindPlatformCallbacks();
+    });
+    _handoff = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return next;
+  }
+
   final FlutterTts _tts;
   final bool requireOfflineKoreanVoice, requestNativeFocus;
   final void Function(String)? diagnostic;
@@ -96,6 +127,7 @@ class FlutterSpeechEngine implements SpeechEngine {
     _report('TTS_INITIALIZING');
     try {
       if (_unavailable) throw StateError('TTS 종료 확인 실패: 앱을 다시 열어 주세요');
+      await _claimPlatform();
       Map<String, String>? pinnedVoice;
       if (requireKoreanVoice || requireOfflineKoreanVoice) {
         final voices = await _tts.getVoices;
@@ -154,6 +186,12 @@ class FlutterSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> speak(String text) {
+    if (_managedNative) {
+      if (!identical(_platformOwner, this)) {
+        return Future<void>.error(StateError('음성 출력 소유권을 먼저 준비해 주세요'));
+      }
+      _bindPlatformCallbacks();
+    }
     final pending = _completion = Completer<void>();
     unawaited(_tts.speak(text, focus: requestNativeFocus).then((result) {
       if (result == 0 || (!_web && result == null)) {
@@ -169,6 +207,8 @@ class FlutterSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> stop() async {
+    if (_managedNative && !identical(_platformOwner, this)) return;
+    if (_managedNative) _bindPlatformCallbacks();
     _report('TTS_STOP_REQUEST');
     _completionTimer?.cancel();
     final pending = _completion;

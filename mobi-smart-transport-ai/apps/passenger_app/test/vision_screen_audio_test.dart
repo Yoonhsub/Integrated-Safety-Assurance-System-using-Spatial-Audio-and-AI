@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:mobi_passenger_app/src/local_vision/native_local_vision_page.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +33,36 @@ LocalObservation detection(int ticks,
     LocalObservation(camera.frame(ticks), Uint8List(0),
         boxes ?? [LocalBox('bus', confidence, x, .2, .2, .3)], 2, 2, 1, 2);
 void main() {
+  testWidgets('live camera remains mounted when inference expires or returns',
+      (tester) async {
+    var created = 0, disposed = 0;
+    Widget view(bool fresh) => MaterialApp(
+            home: Scaffold(
+                body: CameraObservationSurface(
+          livePreview: _PreviewLifetime(
+              onCreate: () => created++, onDispose: () => disposed++),
+          snapshot: fresh ? const Text('fresh detection snapshot') : null,
+        )));
+    await tester.pumpWidget(view(true));
+    final before =
+        tester.getRect(find.byKey(const ValueKey('live-camera-surface')));
+    await tester.tap(find.text('인식 프레임 확인'));
+    await tester.pumpAndSettle();
+    expect(find.text('fresh detection snapshot'), findsOneWidget);
+    await tester.pumpWidget(view(false));
+    await tester.pumpAndSettle();
+    expect(find.text('fresh detection snapshot'), findsNothing);
+    expect(find.text('live video'), findsOneWidget);
+    expect(tester.getRect(find.byKey(const ValueKey('live-camera-surface'))),
+        before);
+    expect(created, 1);
+    expect(disposed, 0);
+    await tester.pumpWidget(view(true));
+    expect(created, 1);
+    await tester.pumpWidget(const SizedBox());
+    expect(disposed, 1);
+  });
+
   Future<void> flush(WidgetTester t) async {
     for (var i = 0; i < 20; i++) {
       await t.pump();
@@ -856,4 +887,28 @@ void main() {
       priority.dispose();
     });
   }
+}
+
+class _PreviewLifetime extends StatefulWidget {
+  const _PreviewLifetime({required this.onCreate, required this.onDispose});
+  final VoidCallback onCreate, onDispose;
+  @override
+  State<_PreviewLifetime> createState() => _PreviewLifetimeState();
+}
+
+class _PreviewLifetimeState extends State<_PreviewLifetime> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onCreate();
+  }
+
+  @override
+  void dispose() {
+    widget.onDispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const Text('live video');
 }
