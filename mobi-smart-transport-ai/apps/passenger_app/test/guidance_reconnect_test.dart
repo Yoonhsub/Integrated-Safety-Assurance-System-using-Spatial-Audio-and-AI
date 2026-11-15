@@ -59,6 +59,7 @@ class RecoveringClient extends V3AgentApiClient {
                     }),
                     200))));
   int starts = 0, reads = 0;
+  bool expired = false;
   @override
   Future<V3HealthStatus> fetchHealth() async =>
       const V3HealthStatus(isAvailable: true, message: 'local test');
@@ -74,6 +75,7 @@ class RecoveringClient extends V3AgentApiClient {
   Future<V3GuidanceState> fetchState({required String sessionId}) async {
     reads++;
     expect(sessionId, 'recovered');
+    if (expired) throw const V3ApiException('session expired', statusCode: 404);
     return V3GuidanceState.fromJson({'sessionId': sessionId, 'state': 'IDLE'});
   }
 }
@@ -146,6 +148,15 @@ void main() {
     await tester.tapAt(tester.getCenter(find.byTooltip('상태 새로고침')));
     await tester.pump();
     expect(client.reads, 1);
+    client.expired = true;
+    await tester.tapAt(tester.getCenter(find.byTooltip('상태 새로고침')));
+    await tester.pump();
+    await tester.tapAt(tester.getCenter(find.byTooltip('상태 새로고침')));
+    for (var i = 0; i < 5; i++) { await tester.pump(); }
+    expect(client.reads, 2);
+    expect(client.starts, 2); // Expiry must not silently create a session.
+    expect(find.byTooltip('서버 다시 연결'), findsOneWidget);
+    client.expired = false;
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
     // Vision uses the same authenticated transport contract without route UI.

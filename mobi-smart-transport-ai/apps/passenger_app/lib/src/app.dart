@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'services/shared_guidance_session.dart';
 import 'widgets/app_navigation.dart';
 import 'package:flutter/foundation.dart';
 import 'pages/passenger_presentation.dart';
@@ -39,6 +41,8 @@ class MobiApp extends StatefulWidget {
 
 class _MobiAppState extends State<MobiApp> {
   final _navigation = AppNavigationObserver();
+  final _guidanceSession = SharedGuidanceSession();
+  StreamSubscription<dynamic>? _guidanceAuthSubscription;
   final AgentNameStore _agentNameStore = AgentNameStore();
   String? _agentName;
   bool _isLoadingAgentName = true;
@@ -53,6 +57,7 @@ class _MobiAppState extends State<MobiApp> {
     super.initState();
     _firebaseReady = widget.firebaseConfigured;
     _firebasePreparing = widget.firebaseInitialization != null;
+    _observeGuidanceAuth();
     final initialization = widget.firebaseInitialization;
     if (initialization != null) {
       initialization.then(
@@ -60,6 +65,7 @@ class _MobiAppState extends State<MobiApp> {
           if (mounted) {
             setState(() {
               _firebaseReady = ready;
+              _observeGuidanceAuth();
               _firebasePreparing = false;
             });
           }
@@ -74,6 +80,26 @@ class _MobiAppState extends State<MobiApp> {
     } else {
       _loadAgentName();
     }
+  }
+
+  void _observeGuidanceAuth() {
+    if (_guidanceAuthSubscription != null ||
+        (!_firebaseReady && widget.authSession == null)) {
+      return;
+    }
+    final auth = widget.authSession ?? FirebaseAuthSession.instance;
+    var owner = auth.currentAccount?.uid;
+    _guidanceAuthSubscription = auth.authStateChanges.listen((account) {
+      if (account == null || account.uid != owner) _guidanceSession.clear();
+      owner = account?.uid;
+    }, onError: (Object _) => _guidanceSession.clear());
+  }
+
+  @override
+  void dispose() {
+    _guidanceAuthSubscription?.cancel();
+    _guidanceSession.clear();
+    super.dispose();
   }
 
   Future<void> _loadAgentName() async {
@@ -123,6 +149,7 @@ class _MobiAppState extends State<MobiApp> {
     setState(() => _signingOut = true);
     try {
       await (widget.authSession ?? FirebaseAuthSession.instance).signOut();
+      _guidanceSession.clear();
     } catch (_) {
       if (messenger.mounted) {
         messenger.showSnackBar(
@@ -157,6 +184,7 @@ class _MobiAppState extends State<MobiApp> {
       home = AgentNameSetupPage(onSaved: _saveAgentName);
     } else if (dataMode == 'live') {
       home = V3GuidancePage(
+        sharedSession: _guidanceSession,
         agentName: agentName,
         onReturnToModeSelection: _resetToModeSelection,
         dataMode: dataMode,
@@ -244,6 +272,7 @@ class _MobiAppState extends State<MobiApp> {
               session: widget.authSession,
               appLabel: 'MOBI 장애물 탐지',
               builder: (context, account) => V3GuidancePage(
+                sharedSession: _guidanceSession,
                 agentName: agentName ?? '모비',
                 onReturnToModeSelection: _resetToModeSelection,
                 dataMode: 'live',
@@ -272,6 +301,7 @@ class _MobiAppState extends State<MobiApp> {
               session: widget.authSession,
               appLabel: 'MOBI 승객 앱',
               builder: (context, account) => V3GuidancePage(
+                sharedSession: _guidanceSession,
                 agentName: agentName ?? '모비',
                 onReturnToModeSelection: _resetToModeSelection,
                 dataMode: dataMode ?? 'mock',

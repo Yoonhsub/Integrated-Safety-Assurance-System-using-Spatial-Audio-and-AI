@@ -359,6 +359,17 @@ class V3AgentApiClient {
     return result;
   }
 
+  /// Reuse Guidance identity, but obtain current Vision authority independently.
+  Future<V3GuidanceState> resumeSession({required String sessionId}) async {
+    if (_normalUsesLease) await prepareVisionLease();
+    final state = await fetchState(sessionId: sessionId);
+    if (state.sessionId != sessionId) {
+      throw const V3ApiException('Guidance session mismatch', statusCode: 410);
+    }
+    if (_normalUsesLease) await _bindVisionSession(sessionId);
+    return state;
+  }
+
   Future<V3GuidanceState> fetchState({required String sessionId}) async {
     final json = await _getJson('/guidance/state', <String, String>{
       'sessionId': sessionId,
