@@ -29,9 +29,22 @@ class SharedGuidanceSession {
 
   void save(int generation, V3GuidanceState? value, V3RoutePlanResponse? plan) {
     if (!current(generation)) return;
+    final changed = selectionChanged(state, value);
+    routePlan = changed && identical(plan, routePlan) ? null : plan;
     state = value;
-    routePlan = plan;
   }
+
+  static bool selectionChanged(
+          V3GuidanceState? previous, V3GuidanceState? next) =>
+      previous != null &&
+      (next == null ||
+          previous.sessionId != next.sessionId ||
+          previous.selectedRouteId != next.selectedRouteId ||
+          previous.selectedStopId != next.selectedStopId ||
+          previous.selectedDestination != next.selectedDestination);
+
+  static bool isTerminalError(V3ApiException error) =>
+      {401, 403, 404, 410}.contains(error.statusCode);
 
   Future<V3GuidanceState> open({
     required Future<V3GuidanceState> Function() create,
@@ -59,17 +72,13 @@ class SharedGuidanceSession {
         clear();
         throw StateError('Guidance session mismatch');
       }
-      if (previous != null &&
-          (previous.selectedRouteId != result.selectedRouteId ||
-           previous.selectedStopId != result.selectedStopId ||
-           previous.selectedDestination != result.selectedDestination)) {
+      if (selectionChanged(previous, result)) {
         routePlan = null;
       }
       state = result;
       return result;
     } on V3ApiException catch (error) {
-      if (current(generation) &&
-          {401, 403, 404, 410}.contains(error.statusCode)) {
+      if (current(generation) && isTerminalError(error)) {
         clear();
       }
       rethrow; // Never silently create a replacement for an expired session.

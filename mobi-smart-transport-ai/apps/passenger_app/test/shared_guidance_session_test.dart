@@ -13,14 +13,77 @@ V3GuidanceState state([String id = 'session-a']) => V3GuidanceState.fromJson({
       'selectedRouteNo': '105',
     });
 void main() {
+  for (final field in [
+    'selectedRouteId',
+    'selectedStopId',
+    'selectedDestination',
+    'sessionId'
+  ]) {
+    test('save discards prior plan when $field changes, including reopen',
+        () async {
+      final store = SharedGuidanceSession()..bind('user');
+      final plan = V3RoutePlanResponse.fromJson({'status': 'OK'});
+      store.save(store.generation, state(), plan);
+      final updated = V3GuidanceState.fromJson({
+        'sessionId': 'session-a',
+        'state': 'WAITING_FOR_BUS',
+        'selectedRouteId': 'route-105',
+        'selectedStopId': 'stop-a',
+        field: 'changed',
+      });
+      store.save(store.generation, updated, plan);
+      expect(store.routePlan, isNull);
+      await store.open(
+          create: () async => fail('no replacement'),
+          fetch: (_) async => updated);
+      expect(store.routePlan, isNull);
+    });
+  }
+  test('cleared selection discards plan; new recommendation remains accepted',
+      () {
+    final store = SharedGuidanceSession()..bind('user');
+    final old = V3RoutePlanResponse.fromJson({'status': 'OK'});
+    store.save(store.generation, state(), old);
+    final cleared =
+        V3GuidanceState.fromJson({'sessionId': 'session-a', 'state': 'IDLE'});
+    store.save(store.generation, cleared, old);
+    expect(store.routePlan, isNull);
+    final fresh = V3RoutePlanResponse.fromJson({'status': 'OK'});
+    store.save(store.generation, cleared, fresh);
+    expect(store.routePlan, same(fresh));
+  });
+  test('unchanged selection retains recommendation', () {
+    final store = SharedGuidanceSession()..bind('user');
+    final plan = V3RoutePlanResponse.fromJson({'status': 'OK'});
+    store.save(store.generation, state(), plan);
+    store.save(store.generation, state(), plan);
+    expect(store.routePlan, same(plan));
+  });
+  test('chat and voice terminal error policy excludes transient failures', () {
+    for (final code in [401, 403, 404, 410]) {
+      expect(
+          SharedGuidanceSession.isTerminalError(
+              V3ApiException('error', statusCode: code)),
+          true);
+    }
+    for (final code in [null, 429, 500, 503]) {
+      expect(
+          SharedGuidanceSession.isTerminalError(
+              V3ApiException('error', statusCode: code)),
+          false);
+    }
+  });
   for (final leased in [false, true]) {
     test('resume uses existing server session, leased=$leased', () async {
       final transport = wire.LeaseTestTransport();
-      final api = wire.leaseClient(wire.LeaseTestLogin(), transport, enabled: leased);
+      final api =
+          wire.leaseClient(wire.LeaseTestLogin(), transport, enabled: leased);
       final resumed = await api.resumeSession(sessionId: 's');
       expect(resumed.sessionId, 's');
-      expect(transport.requests.any((r) => r.url.path == '/guidance/state'), true);
-      expect(transport.requests.any((r) => r.url.path == '/guidance/session'), false);
+      expect(
+          transport.requests.any((r) => r.url.path == '/guidance/state'), true);
+      expect(transport.requests.any((r) => r.url.path == '/guidance/session'),
+          false);
       expect(transport.issues, leased ? 1 : 0);
       if (leased) expect(api.visionSessionReady('s'), true);
     });
@@ -30,7 +93,11 @@ void main() {
     final store = SharedGuidanceSession()..bind('user');
     final pending = Completer<V3GuidanceState>();
     var creates = 0;
-    Future<V3GuidanceState> create() { creates++; return pending.future; }
+    Future<V3GuidanceState> create() {
+      creates++;
+      return pending.future;
+    }
+
     final first = store.open(create: create, fetch: (_) async => state());
     final second = store.open(create: create, fetch: (_) async => state());
     pending.complete(state());
@@ -43,8 +110,10 @@ void main() {
     store.save(store.generation, state(), plan);
     await store.open(create: () async => state(), fetch: (_) async => state());
     expect(store.routePlan, same(plan));
-    await store.open(create: () async => state(), fetch: (_) async =>
-      V3GuidanceState.fromJson({'sessionId': 'session-a', 'state': 'IDLE'}));
+    await store.open(
+        create: () async => state(),
+        fetch: (_) async => V3GuidanceState.fromJson(
+            {'sessionId': 'session-a', 'state': 'IDLE'}));
     expect(store.routePlan, isNull);
   });
   test('home and vision reuse same session; server state is refreshed',

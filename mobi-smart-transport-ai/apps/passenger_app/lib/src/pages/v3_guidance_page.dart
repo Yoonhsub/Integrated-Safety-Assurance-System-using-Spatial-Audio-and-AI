@@ -137,6 +137,11 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   int? _sharedGeneration;
   V3GuidanceState? get _sessionState => _storedSessionState;
   set _sessionState(V3GuidanceState? value) {
+    if (SharedGuidanceSession.selectionChanged(_storedSessionState, value)) {
+      _storedRoutePlan = null;
+      _lastArrivals = null;
+      _lastRouteRecommendation = null;
+    }
     _storedSessionState = value;
     _saveSharedSession();
   }
@@ -444,6 +449,25 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     });
   }
 
+  Future<void> _handleSessionError(V3ApiException error) async {
+    if (!SharedGuidanceSession.isTerminalError(error) && _sharedSessionCurrent) {
+      return;
+    }
+    // Do not clear a newer owner's store on a late response.
+    if (_sharedSessionCurrent) widget.sharedSession?.clear();
+    _client.invalidateVisionSession(_sessionId);
+    _sessionId = '';
+    _storedSessionState = null;
+    _storedRoutePlan = null;
+    _lastArrivals = null;
+    _lastRouteRecommendation = null;
+    _liveStatus = null;
+    _liveRoutePanelVisible = false;
+    _liveRouteTimer?.cancel();
+    _betterRouteTimer?.cancel();
+    await _stopAllCueAudio();
+  }
+
   Future<void> _runGuarded(Future<void> Function() action) async {
     if (_isBusy) return;
     setState(() {
@@ -454,19 +478,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     try {
       await action();
     } on V3ApiException catch (error) {
-      if ({401, 403, 410}.contains(error.statusCode) ||
-          (widget.sharedSession != null &&
-              _sharedGeneration != null &&
-              !widget.sharedSession!.current(_sharedGeneration!))) {
-        widget.sharedSession?.clear();
-        _client.invalidateVisionSession(_sessionId);
-        _sessionId = '';
-        _storedSessionState = null;
-        _storedRoutePlan = null;
-        _liveRouteTimer?.cancel();
-        _betterRouteTimer?.cancel();
-        await _stopAllCueAudio();
-      }
+      await _handleSessionError(error);
       if (!mounted) return;
       setState(() {
         _errorMessage = error.toString();
@@ -487,13 +499,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   }
 
   Future<void> _refreshState() async {
-    final V3GuidanceState state;
-    try {
-      state = await _client.fetchState(sessionId: _sessionId);
-    } on V3ApiException catch (error) {
-      if (error.statusCode == 404) widget.sharedSession?.clear();
-      rethrow;
-    }
+    final state = await _client.fetchState(sessionId: _sessionId);
     setState(() {
       _sessionState = state;
     });
@@ -667,6 +673,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
       }
       return LiveProcessResult(spokenText: response.message);
     } on V3ApiException catch (error) {
+      await _handleSessionError(error);
       return LiveProcessResult(spokenText: error.toString());
     } catch (_) {
       return const LiveProcessResult(
