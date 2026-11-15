@@ -155,6 +155,8 @@ def classify_intent(
         "- complexity: 실시간 공공 버스데이터(노선 탐색/도착시간/지금 탈 수 있는지/버스 위치)가 "
         ' 필요하면 "COMPLEX", 인사·감사·잡담·단순 확인이면 "GENERAL"\n'
         "- destination: 발화에 목적지가 있으면 사용자가 말한 장소명/주소/정류장명 원문을 짧게 추출하고, 없으면 null\n"
+        "- routeNo: 사용자가 직접 말한 버스 노선번호(예: \"823\", \"B3\", \"502-1\")만 문자열로 추출하고, 없으면 null. "
+        "노선의 존재나 운행 정보를 추측하지 마. 노선번호의 정보 질문은 FIND_ROUTE로 분류해.\n"
         f"참고용으로 이미 안정화된 목적지 이름은 다음과 같아 — {', '.join(known_destinations)}\n"
         "의도 가이드: 길/노선/몇번/가는법=FIND_ROUTE, 언제·몇분 뒤=QUERY_ARRIVAL, "
         "지금 이 버스 타도 되냐=ASK_CAN_BOARD_CURRENT_BUS, 놓쳤다·못 탔다=REPORT_MISSED_BUS, "
@@ -257,7 +259,11 @@ def _parse_classification(raw: str, known_destinations: tuple[str, ...]) -> dict
     else:
         destination = None
 
-    return {"intent": intent, "complexity": complexity, "destination": destination}
+    result = {"intent": intent, "complexity": complexity, "destination": destination}
+    route_no = data.get("routeNo")
+    if isinstance(route_no, str) and re.fullmatch(r"[A-Za-z]?[0-9]{1,4}(?:-[0-9]{1,3}|[A-Za-z])?", route_no.strip()):
+        result["routeNo"] = route_no.strip().upper()
+    return result
 
 
 def generate_optional_reply(

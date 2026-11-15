@@ -15,7 +15,7 @@ from app.schemas.v3 import (
     RoutePlanStatus,
     RoutePlanVerificationStatus,
 )
-from app.services.cheongju_route_planner import CheongjuRoutePlanner, _mock_route_sequences
+from app.services.cheongju_route_planner import CheongjuRoutePlanner, _mock_route_sequences, dynamic_route_discovery_enabled
 from app.services.destination_candidate_resolver import DestinationCandidateResolver
 from app.services.odsay_client import OdsayClient, OdsayUnavailableError
 from app.services.odsay_route_mapper import OdsayRouteMapper
@@ -93,6 +93,7 @@ class TransitPlannerOrchestrator:
         origin_lat: float | None = None,
         origin_lng: float | None = None,
         live: bool = False,
+        route_no: str | None = None,
     ) -> RoutePlanResponse:
         from app.services.vision_binding_service import vision_binding_service
         if live and vision_binding_service.has_camera_reservation():
@@ -104,7 +105,7 @@ class TransitPlannerOrchestrator:
                 status=RoutePlanStatus.NOT_FOUND, destination=destination.model_copy(update={"fallbackSource": FallbackSource.ERROR}),
                 heard_text=heard_text,
                 question="카메라 사용 중에는 새 경로 검색을 보류합니다. 카메라를 종료한 뒤 다시 검색해 주세요.")
-        use_odsay = live and self._odsay_enabled()
+        use_odsay = live and not dynamic_route_discovery_enabled() and self._odsay_enabled()
         local_response = self._local_planner.plan(
             heard_text=heard_text,
             origin_lat=origin_lat,
@@ -114,6 +115,7 @@ class TransitPlannerOrchestrator:
             # every TAGO route unless we actually need a local fallback; live
             # fallback calls below still prohibit demo sequences.
             use_live_sequences=live and not use_odsay,
+            **({"route_no": route_no} if route_no is not None else {}),
         )
         if not use_odsay:
             return local_response

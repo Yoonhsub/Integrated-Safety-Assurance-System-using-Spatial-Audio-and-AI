@@ -25,6 +25,27 @@ def _say(session_id: str, utterance: str, **extra):
     return client.post("/agent/converse", json=payload)
 
 
+def test_saved_route_hides_legacy_default_first_bus_without_changing_storage():
+    from app.services.v3_guidance_store import V3SessionRecord
+
+    old_message = "지금 운행 중인 버스가 없습니다. 가장 빠른 버스는 05시30분에 운행할 예정이에요."
+    legacy_status = {"operatingNow": False, "reason": "OUTSIDE_SERVICE_WINDOW", "message": old_message,
+                     "nextServiceTime": "05:30", "nextServiceLabel": "05시30분", "scheduleSource": "DEFAULT_FALLBACK"}
+    plan = {"destinationName": "청주대학교·뉴시스", "boardingInstruction": "711번을 타세요. " + old_message,
+            "serviceStatus": legacy_status, "segments": [{"routeNo": "711", "arrivalUnknown": True,
+                "serviceStatus": legacy_status, "boardStop": {"stopName": "충북대학교입구"}}]}
+    record = V3SessionRecord(session_id="offline-saved-plan", selected_route_no="711", selected_plan=plan)
+
+    response = record.to_response().selectedPlan
+    assert response["serviceStatus"]["nextServiceTime"] is None
+    assert response["segments"][0]["serviceStatus"]["nextServiceLabel"] is None
+    assert "05시30분" not in response["boardingInstruction"]
+    followup = v3_agent._contextual_followup_reply(session=record, utterance="무슨 경로?")
+    assert "첫차 시각은 확인되지 않았어요" in followup and "05시30분" not in followup
+    assert record.to_response(for_storage=True).selectedPlan == plan
+    assert record.selected_plan["serviceStatus"]["nextServiceTime"] == "05:30"
+
+
 def test_agent_converse_returns_structured_route_plan_for_arbitrary_place() -> None:
     response = _say(
         "s-route",
@@ -117,6 +138,81 @@ def test_agent_converse_confirmation_followup_uses_pending_route_plan_context() 
     assert state["selectedDestination"] == "상당산성"
     assert state["selectedRouteNo"] == "862"
     assert state["pendingResolutionStatus"] is None
+
+
+@pytest.fixture
+def pending_numbered_route(monkeypatch):
+    from app.schemas.v3 import DestinationCandidate, DestinationResolveResponse, RoutePlanResponse
+
+    monkeypatch.setenv("CHEONGJU_ROUTE_PLAN_ROUTE_NOS", "auto")
+    monkeypatch.setenv("PUBLIC_DATA_USE_MOCK", "true")
+    monkeypatch.setattr(v3_agent, "classify_intent", lambda **kw: {
+        "intent": "FIND_ROUTE", "destination": "상단산성" if "상단산성" in kw["utterance"] else "사창사거리",
+    })
+    calls = []
+    statuses = ["NEEDS_CONFIRMATION"]
+    candidates = [
+        DestinationCandidate(name=name, type="STOP", confidence=0.9)
+        for name in ("상당산성", "청주고속버스터미널")
+    ]
+
+    def plan(**kwargs):
+        calls.append(kwargs)
+        status = statuses.pop(0) if statuses else "NO_ROUTE"
+        heard = kwargs["heard_text"]
+        return RoutePlanResponse(status=status, heardText=heard, fallbackSource="PUBLIC_API",
+            question="목적지를 확인해 주세요.",
+            destination=DestinationResolveResponse(
+                status=status if status != "NO_ROUTE" else "RESOLVED", heardText=heard,
+                normalizedText=heard, topCandidate=candidates[0], candidates=candidates,
+                fallbackSource="PUBLIC_API",
+            ))
+
+    monkeypatch.setattr(v3_agent, "_plan_route", plan)
+    return calls, statuses
+
+
+@pytest.mark.parametrize("initial_status,answer", [
+    ("NEEDS_CONFIRMATION", "응 맞아"),
+    ("NEEDS_CHOICE", "첫 번째"),
+])
+def test_numbered_route_filter_survives_destination_answer(pending_numbered_route, initial_status, answer):
+    calls, statuses = pending_numbered_route
+    statuses[:] = [initial_status, "NEEDS_CONFIRMATION"]
+    sid = "numbered-pending"
+    first = _say(sid, "611번 버스로 상단산성 가는 경로 알려줘", mode="live",
+                 originLat=36.6359, originLng=127.4596)
+    assert first.json()["routePlan"]["status"] == initial_status
+    assert v3_guidance_store.get(sid).pending_route_no == "611"
+
+    wrong_mode = _say(sid, answer, mode="mock")
+    assert wrong_mode.status_code == 409 and len(calls) == 1
+    assert _say(sid, answer, mode=None).json()["routePlan"]["status"] == "NEEDS_CONFIRMATION"
+    assert v3_guidance_store.get(sid).pending_route_no == "611"
+    final = _say(sid, "응 맞아", mode=None).json()
+    assert final["routePlan"]["status"] == "NO_ROUTE"
+    assert final["routePlan"]["recommendedPlan"] is None
+    assert [(c["route_no"], c["mode"], c["origin_lat"]) for c in calls] == [("611", "live", 36.6359)] * 3
+    assert calls[-1]["heard_text"] == "상당산성"
+    assert v3_guidance_store.get(sid).pending_route_no is None
+
+
+@pytest.mark.parametrize("cancel_first", [False, True])
+def test_new_destination_does_not_inherit_pending_route_number(pending_numbered_route, cancel_first):
+    calls, _ = pending_numbered_route
+    sid = "numbered-pending-replaced"
+    first = _say(sid, "611번 버스로 상단산성 가는 경로 알려줘", mode="live")
+    assert first.json()["routePlan"]["status"] == "NEEDS_CONFIRMATION"
+    assert calls[0]["route_no"] == "611"
+    if cancel_first:
+        assert _say(sid, "아니", mode="live").status_code == 200
+        assert v3_guidance_store.get(sid).pending_route_no is None
+
+    new = _say(sid, "사창사거리 가는 경로 알려줘", mode="live",
+               originLat=36.6359, originLng=127.4596)
+    assert new.json()["routePlan"]["status"] == "NO_ROUTE"
+    assert len(calls) == 2 and calls[-1].get("route_no") is None
+    assert v3_guidance_store.get(sid).pending_route_no is None
 
 
 def test_agent_converse_choice_followup_reuses_saved_origin() -> None:
@@ -363,3 +459,37 @@ def test_unrecognized_chatter_without_nlu_gives_actionable_example(monkeypatch) 
     assert body["intent"] == "UNKNOWN"
     assert body["routePlan"] is None
     assert "충북대병원 어떻게 가?" in body["message"]
+
+@pytest.mark.parametrize('correction', ['충북대학교 정문', '충북대학교 정문이요'])
+def test_gate_correction_does_not_repeat_hospital_confirmation(correction):
+    first = _say('s-gate-correction', '충북대학교 가는 경로 알려줘',
+                 originLat=36.6262, originLng=127.4312)
+    assert first.status_code == 200
+    assert '병원' in first.json()['message']
+    assert first.json()['usedGemini'] is False
+    second = _say('s-gate-correction', correction)
+    assert second.status_code == 200
+    body = second.json()
+    assert '병원' not in body['message']
+    assert '정문' in body['message']
+    assert body['usedGemini'] is False
+    assert body['routePlan']['status'] == 'NOT_FOUND'
+    state = v3_guidance_store.get('s-gate-correction')
+    assert state.pending_resolution_status is None
+
+def test_provider_failure_does_not_trigger_gemini_place_guess(monkeypatch):
+    from app.schemas.v3 import RoutePlanResponse, RoutePlanStatus, DestinationResolveResponse, DestinationResolveStatus
+    failed=RoutePlanResponse(status=RoutePlanStatus.NOT_FOUND,heardText='청주대학교',fallbackSource=FallbackSource.ERROR,
+        destination=DestinationResolveResponse(status=DestinationResolveStatus.NOT_FOUND,heardText='청주대학교',normalizedText='청주대학교',fallbackSource=FallbackSource.ERROR,
+            question='정류장 정보 조회에 실패했어요. 현재 경로를 확인할 수 없습니다.'))
+    monkeypatch.setattr(v3_agent,'_plan_route',lambda **kw:failed)
+    monkeypatch.setattr(v3_agent,'_infer_destination_confirmation',lambda **kw:pytest.fail('provider failure must not trigger another Gemini/place lookup'))
+    result=_say('offline-provider-error','청주대학교 가는 경로 알려줘',mode='live',originLat=36.63443041,originLng=127.454072)
+    assert result.status_code==200
+    assert result.json()['fallbackSource']=='ERROR'
+    assert result.json()['routePlan']['recommendedPlan'] is None
+    assert result.json()['usedGemini'] is False
+    generation = next(event for event in result.json()['trace'] if event['type'] == 'GEMINI_REPLY_GENERATION')
+    assert generation['status'] == 'SKIPPED'
+    assert '실패' in generation['summary']
+    assert '검증된 경로' not in generation['summary']

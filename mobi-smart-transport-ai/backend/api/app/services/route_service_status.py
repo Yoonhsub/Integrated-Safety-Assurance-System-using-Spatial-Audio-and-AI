@@ -11,6 +11,17 @@ from app.schemas.v3 import RoutePlanServiceStatus
 
 _DEFAULT_FIRST = "05:30"
 _DEFAULT_LAST = "23:30"
+_ARRIVAL_UNAVAILABLE = "현재 조회된 도착 예정 버스가 없습니다. 첫차 시각은 확인되지 않았어요."
+_DEFAULT_SCHEDULE_SOURCES = {"DEFAULT_FALLBACK", "ENV_DEFAULT_OVERRIDE"}
+
+
+def _unconfirmed_status(source: str) -> RoutePlanServiceStatus:
+    return RoutePlanServiceStatus(
+        operatingNow=False,
+        reason="ARRIVAL_INFO_UNAVAILABLE",
+        message=_ARRIVAL_UNAVAILABLE,
+        scheduleSource=source,
+    )
 
 
 def evaluate_route_service_status(
@@ -28,6 +39,9 @@ def evaluate_route_service_status(
             message="현재 도착 예정 버스가 확인됐습니다.",
             scheduleSource=source,
         )
+
+    if source in _DEFAULT_SCHEDULE_SOURCES:
+        return _unconfirmed_status(source)
 
     current = _current_time(now)
     if _within_window(current, first, last):
@@ -48,6 +62,35 @@ def evaluate_route_service_status(
         nextServiceLabel=next_label,
         scheduleSource=source,
     )
+
+
+def redact_default_schedule_notice(plan: dict | None) -> dict | None:
+    """Remove legacy first-bus guesses from a public copy of a stored plan."""
+    if not isinstance(plan, dict):
+        return plan
+    old_messages: set[str] = set()
+
+    def redact_status(entry: dict) -> dict:
+        status = entry.get("serviceStatus")
+        if (not isinstance(status, dict) or status.get("scheduleSource") not in _DEFAULT_SCHEDULE_SOURCES
+                or status.get("reason") != "OUTSIDE_SERVICE_WINDOW"):
+            return entry
+        if isinstance(status.get("message"), str) and status["message"]:
+            old_messages.add(status["message"])
+        return {**entry, "serviceStatus": _unconfirmed_status(status["scheduleSource"]).model_dump()}
+
+    public_plan = redact_status(plan)
+    segments = plan.get("segments")
+    if isinstance(segments, list):
+        public_segments = [redact_status(segment) if isinstance(segment, dict) else segment for segment in segments]
+        if any(before is not after for before, after in zip(segments, public_segments)):
+            public_plan = {**public_plan, "segments": public_segments}
+    instruction = plan.get("boardingInstruction")
+    if isinstance(instruction, str) and old_messages:
+        for message in old_messages:
+            instruction = instruction.replace(message, _ARRIVAL_UNAVAILABLE)
+        public_plan = {**public_plan, "boardingInstruction": instruction}
+    return public_plan
 
 
 def _service_window(route_no: str | None) -> tuple[time, time, str]:

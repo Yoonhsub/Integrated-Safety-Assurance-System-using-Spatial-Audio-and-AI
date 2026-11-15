@@ -42,6 +42,10 @@ _MAX_PLANS = 5
 _MAX_RAW_PLANS_TO_ENRICH = 20
 _DEFAULT_ROUTE_NOS = ("502", "823", "862", "863", "864")
 
+
+def dynamic_route_discovery_enabled() -> bool:
+    return os.getenv("CHEONGJU_ROUTE_PLAN_ROUTE_NOS", "").strip().lower() == "auto"
+
 ArrivalFetcher = Callable[..., V3BusArrivalsResponse]
 
 
@@ -76,6 +80,7 @@ class CheongjuRoutePlanner:
         origin_lng: float | None = None,
         live: bool = False,
         use_live_sequences: bool | None = None,
+        route_no: str | None = None,
     ) -> RoutePlanResponse:
         destination = self._resolver.resolve(
             heard_text=heard_text,
@@ -118,18 +123,45 @@ class CheongjuRoutePlanner:
             )
 
         sequence_live = live if use_live_sequences is None else use_live_sequences
-        sequences = self._route_sequences(live=sequence_live)
-        raw_plans = self._find_plans(destination=destination, sequences=sequences)
+        dynamic = sequence_live and dynamic_route_discovery_enabled()
+        if dynamic:
+            if os.getenv("CHEONGJU_BUS_STOPS_PROVIDER", "odcloud").strip().lower() != "tago":
+                return self._empty_response(status=RoutePlanStatus.NOT_FOUND,
+                    destination=destination.model_copy(update={"fallbackSource": FallbackSource.ERROR}),
+                    heard_text=heard_text, question="TAGO 정류장 조회가 준비되지 않았어요.")
+            origin_stops = [stop for stop in destination.originStops if stop.source == FallbackSource.PUBLIC_API and stop.stopId][:2]
+            destination_stops = [stop for stop in destination.destinationStops if stop.source == FallbackSource.PUBLIC_API and stop.stopId][:2]
+            if not origin_stops or not destination_stops:
+                return self._empty_response(status=RoutePlanStatus.NOT_FOUND,
+                    destination=destination.model_copy(update={"fallbackSource": FallbackSource.ERROR}),
+                    heard_text=heard_text, question="TAGO 승차·하차 정류장을 확인하지 못했어요.")
+            try:
+                sequences = self._sequence_cache.discover_direct(
+                    [stop.stopId for stop in origin_stops], [stop.stopId for stop in destination_stops], route_no=route_no)
+            except Exception:
+                return self._empty_response(status=RoutePlanStatus.NOT_FOUND,
+                    destination=destination.model_copy(update={"fallbackSource": FallbackSource.ERROR}),
+                    heard_text=heard_text, question="TAGO 노선 정보를 조회하지 못했어요.")
+            raw_plans = self._direct_planner.find_plans(
+                destination_name=destination.topCandidate.name if destination.topCandidate else destination.normalizedText,
+                origin_candidates=origin_stops, destination_candidates=destination_stops, sequences=sequences)
+        else:
+            sequences = self._route_sequences(live=sequence_live)
+            raw_plans = self._find_plans(destination=destination, sequences=sequences)
+        enrichment_limit = 3 if dynamic else _MAX_RAW_PLANS_TO_ENRICH
         candidates = [
             self._to_candidate(index, raw)
-            for index, raw in enumerate(raw_plans[:_MAX_RAW_PLANS_TO_ENRICH], start=1)
+            for index, raw in enumerate(raw_plans[:enrichment_limit], start=1)
         ]
         plans = self._ranker.rank(candidates)[:_MAX_PLANS]
         recommended = plans[0] if plans else None
         fallback = _strongest_source([destination.fallbackSource, *(plan.fallbackSource for plan in plans)])
-        cache_status = (
-            self._sequence_cache.live_load_status(_configured_route_nos()) if sequence_live else "MOCK"
-        )
+        if dynamic:
+            cache_status = "PUBLIC_API" if sequences else "EMPTY"
+        elif sequence_live:
+            cache_status = self._sequence_cache.live_load_status(_configured_route_nos())
+        else:
+            cache_status = "MOCK"
         sequence_sources = {sequence.source.value for sequence in sequences}
         route_sequence_source = (
             "MIXED"
@@ -155,6 +187,8 @@ class CheongjuRoutePlanner:
                     question=walk_message,
                 )
         question = None if recommended else "현재 후보 정류장 조합으로 갈 수 있는 직통 또는 1회 환승 경로를 찾지 못했어요."
+        if dynamic and recommended is None:
+            question = "조회한 정류장과 노선 후보에서 확인된 직통 경로를 찾지 못했어요."
         return RoutePlanResponse(
             status=RoutePlanStatus.RESOLVED if recommended else RoutePlanStatus.NO_ROUTE,
             readiness=RoutePlanReadiness.READY if recommended else RoutePlanReadiness.NO_ROUTE,

@@ -80,7 +80,10 @@ class DataGoKrClient:
                 "PUBLIC_DATA_USE_MOCK=true."
             )
 
-    def get(self, path: str, params: dict[str, str] | None = None) -> httpx.Response:
+    def get(
+        self, path: str, params: dict[str, str] | None = None, *, base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
         """GET 호출. ``serviceKey``는 자동으로 합쳐 보낸다.
 
         - 서비스키 누락 시 ``PublicDataServiceKeyMissingError``.
@@ -91,9 +94,9 @@ class DataGoKrClient:
         self.require_service_key()
 
         merged: dict[str, str] = {**(params or {}), "serviceKey": self.api_key}
-        url = f"{self.base_url}{path}"
+        url = f"{base_url or self.base_url}{path}"
         try:
-            response = self.client.get(url, params=merged)
+            response = self.client.get(url, params=merged, **({"timeout": timeout} if timeout is not None else {}))
             response.raise_for_status()
             return response
         except httpx.HTTPError as exc:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import logging
 import os
 import re
 import string
@@ -18,7 +19,7 @@ from app.schemas.v3 import (
     FallbackSource,
     NearbyStopCandidate,
 )
-from app.services.cheongju_bus_stops_service import CheongjuBusStopMatch, CheongjuBusStopsService, get_shared_bus_stops_service, stop_cache_only, stop_cache_only_active
+from app.services.cheongju_bus_stops_service import StopLookupError, CheongjuBusStopMatch, CheongjuBusStopsService, get_shared_bus_stops_service, stop_cache_only, stop_cache_only_active
 
 
 _CONFIRMATION_THRESHOLD = 0.72
@@ -37,6 +38,10 @@ _STT_CONFIRMATION_ALIASES = {
     "상단산성": "상당산성",
     "산창사거리": "사창사거리",
 }
+# TAGO node observed in the Cheongju campus nearby-stop lookup. Its coordinates
+# seed the query, and only a matching TAGO row can become a destination.
+_NYUSIS_STOP_ID = "CJB284000031"
+_NYUSIS_STOP_COORDINATES = (36.65074073, 127.48905996)
 
 
 @dataclass(frozen=True)
@@ -404,6 +409,19 @@ class DestinationCandidateResolver:
         self._local_search = local_search or KakaoLocalSearchProvider()
 
     def resolve(self, *, heard_text: str, origin_lat=None, origin_lng=None, live=False):
+        try:
+            return self._resolve_with_camera_policy(heard_text=heard_text, origin_lat=origin_lat,
+                                                   origin_lng=origin_lng, live=live)
+        except StopLookupError as exc:
+            logging.getLogger(__name__).warning("destination_stop_lookup_failed code=%s", str(exc))
+            camera = str(exc) == "TAGO_STOP_CACHE_NOT_READY"
+            return DestinationResolveResponse(
+                status=DestinationResolveStatus.NOT_FOUND, heardText=heard_text,
+                normalizedText=_normalize(heard_text), fallbackSource=FallbackSource.ERROR,
+                question=("카메라 사용 중에는 외부 경로 정보를 새로 조회하지 않습니다. 카메라를 종료한 뒤 경로 정보를 준비해 주세요."
+                          if camera else "정류장 정보 조회에 실패했어요. 현재 경로를 확인할 수 없습니다."))
+
+    def _resolve_with_camera_policy(self, *, heard_text: str, origin_lat=None, origin_lng=None, live=False):
         from app.services.vision_binding_service import vision_binding_service
         if live and vision_binding_service.has_camera_reservation():
             if getattr(self._stop_catalog, "requires_public_stops", False):
@@ -437,14 +455,31 @@ class DestinationCandidateResolver:
                 fallbackSource=FallbackSource.MOCK,
             )
 
-        candidates = self._build_candidates(
-            cleaned,
-            normalized=normalized,
-            origin_lat=origin_lat,
-            origin_lng=origin_lng,
-            live=live,
-        )
+        destination_stops = None
+        if live and getattr(self._stop_catalog, "requires_public_stops", False) and normalized == "청주대학교뉴시스":
+            stop = self._find_nyusis_stop()
+            candidates = []
+            if stop is not None:
+                destination_stops = [_nearby_from_public(stop)]
+                candidates = [DestinationCandidate(
+                    name=stop.stop_name, type=DestinationCandidateType.STOP, confidence=0.96,
+                    latitude=stop.latitude, longitude=stop.longitude, stopId=stop.service_id,
+                    fetchedAt=stop.fetched_at, cacheHit=stop.cache_hit, source=FallbackSource.PUBLIC_API,
+                )]
+        else:
+            candidates = self._build_candidates(
+                cleaned,
+                normalized=normalized,
+                origin_lat=origin_lat,
+                origin_lng=origin_lng,
+                live=live,
+            )
         candidates = _dedupe_candidates(sorted(candidates, key=lambda item: item.confidence, reverse=True))
+        # Explicit gates cannot be replaced with a similarly named hospital.
+        gate = next((word for word in ("정문", "후문", "동문", "서문", "남문", "북문")
+                     if normalized.endswith(word)), None)
+        if gate:
+            candidates = [item for item in candidates if gate in _normalize(item.name)]
 
         if not candidates:
             return DestinationResolveResponse(
@@ -452,11 +487,13 @@ class DestinationCandidateResolver:
                 heardText=heard_text,
                 normalizedText=normalized,
                 question=f"{cleaned}{_subject_particle(cleaned)} 아직 찾지 못했어요. 장소명이나 주소를 조금 더 정확히 말씀해 주세요.",
-                fallbackSource=FallbackSource.ERROR if live else FallbackSource.MOCK,
+                fallbackSource=(FallbackSource.PUBLIC_API if live and getattr(self._stop_catalog, "requires_public_stops", False)
+                                else FallbackSource.ERROR if live else FallbackSource.MOCK),
             )
 
         top = candidates[0]
-        destination_stops = self._destination_stops_for(top, live=live)
+        if destination_stops is None:
+            destination_stops = self._destination_stops_for(top, live=live)
         origin_stops = self._origin_stops(origin_lat=origin_lat, origin_lng=origin_lng, live=live)
 
         status = DestinationResolveStatus.RESOLVED
@@ -525,6 +562,17 @@ class DestinationCandidateResolver:
             fallbackSource=fallback_source,
         )
 
+    def _find_nyusis_stop(self) -> CheongjuBusStopMatch | None:
+        lat, lng = _NYUSIS_STOP_COORDINATES
+        try:
+            matches = self._stop_catalog.find_nearby(origin_lat=lat, origin_lng=lng, limit=6, radius_meters=500.0)
+        except StopLookupError:
+            raise
+        except Exception:
+            raise StopLookupError("TAGO_STOP_UNAVAILABLE") from None
+        return next((match for match in matches if match.service_id == _NYUSIS_STOP_ID
+                     and _normalize(match.stop_name) == "청주대학교뉴시스"), None)
+
     def _build_candidates(
         self,
         query: str,
@@ -535,7 +583,7 @@ class DestinationCandidateResolver:
         live: bool,
     ) -> list[DestinationCandidate]:
         candidates: list[DestinationCandidate] = []
-        if live and stop_cache_only_active():
+        if live and (stop_cache_only_active() or getattr(self._stop_catalog, "requires_public_stops", False)):
             return self._public_stop_candidates(query)
 
         # 교통 거점 일반어("터미널" 등)는 상호명 부분일치에 밀리지 않도록 알려진 거점만
@@ -682,7 +730,11 @@ class DestinationCandidateResolver:
     def _public_stop_candidates(self, query: str) -> list[DestinationCandidate]:
         try:
             matches = self._stop_catalog.search_by_name(stop_name=query, limit=5)
+        except StopLookupError:
+            raise
         except Exception:
+            if getattr(self._stop_catalog, "requires_public_stops", False):
+                raise StopLookupError("TAGO_STOP_UNAVAILABLE") from None
             return []
 
         normalized_query = _normalize(query)
@@ -737,7 +789,11 @@ class DestinationCandidateResolver:
                 )
                 if not public_matches and candidate.type == DestinationCandidateType.STOP and candidate.stopId:
                     public_matches = self._stop_catalog.search_by_name(stop_name=candidate.name, limit=5)
+            except StopLookupError:
+                raise
             except Exception:
+                if getattr(self._stop_catalog, "requires_public_stops", False):
+                    raise StopLookupError("TAGO_STOP_UNAVAILABLE") from None
                 public_matches = []
 
         if public_matches:
@@ -772,7 +828,11 @@ class DestinationCandidateResolver:
                     limit=6,
                     radius_meters=900.0,
                 )
+            except StopLookupError:
+                raise
             except Exception:
+                if getattr(self._stop_catalog, "requires_public_stops", False):
+                    raise StopLookupError("TAGO_STOP_UNAVAILABLE") from None
                 matches = []
             if matches:
                 return [_nearby_from_public(match) for match in matches]
@@ -1016,7 +1076,7 @@ def _clean_destination_text(text: str) -> str:
 def _normalize(value: str) -> str:
     text = value.lower()
     text = text.replace("정류장", "")
-    text = re.sub(r"[\s\-_.,?!~…'\"“”‘’(){}\[\]]+", "", text)
+    text = re.sub(r"[\s\-_·.,?!~…'\"“”‘’(){}\[\]]+", "", text)
     text = re.sub(r"(으로|로|까지|에)$", "", text)
     return text
 

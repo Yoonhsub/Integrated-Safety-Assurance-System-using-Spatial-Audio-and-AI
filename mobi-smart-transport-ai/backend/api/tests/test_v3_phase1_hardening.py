@@ -49,13 +49,26 @@ def test_service_status_after_last_bus_keeps_arrival_if_present() -> None:
     assert status.nextServiceTime is None
 
 
-def test_service_status_daytime_without_arrivals_is_conservative() -> None:
+def test_service_status_daytime_without_arrivals_is_conservative(monkeypatch) -> None:
+    monkeypatch.setenv("CHEONGJU_ROUTE_SERVICE_WINDOWS", '{"862":{"first":"05:40","last":"22:50"}}')
     status = evaluate_route_service_status(route_no="862", arrivals=[], now=time(12, 0))
 
     assert status.operatingNow is True
     assert status.reason == "ARRIVAL_INFO_UNAVAILABLE_WITHIN_SERVICE_WINDOW"
     assert "운행 중인 버스가 없습니다" not in status.message
     assert "다시 갱신" in status.message
+
+
+def test_generic_service_window_does_not_publish_first_bus_time(monkeypatch) -> None:
+    monkeypatch.delenv("CHEONGJU_ROUTE_SERVICE_WINDOWS", raising=False)
+    for generic_setting, source in (("", "DEFAULT_FALLBACK"), ("06:00~22:00", "ENV_DEFAULT_OVERRIDE")):
+        monkeypatch.setenv("CHEONGJU_DEFAULT_ROUTE_SERVICE_WINDOW", generic_setting)
+        status = evaluate_route_service_status(route_no="711", arrivals=[], now=time(2, 55))
+        assert status.scheduleSource == source
+        assert status.reason == "ARRIVAL_INFO_UNAVAILABLE"
+        assert status.nextServiceTime is None and status.nextServiceLabel is None
+        assert "첫차 시각은 확인되지 않았어요" in status.message
+        assert "운행 중인 버스가 없습니다" not in status.message
 
 
 def test_route_plan_and_arrivals_expose_service_status() -> None:
