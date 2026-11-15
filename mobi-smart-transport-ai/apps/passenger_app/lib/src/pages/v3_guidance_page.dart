@@ -1,3 +1,4 @@
+import '../services/shared_guidance_session.dart';
 import '../widgets/described_action.dart';
 import '../services/route_data_presentation.dart';
 import '../widgets/route_data_status.dart';
@@ -54,8 +55,10 @@ class V3GuidancePage extends StatefulWidget {
     required this.dataMode,
     this.localRuntime,
     this.visionOnly = false,
+    this.sharedSession,
   });
 
+  final SharedGuidanceSession? sharedSession;
   final bool visionOnly;
   final String agentName;
   final VoidCallback onReturnToModeSelection;
@@ -103,6 +106,8 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   final _routeRequestScope = SpeechRequestScope();
   StreamSubscription<dynamic>? _speechAuthSubscription;
   bool _speechAuthValid = true;
+  bool get _sharedSessionCurrent => _sharedGeneration == null ||
+      widget.sharedSession?.current(_sharedGeneration!) == true;
   SpeechRequest _speechRequest() {
     final uid = _auth.currentAccount?.uid;
     final authGuard = _captureAuthGuard();
@@ -110,6 +115,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     return _speechScope.capture(() =>
         mounted &&
         _speechAuthValid &&
+        _sharedSessionCurrent &&
         _audioForeground &&
         !_cameraOpen &&
         _guidanceHold == null &&
@@ -127,10 +133,31 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   late final MockScenarioController _mockScenarioController;
 
   V3HealthStatus? _healthStatus;
-  V3GuidanceState? _sessionState;
+  V3GuidanceState? _storedSessionState;
+  int? _sharedGeneration;
+  V3GuidanceState? get _sessionState => _storedSessionState;
+  set _sessionState(V3GuidanceState? value) {
+    _storedSessionState = value;
+    _saveSharedSession();
+  }
+
+  void _saveSharedSession() {
+    final generation = _sharedGeneration;
+    if (generation != null && mounted && _speechAuthValid) {
+      widget.sharedSession
+          ?.save(generation, _storedSessionState, _storedRoutePlan);
+    }
+  }
+
   V3AgentResponse? _lastAgentResponse;
   V3RouteRecommendResponse? _lastRouteRecommendation;
-  V3RoutePlanResponse? _lastRoutePlan;
+  V3RoutePlanResponse? _storedRoutePlan;
+  V3RoutePlanResponse? get _lastRoutePlan => _storedRoutePlan;
+  set _lastRoutePlan(V3RoutePlanResponse? value) {
+    _storedRoutePlan = value;
+    _saveSharedSession();
+  }
+
   V3BusArrivalsResponse? _lastArrivals;
   V3BeaconDecisionResponse? _lastBeaconDecision;
   String? _latestGeofenceMessage;
@@ -225,11 +252,13 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     final authGuard = _captureAuthGuard();
     _speechAuthSubscription = _auth.authStateChanges.listen((account) {
       if (!authGuard()) {
+        widget.sharedSession?.clear();
         _speechAuthValid = false;
         _client.invalidateVisionSession(_sessionId);
         unawaited(_stopAllCueAudio().catchError((Object _) {}));
       }
     }, onError: (Object _) {
+      widget.sharedSession?.clear();
       _speechAuthValid = false;
       unawaited(_stopAllCueAudio().catchError((Object _) {}));
     });
@@ -313,6 +342,7 @@ class _V3GuidancePageState extends State<V3GuidancePage>
         mounted &&
         guard() &&
         _speechAuthValid &&
+        _sharedSessionCurrent &&
         _sessionId == sessionId &&
         generation == _visionSpeechGeneration;
     Map<String, dynamic>? binding;
@@ -381,7 +411,18 @@ class _V3GuidancePageState extends State<V3GuidancePage>
       final uid = _auth.currentAccount?.uid;
       final health = await _client.fetchHealth();
       if (!mounted || !guard()) return;
-      final session = await _client.createSession(wakeWord: _wakeWord);
+      final shared = widget.localRuntime == null && uid != null
+          ? widget.sharedSession
+          : null;
+      shared?.bind('$uid|$_apiBaseUrl|${widget.dataMode}');
+      _sharedGeneration = shared?.generation;
+      final session = shared == null
+          ? await _client.createSession(wakeWord: _wakeWord)
+          : await shared.open(
+              create: () => _client.createSession(wakeWord: _wakeWord),
+              fetch: (id) => _client.resumeSession(sessionId: id));
+      // Restore the route, never previous live status, cues, BLE or authority.
+      _storedRoutePlan = shared?.routePlan;
       if (!mounted || !guard()) return;
       _safetySessionGuard = guard;
       _safetySessionUid = uid;
@@ -413,6 +454,19 @@ class _V3GuidancePageState extends State<V3GuidancePage>
     try {
       await action();
     } on V3ApiException catch (error) {
+      if ({401, 403, 410}.contains(error.statusCode) ||
+          (widget.sharedSession != null &&
+              _sharedGeneration != null &&
+              !widget.sharedSession!.current(_sharedGeneration!))) {
+        widget.sharedSession?.clear();
+        _client.invalidateVisionSession(_sessionId);
+        _sessionId = '';
+        _storedSessionState = null;
+        _storedRoutePlan = null;
+        _liveRouteTimer?.cancel();
+        _betterRouteTimer?.cancel();
+        await _stopAllCueAudio();
+      }
       if (!mounted) return;
       setState(() {
         _errorMessage = error.toString();
@@ -433,7 +487,13 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   }
 
   Future<void> _refreshState() async {
-    final state = await _client.fetchState(sessionId: _sessionId);
+    final V3GuidanceState state;
+    try {
+      state = await _client.fetchState(sessionId: _sessionId);
+    } on V3ApiException catch (error) {
+      if (error.statusCode == 404) widget.sharedSession?.clear();
+      rethrow;
+    }
     setState(() {
       _sessionState = state;
     });
@@ -2151,6 +2211,8 @@ class _V3GuidancePageState extends State<V3GuidancePage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      if (state?.selectedRouteNo != null)
+                        Text('선택한 노선: ${state!.selectedRouteNo}번 · ${state.selectedStopName ?? state.selectedStopId ?? "정류장 미확인"}'),
                       if (widget.visionOnly) ...[
                         const Text(
                             '카메라로 객체를 감지하고 연결된 서버에 결과를 전송합니다. 화면 기준 방향 음향은 실제 이동 안전을 보장하지 않습니다.'),

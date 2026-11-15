@@ -858,3 +858,5 @@ apps/passenger_app/lib/src/widgets/described_action.dart
 apps/passenger_app/test/described_action_test.dart
 apps/passenger_app/lib/src/widgets/app_navigation.dart
 apps/passenger_app/test/app_navigation_test.dart
+apps/passenger_app/lib/src/services/shared_guidance_session.dart
+apps/passenger_app/test/shared_guidance_session_test.dart
