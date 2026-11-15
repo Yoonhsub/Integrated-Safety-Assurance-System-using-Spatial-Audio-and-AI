@@ -16,6 +16,7 @@ from typing import Callable, Any
 
 from app.security import auth_error, require_role
 from app.schemas.v3 import BeaconDecision, GuidanceSessionState, GuidanceState, new_session_id, utc_now
+from app.services.route_service_status import redact_default_schedule_notice
 
 
 @dataclass
@@ -50,6 +51,7 @@ class V3SessionRecord:
     pending_heard_text: str | None = None
     pending_top_candidate_name: str | None = None
     pending_choice_names: list[str] = field(default_factory=list)
+    pending_route_no: str | None = None
     pending_origin_lat: float | None = None
     pending_origin_lng: float | None = None
     last_route_plan: dict[str, Any] | None = None
@@ -75,7 +77,7 @@ class V3SessionRecord:
             except Exception:  # pragma: no cover - persistence is best-effort
                 pass
 
-    def to_response(self) -> GuidanceSessionState:
+    def to_response(self, *, for_storage: bool = False) -> GuidanceSessionState:
         return GuidanceSessionState(
             sessionId=self.session_id,
             state=self.state,
@@ -91,9 +93,11 @@ class V3SessionRecord:
             originLocation=self.origin_location,
             nearbyBoardingStops=list(self.nearby_boarding_stops),
             nearbyAlightingStops=list(self.nearby_alighting_stops),
-            recommendedPlan=self.recommended_plan,
-            alternativePlans=list(self.alternative_plans),
-            selectedPlan=self.selected_plan,
+            recommendedPlan=self.recommended_plan if for_storage else redact_default_schedule_notice(self.recommended_plan),
+            alternativePlans=list(self.alternative_plans) if for_storage else [
+                redact_default_schedule_notice(plan) for plan in self.alternative_plans
+            ],
+            selectedPlan=self.selected_plan if for_storage else redact_default_schedule_notice(self.selected_plan),
             currentLegIndex=self.current_leg_index,
             pendingQuestion=self.pending_question,
             pendingResolutionStatus=self.pending_resolution_status,
@@ -401,7 +405,7 @@ class V3GuidanceStore:
         from app.services.firebase_client import get_firebase_client
 
         client = get_firebase_client()
-        snapshot = record.to_response().model_dump(mode="json", by_alias=True)
+        snapshot = record.to_response(for_storage=True).model_dump(mode="json", by_alias=True)
         client.set(f"v3GuidanceSessions/{record.session_id}", snapshot)
 
     def _check_owner(self, record: V3SessionRecord) -> None:

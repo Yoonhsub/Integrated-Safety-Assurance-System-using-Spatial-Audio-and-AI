@@ -17,6 +17,25 @@ from app.services.v3_agent_tools import (
 from app.services.v3_guidance_store import V3SessionRecord
 
 
+@pytest.mark.parametrize("source,expected", [("ERROR", "FAILED"), ("PUBLIC_API", "DONE")])
+def test_route_trace_distinguishes_provider_failure_from_empty_result(source, expected):
+    from app.schemas.v3 import RoutePlanResponse, DestinationResolveResponse
+    from app.services.v3_agent_tools import _record_route_plan_trace
+    from app.services.v3_agent_trace import AgentTraceRecorder
+
+    plan = RoutePlanResponse(status="NOT_FOUND", heardText="청주대학교·뉴시스", fallbackSource=source,
+        destination=DestinationResolveResponse(status="NOT_FOUND", heardText="청주대학교·뉴시스",
+            normalizedText="청주대학교·뉴시스", fallbackSource=source))
+    trace = AgentTraceRecorder()
+    _record_route_plan_trace(trace, plan, destination_text=plan.heardText, live=True)
+    events = {event.type: event for event in trace.to_list()}
+    assert events["DESTINATION_RESOLVE"].status == expected
+    if source == "ERROR":
+        assert all(event.status == "SKIPPED" for key, event in events.items() if key != "DESTINATION_RESOLVE")
+        assert not any("검증된 로컬 후보" in event.summary for event in events.values())
+        assert events["TAGO_ARRIVAL_LOOKUP"].status == "SKIPPED"
+
+
 def test_normalize_user_utterance_removes_mobi_wake_word() -> None:
     normalized = normalize_user_utterance("모비야 사창사거리 어떻게 가?")
 
@@ -133,7 +152,8 @@ def test_service_status_tool_reports_next_bus_after_service_window(monkeypatch) 
     assert "05시40분" in status.message
 
 
-def test_service_status_tool_does_not_claim_shutdown_during_daytime() -> None:
+def test_service_status_tool_does_not_claim_shutdown_during_daytime(monkeypatch) -> None:
+    monkeypatch.setenv("CHEONGJU_ROUTE_SERVICE_WINDOWS", '{"862":{"first":"05:40","last":"22:50"}}')
     status = get_service_status_tool(
         route_no="862",
         arrivals=[],

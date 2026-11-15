@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
@@ -25,6 +26,10 @@ from app.schemas.v3 import (
     utc_now,
 )
 from app.services import cheongju_route_catalog
+from app.services.cheongju_route_planner import dynamic_route_discovery_enabled
+from app.services.route_stop_sequence_cache import RouteStopSequenceCache
+from app.services.route_service_status import redact_default_schedule_notice
+from app.services.vision_binding_service import vision_binding_service
 from app.services.v3_agent_tools import (
     classify_agent_intent,
     get_arrivals_tool,
@@ -91,6 +96,29 @@ def _resolve_live(mode: str | None) -> bool:
     if mode:
         return mode.strip().lower() == "live"
     return _is_live_mode()
+
+
+_ROUTE_NUMBER = r"[A-Za-z]?[0-9]{1,4}(?:-[0-9]{1,3}|[A-Za-z])?"
+
+
+def _explicit_route_numbers(utterance: str) -> set[str]:
+    numbered_bus = re.findall(rf"(?<![A-Za-z0-9-])({_ROUTE_NUMBER})\s*번(?![호째])", utterance)
+    route_label = re.findall(rf"(?:노선\s*번호|노선|버스)\s*({_ROUTE_NUMBER})(?![A-Za-z0-9-]|\s*(?:분|초|시|번지))", utterance)
+    return {number.upper() for number in numbered_bus + route_label}
+
+
+def _verified_route_number_reply(route_no: str) -> tuple[str, FallbackSource]:
+    if vision_binding_service.has_camera_reservation():
+        return "카메라를 종료한 뒤 노선 정보를 조회해 주세요.", FallbackSource.ERROR
+    try:
+        sequences = RouteStopSequenceCache().lookup_verified_route(route_no)
+    except Exception:
+        return "TAGO 노선 정보를 조회하지 못했어요.", FallbackSource.ERROR
+    if not sequences:
+        return f"TAGO에서 청주 {route_no}번의 정류장 순서를 확인하지 못했어요.", FallbackSource.PUBLIC_API
+    endpoints = list(dict.fromkeys(f"{route.nodes[0].stop_name}에서 {route.nodes[-1].stop_name}까지"
+                                   for route in sequences))
+    return f"TAGO 노선 정보에서 청주 {route_no}번의 확인된 구간은 {' 또는 '.join(endpoints)}입니다.", FallbackSource.PUBLIC_API
 
 
 router = APIRouter()
@@ -572,22 +600,41 @@ def _run_converse(
             known_destinations=cheongju_route_catalog.DESTINATIONS,
             history=history,
         )
-        if keyword_intent == AgentIntent.UNKNOWN and contextual_reply_hint is None
+        if (keyword_intent == AgentIntent.UNKNOWN and contextual_reply_hint is None)
+        or (live and dynamic_route_discovery_enabled() and keyword_intent == AgentIntent.FIND_ROUTE
+            and not vision_binding_service.has_camera_reservation())
         else None
     )
     intent = keyword_intent
     nlp_destination: str | None = None
     reasoning_source = "context" if contextual_reply_hint else "keyword"
     if classification is not None and classification["intent"] != AgentIntent.UNKNOWN.value:
-        intent = AgentIntent(classification["intent"])
+        if keyword_intent == AgentIntent.UNKNOWN:
+            intent = AgentIntent(classification["intent"])
         nlp_destination = classification["destination"]
         reasoning_source = get_last_nlu_provider() or "unknown"
+    dynamic = live and dynamic_route_discovery_enabled()
+    route_numbers = _explicit_route_numbers(utterance) if dynamic else set()
+    route_no = None
+    if dynamic:
+        # A model suggestion may only refine values present in this turn, not
+        # pull a stale destination or an invented route number from history.
+        suggested_no = (classification or {}).get("routeNo")
+        if len(route_numbers) == 1:
+            route_no = suggested_no if suggested_no in route_numbers else next(iter(route_numbers))
+        if nlp_destination and (_compact(nlp_destination) not in _compact(utterance)
+                                or _explicit_route_numbers(nlp_destination)
+                                or _compact(nlp_destination).upper() == route_no):
+            nlp_destination = None
+        if route_numbers and intent == AgentIntent.UNKNOWN:
+            intent = AgentIntent.FIND_ROUTE
     trace.done(
         intent_event,
         "발화 의도를 먼저 추론한 뒤 처리 단계로 넘어갔어.",
         safe_payload={
             "intent": intent.value,
             "destinationText": nlp_destination,
+            "routeNo": route_no,
             "reasoningSource": reasoning_source,
             "keywordIntent": keyword_intent.value,
             "historyTurns": len(history) // 2,
@@ -609,6 +656,14 @@ def _run_converse(
         # 종료 의사는 Gemini가 자연어로 판별한다(키워드 매칭 아님).
         message = "지금 수행할 작업은 없는 것 같습니다. 언제든 필요하면 다시 불러 주세요."
 
+    elif len(route_numbers) > 1 and intent in {AgentIntent.FIND_ROUTE, AgentIntent.QUERY_ARRIVAL}:
+        message = "확인할 버스 노선번호를 하나만 말씀해 주세요."
+        fallback_source = FallbackSource.ERROR
+
+    elif dynamic and route_no and intent == AgentIntent.FIND_ROUTE and not nlp_destination:
+        message, fallback_source = _verified_route_number_reply(route_no)
+        tts_mode = TtsMode.SAFETY_LOCAL
+
     elif intent in {AgentIntent.FIND_ROUTE, AgentIntent.CHANGE_DESTINATION, AgentIntent.CORRECT_DESTINATION}:
         route_plan, message, tts_mode, used_gemini, fallback_source = _handle_route_request(
             session=session,
@@ -618,11 +673,12 @@ def _run_converse(
             live=live,
             trace=trace,
             history=history,
+            route_no=route_no,
         )
 
     elif intent == AgentIntent.QUERY_ARRIVAL:
         selected = _selected_arrival_target(session)
-        if selected is None:
+        if selected is None or (route_no and selected[0].upper() != route_no):
             message = "먼저 목적지 경로를 선택해 주세요. 선택한 경로가 있어야 도착정보를 다시 확인할 수 있습니다."
             fallback_source = FallbackSource.ERROR
         else:
@@ -964,11 +1020,11 @@ def _selected_route_context_message(session: V3SessionRecord, *, utterance: str)
 def _selected_plan_dict(session: V3SessionRecord) -> dict | None:
     for candidate in (session.selected_plan, session.recommended_plan):
         if isinstance(candidate, dict):
-            return candidate
+            return redact_default_schedule_notice(candidate)
     if isinstance(session.last_route_plan, dict):
         recommended = session.last_route_plan.get("recommendedPlan")
         if isinstance(recommended, dict):
-            return recommended
+            return redact_default_schedule_notice(recommended)
     return None
 
 
@@ -1112,8 +1168,10 @@ def _handle_route_request(
     live: bool,
     trace: AgentTraceRecorder,
     history: list[dict] | None = None,
+    route_no: str | None = None,
 ) -> tuple[RoutePlanResponse | None, str, TtsMode, bool, FallbackSource]:
-    explicit_destination = _extract_destination(payload.utterance) or nlp_destination
+    dynamic = live and dynamic_route_discovery_enabled()
+    explicit_destination = (nlp_destination if dynamic else None) or _extract_destination(payload.utterance) or nlp_destination
     if explicit_destination:
         previous_destination = session.selected_destination
         _clear_selected_route_context(session)
@@ -1139,10 +1197,12 @@ def _handle_route_request(
             live=live,
             mode=payload.mode,
             trace=trace,
+            **({"route_no": route_no} if route_no is not None else {}),
         )
         # 우리 API에 안 나오는 목적지면, Gemini가 청주 내 비슷한 곳을 추론하고
         # 그 추론을 다시 우리 API로 검증한 뒤에만 "혹시 X 맞을까?"로 되묻는다.
-        if route_plan.status == RoutePlanStatus.NOT_FOUND:
+        if (not dynamic and route_plan.status == RoutePlanStatus.NOT_FOUND
+                and route_plan.fallbackSource != FallbackSource.ERROR):
             inferred = _infer_destination_confirmation(
                 heard_text=heard_text,
                 origin_lat=payload.originLat,
@@ -1162,6 +1222,7 @@ def _handle_route_request(
             origin_lng=payload.originLng,
             trace=trace,
             history=history,
+            route_no=route_no,
         )
 
     # 위치가 없으면 예전 고정 카탈로그 문장으로 승차 정류장을 꾸며내지 않는다.
@@ -1175,6 +1236,7 @@ def _handle_route_request(
         live=live,
         mode=payload.mode,
         trace=trace,
+        **({"route_no": route_no} if route_no is not None else {}),
     )
     return _route_plan_response_tuple(
         session=session,
@@ -1185,6 +1247,7 @@ def _handle_route_request(
         origin_lng=None,
         trace=trace,
         history=history,
+        route_no=route_no,
     )
 
 
@@ -1198,6 +1261,7 @@ def _route_plan_response_tuple(
     origin_lng: float | None,
     trace: AgentTraceRecorder,
     history: list[dict] | None = None,
+    route_no: str | None = None,
 ) -> tuple[RoutePlanResponse, str, TtsMode, bool, FallbackSource]:
     route_plan = verify_route_tool(route_plan)
     session.origin_location = (
@@ -1209,14 +1273,16 @@ def _route_plan_response_tuple(
         _apply_route_plan(session, route_plan)
         _clear_pending(session)
     elif route_plan.status in {RoutePlanStatus.NEEDS_CONFIRMATION, RoutePlanStatus.NEEDS_CHOICE}:
-        _store_pending(session, route_plan, origin_lat=origin_lat, origin_lng=origin_lng)
+        _store_pending(session, route_plan, origin_lat=origin_lat, origin_lng=origin_lng, route_no=route_no)
     else:
         _clear_pending(session)
 
     trace.skip(
         "GEMINI_REPLY_GENERATION",
         "자연어 안내 생성",
-        "검증된 경로를 10초 안에 안내하기 위해 규칙 기반 문장을 즉시 사용했어.",
+        "공급자 조회 실패를 알리는 규칙 기반 안내를 사용했습니다."
+        if route_plan.fallbackSource == FallbackSource.ERROR
+        else "경로 조회 결과에 대한 규칙 기반 안내를 사용했습니다.",
         provider="Gemini",
         operation="generateGroundedReply",
     )
@@ -1266,6 +1332,11 @@ def _try_answer_pending_destination(
         match = match_pending_choice_tool(text, session.pending_choice_names)
         query = match.candidate if match.matched else None
 
+    # A specific entrance name corrects the pending destination; resolve it
+    # normally without confirming the previous hospital or injecting any IDs.
+    if query is None and re.fullmatch(r"[가-힣A-Za-z0-9 .·]+(?:정문|후문|동문|서문|남문|북문)(?:이요|이야|입니다|으로)?[.!? ]*", text):
+        query = re.sub(r"(?:이요|이야|입니다|으로)?[.!? ]*$", "", text).strip()
+
     if query is None:
         trace.record(
             "PENDING_CHOICE_MATCH",
@@ -1295,13 +1366,23 @@ def _try_answer_pending_destination(
     )
     origin_lat = payload.originLat if payload.originLat is not None else session.pending_origin_lat
     origin_lng = payload.originLng if payload.originLng is not None else session.pending_origin_lng
+    route_no = session.pending_route_no
+    mode = payload.mode
+    if route_no is not None:
+        # The number was captured in dynamic Live mode. An omitted mode on a
+        # short answer inherits it instead of falling through to mock routing.
+        if mode == "mock" or not dynamic_route_discovery_enabled():
+            raise HTTPException(409, "Confirm this route in Live mode or start a new route search.")
+        mode = "live"
+        live = True
     route_plan = _plan_route(
         heard_text=query,
         origin_lat=origin_lat,
         origin_lng=origin_lng,
         live=live,
-        mode=payload.mode,
+        mode=mode,
         trace=trace,
+        **({"route_no": route_no} if route_no is not None else {}),
     )
     route_plan, message, tts_mode, used_gemini, fallback_source = _route_plan_response_tuple(
         session=session,
@@ -1312,6 +1393,7 @@ def _try_answer_pending_destination(
         origin_lng=origin_lng,
         trace=trace,
         history=_conversation_history_for_gemini(session),
+        route_no=route_no,
     )
     return _agent_response(
         trace=trace,
@@ -1335,6 +1417,7 @@ def _plan_route(
     live: bool,
     mode: str | None,
     trace: AgentTraceRecorder,
+    route_no: str | None = None,
 ) -> RoutePlanResponse:
     return plan_transit_route_tool(
         destination_text=heard_text,
@@ -1342,6 +1425,7 @@ def _plan_route(
         origin_lng=origin_lng,
         mode=mode,
         trace=trace,
+        **({"route_no": route_no} if route_no is not None else {}),
     )
 
 
@@ -1381,6 +1465,7 @@ def _store_pending(
     *,
     origin_lat: float | None,
     origin_lng: float | None,
+    route_no: str | None = None,
 ) -> None:
     destination = route_plan.destination
     session.pending_question = route_plan.question or destination.question
@@ -1388,6 +1473,7 @@ def _store_pending(
     session.pending_heard_text = route_plan.heardText
     session.pending_top_candidate_name = destination.topCandidate.name if destination.topCandidate else None
     session.pending_choice_names = [item.name for item in destination.candidates]
+    session.pending_route_no = route_no
     session.pending_origin_lat = origin_lat
     session.pending_origin_lng = origin_lng
     session.nearby_boarding_stops = [
@@ -1410,6 +1496,7 @@ def _clear_pending(session: V3SessionRecord) -> None:
     session.pending_heard_text = None
     session.pending_top_candidate_name = None
     session.pending_choice_names = []
+    session.pending_route_no = None
     session.pending_origin_lat = None
     session.pending_origin_lng = None
 

@@ -706,9 +706,14 @@ def _from_gateway_response(
     route_id: str | None = None,
     fallback_source: FallbackSource,
 ) -> V3BusArrivalsResponse:
+    from app.services.cheongju_route_planner import dynamic_route_discovery_enabled
+
     arrivals: list[V3BusArrival] = []
     route_keys = {key.strip() for key in (route_no, route_id) if key and key.strip()}
+    exact_route_id = route_id if dynamic_route_discovery_enabled() and fallback_source == FallbackSource.PUBLIC_API else None
     for item in response.arrivals:
+        if exact_route_id and item.routeId != exact_route_id:
+            continue
         if route_keys and item.busNo not in route_keys and item.routeId not in route_keys:
             continue
         arrivals.append(

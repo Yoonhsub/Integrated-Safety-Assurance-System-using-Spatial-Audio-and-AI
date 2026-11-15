@@ -86,7 +86,7 @@ def test_timeout_is_safe(monkeypatch):
     monkeypatch.setenv("PUBLIC_DATA_API_KEY","secret")
     def handler(req):raise httpx.ReadTimeout("secret URL",request=req)
     s=TagoBusStopsService(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ValueError,match="^TAGO_STOP_TIMEOUT$"):s.search_by_name(stop_name="청주대학교")
+    with pytest.raises(ValueError,match="^TAGO_STOP_READ_TIMEOUT$"):s.search_by_name(stop_name="청주대학교")
 
 
 def test_real_node_contract_reaches_resolver_without_injection(monkeypatch):
@@ -127,9 +127,99 @@ def test_cache_expiry_failure_never_returns_stale(monkeypatch):
     clock[0]+=60
     def fail(req): raise httpx.ReadTimeout("hidden",request=req)
     s._client=httpx.Client(transport=httpx.MockTransport(fail))
-    with pytest.raises(ValueError,match="TAGO_STOP_TIMEOUT"):
+    with pytest.raises(ValueError,match="TAGO_STOP_READ_TIMEOUT"):
         s.search_by_name(stop_name="충북대학교입구")
     assert not s._queries
+
+
+def test_destination_preview_prepares_shared_stops_for_route_search(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.api.routes import v3_bus
+    from app.main import app
+    from app.services import cheongju_bus_stops_service as stops
+    from app.services.cheongju_route_planner import CheongjuRoutePlanner
+    from app.services.route_stop_sequence_cache import RouteSequence, RouteStopNode
+
+    name = "청주대학교.뉴시스"
+    alight = dict(row("CJB284000031", lat=36.65074073), nodenm=name, gpslong=127.48910)
+    catalog, calls = service(monkeypatch, [row(), alight])
+    monkeypatch.setenv("CHEONGJU_BUS_STOPS_PROVIDER", "tago")
+    monkeypatch.setattr(stops, "_shared_bus_stops_service", lambda provider: catalog)
+    monkeypatch.setattr(v3_bus, "_destination_resolver", DestinationCandidateResolver())
+    origin = {"originLat": 36.63443041, "originLng": 127.454072}
+    preview = TestClient(app).get("/bus/destination-candidates", params={"q": name, "mode": "live", **origin})
+    assert preview.status_code == 200
+    prepared = preview.json()
+    assert prepared["status"] == "RESOLVED" and prepared["fallbackSource"] == "PUBLIC_API"
+    assert len(calls) == 2  # Reference coordinates, then origin coordinates.
+    assert all(request.url.path.endswith("/getCrdntPrxmtSttnList") for request in calls)
+    assert calls[0].url.params["gpsLati"] == "36.65074073"
+    assert calls[0].url.params["gpsLong"] == "127.48905996"
+    assert calls[0].extensions["timeout"]["read"] == 2.0
+    assert prepared["topCandidate"]["longitude"] == alight["gpslong"]
+
+    sequence = RouteSequence("CJB270002000", "105", (
+        RouteStopNode("CJB271000129", "충북대학교입구", 18),
+        RouteStopNode("CJB284000031", name, 29),
+    ), source=FallbackSource.PUBLIC_API)
+    planner = CheongjuRoutePlanner()
+    monkeypatch.setattr(planner, "_route_sequences", lambda *, live: [sequence])
+    with stops.stop_cache_only():
+        planned = planner.plan(heard_text="청주대학교·뉴시스", origin_lat=origin["originLat"],
+                               origin_lng=origin["originLng"], live=True)
+    assert len(calls) == 2
+    reused = planned.destination.model_dump(mode="json")
+    for field in ("originStops", "destinationStops"):
+        assert reused[field][0]["cacheHit"]
+        assert reused[field][0]["source"] == "PUBLIC_API"
+        assert reused[field][0]["fetchedAt"] == prepared[field][0]["fetchedAt"]
+    assert planned.recommendedPlan is not None, planned.model_dump(mode="json")
+    assert planned.recommendedPlan.segments[0].routeId == "CJB270002000"
+
+
+@pytest.mark.parametrize("node, name", [("CJB284000032", "청주대학교.뉴시스"), ("CJB284000031", "다른 정류장")])
+def test_nyusis_anchor_requires_live_stop_id_and_name(monkeypatch, node, name):
+    record = dict(row(node, lat=36.65074073), nodenm=name, gpslong=127.48905996)
+    catalog, calls = service(monkeypatch, [record])
+    result = DestinationCandidateResolver(stop_catalog=catalog).resolve(heard_text="청주대학교·뉴시스", live=True)
+    assert result.status.value == "NOT_FOUND" and result.fallbackSource == FallbackSource.PUBLIC_API
+    assert result.topCandidate is None and not result.destinationStops
+    assert len(calls) == 1 and calls[0].url.path.endswith("/getCrdntPrxmtSttnList")
+
+
+def test_nyusis_nearby_timeout_never_falls_back_to_name_or_seed(monkeypatch):
+    catalog, calls = service(monkeypatch, [])
+
+    def timeout(request):
+        calls.append(request)
+        raise httpx.ReadTimeout("offline timeout", request=request)
+
+    catalog._client = httpx.Client(transport=httpx.MockTransport(timeout))
+    result = DestinationCandidateResolver(stop_catalog=catalog).resolve(heard_text="청주대학교·뉴시스", live=True)
+    assert result.fallbackSource == FallbackSource.ERROR and result.topCandidate is None
+    assert len(calls) == 1 and calls[0].url.path.endswith("/getCrdntPrxmtSttnList")
+
+
+@pytest.mark.parametrize("invalid", ["source", "expired", "future", "naive"])
+def test_prepared_cache_rejects_invalid_provenance_without_network(monkeypatch, invalid):
+    from dataclasses import replace
+    from datetime import timedelta
+    from app.services.cheongju_bus_stops_service import stop_cache_only
+
+    catalog, calls = service(monkeypatch, [row()])
+    original = catalog.search_by_name(stop_name="충북대학교입구")[0]
+    key, (cached_at, _) = next(iter(catalog._queries.items()))
+    bad_row = {
+        "source": replace(original, endpoint="https://odcloud.invalid/stops"),
+        "expired": replace(original, fetched_at=original.fetched_at - timedelta(seconds=60)),
+        "future": replace(original, fetched_at=original.fetched_at + timedelta(minutes=1)),
+        "naive": replace(original, fetched_at=original.fetched_at.replace(tzinfo=None)),
+    }[invalid]
+    catalog._queries[key] = (cached_at, (bad_row,))
+
+    with stop_cache_only(), pytest.raises(ValueError, match="TAGO_STOP_CACHE_NOT_READY"):
+        catalog.search_by_name(stop_name="충북대학교입구")
+    assert len(calls) == 1 and not catalog._queries
 
 
 def test_cache_exact_query_isolation_and_empty_not_cached(monkeypatch):
@@ -200,13 +290,13 @@ def test_exact_tago_stop_skips_fuzzy_known_place_lookup(monkeypatch):
     assert result and result[0].stopId=="CJB271000129"
 
 
-def test_empty_exact_search_keeps_fuzzy_verification(monkeypatch):
+def test_empty_exact_search_does_not_substitute_seed_or_extra_lookup(monkeypatch):
     s,calls=service(monkeypatch,[])
     class NoLocal:
         def search(self,*args,**kwargs): return []
     resolver=DestinationCandidateResolver(stop_catalog=s,local_search=NoLocal())
     resolver._build_candidates("청주대학교.뉴시스",normalized="청주대학교뉴시스",origin_lat=None,origin_lng=None,live=True)
-    assert any(r.url.params["nodeNm"]=="청주대학교" for r in calls)
+    assert len(calls)==1 and calls[0].url.params["nodeNm"]=="청주대학교.뉴시스"
 
 
 def test_shared_factory_reuses_resolver_and_nearby(monkeypatch):
@@ -294,3 +384,51 @@ def test_direct_tago_lookup_respects_camera_guard(monkeypatch):
     with pytest.raises(ValueError,match="TAGO_STOP_CACHE_NOT_READY"):
         s.search_by_name(stop_name="충북대학교입구")
     assert not calls
+
+def test_live_campus_uses_provider_coordinates_not_exact_seed(monkeypatch):
+    record={**row(node='CJB284000031',lat=36.65074073),'nodenm':'청주대학교.뉴시스','gpslong':127.48950966}
+    s,calls=service(monkeypatch,[record])
+    result=DestinationCandidateResolver(stop_catalog=s).resolve(heard_text='청주대학교',origin_lat=36.63443041,origin_lng=127.454072,live=True)
+    assert result.topCandidate.stopId=='CJB284000031'
+    assert result.topCandidate.latitude==record['gpslati']
+    assert result.topCandidate.source==FallbackSource.PUBLIC_API
+    assert all(c.source==FallbackSource.PUBLIC_API for c in result.candidates)
+    assert not any(r.url.params.get('gpsLong')=='127.49519913' for r in calls)
+
+
+def test_live_empty_campus_never_falls_back_to_seed(monkeypatch):
+    s,calls=service(monkeypatch,[])
+    resolver=DestinationCandidateResolver(stop_catalog=s)
+    empty=resolver.resolve(heard_text='청주대학교',live=True)
+    assert empty.topCandidate is None and not empty.candidates
+    assert empty.fallbackSource==FallbackSource.PUBLIC_API and len(calls)==1
+    mock=resolver.resolve(heard_text='청주대학교',live=False)
+    assert mock.topCandidate.source==FallbackSource.MOCK
+
+
+@pytest.mark.parametrize('failure,code',[(httpx.ReadTimeout,'TAGO_STOP_READ_TIMEOUT'),(httpx.ConnectTimeout,'TAGO_STOP_CONNECT_TIMEOUT'),(httpx.ConnectError,'TAGO_STOP_CONNECTION_ERROR')])
+def test_live_failure_is_not_normal_empty_and_logs_no_secret(monkeypatch,caplog,failure,code):
+    s,_=service(monkeypatch,[])
+    def fail(req):raise failure('test+key https://secret.invalid?serviceKey=secret',request=req)
+    s._client=httpx.Client(transport=httpx.MockTransport(fail))
+    result=DestinationCandidateResolver(stop_catalog=s).resolve(heard_text='청주대학교',live=True)
+    assert result.topCandidate is None and result.fallbackSource==FallbackSource.ERROR
+    assert '조회에 실패' in result.question and code in caplog.text
+    assert 'test+key' not in caplog.text and 'secret.invalid' not in caplog.text
+    assert not s._queries
+
+
+def test_dot_variant_uses_one_canonical_query_and_cache(monkeypatch):
+    s,calls=service(monkeypatch,[{**row(),'nodenm':'청주대학교.뉴시스'}])
+    assert s.search_by_name(stop_name='청주대학교·뉴시스')
+    assert s.search_by_name(stop_name='청주대학교.뉴시스')[0].cache_hit
+    assert len(calls)==1 and calls[0].url.params['nodeNm']=='청주대학교.뉴시스'
+    assert calls[0].extensions['timeout']['read']==2.0
+
+
+def test_http_failure_logs_status_not_upstream_payload(monkeypatch,caplog):
+    s,calls=service(monkeypatch,[],status=503)
+    result=DestinationCandidateResolver(stop_catalog=s).resolve(heard_text='청주대학교',live=True)
+    assert result.fallbackSource==FallbackSource.ERROR
+    assert 'status=503' in caplog.text and 'TAGO_STOP_HTTP_ERROR' in caplog.text
+    assert 'test+key' not in caplog.text and len(calls)==1

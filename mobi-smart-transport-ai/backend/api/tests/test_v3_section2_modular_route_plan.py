@@ -268,3 +268,41 @@ def _segment(route_no: str, *, arrival_minutes: int, stop_count: int) -> RoutePl
             )
         ],
     )
+
+
+def test_dynamic_tago_discovery_in_product_without_trial_scope(monkeypatch):
+    from types import SimpleNamespace
+    from app.schemas.v3 import DestinationCandidate, DestinationResolveResponse, NearbyStopCandidate
+
+    monkeypatch.setenv('CHEONGJU_ROUTE_PLAN_ROUTE_NOS', 'auto')
+    monkeypatch.setenv('CHEONGJU_BUS_STOPS_PROVIDER', 'tago')
+    origin = NearbyStopCandidate(stopId='CJB271000129', stopName='충북대학교입구', latitude=36.63443,
+        longitude=127.45407, source='PUBLIC_API')
+    alight = NearbyStopCandidate(stopId='CJB284000031', stopName='청주대학교·뉴시스', latitude=36.65074,
+        longitude=127.48906, source='PUBLIC_API')
+    destination = DestinationResolveResponse(status='RESOLVED', heardText=alight.stopName, normalizedText=alight.stopName,
+        topCandidate=DestinationCandidate(name=alight.stopName, type='STOP', confidence=1.0, latitude=alight.latitude,
+            longitude=alight.longitude, stopId=alight.stopId, source='PUBLIC_API'),
+        originStops=[origin], destinationStops=[alight], fallbackSource='PUBLIC_API')
+    calls = []
+
+    def routes(city, stop):
+        assert city == '33010' and stop in {origin.stopId, alight.stopId}
+        calls.append(stop)
+        return {'CJB_FORWARD': '611', 'CJB_REVERSE': '611'}
+
+    def stops(city, route, *, verify_page):
+        assert city == '33010' and verify_page
+        calls.append(route)
+        pair = [origin, alight] if route == 'CJB_FORWARD' else [alight, origin]
+        return NormalizedBusRouteStopsResponse(routeId=route, nodes=[
+            NormalizedBusRouteNode(nodeId=stop.stopId, nodeNm=stop.stopName, nodeOrd=index)
+            for index, stop in enumerate(pair, start=1)])
+
+    service = SimpleNamespace(routes_serving_stop=routes, get_route_stops=stops)
+    planner = CheongjuRoutePlanner(resolver=SimpleNamespace(resolve=lambda **_: destination), route_service=service)
+    result = planner.plan(heard_text=alight.stopName, origin_lat=origin.latitude, origin_lng=origin.longitude, live=True)
+    assert result.status.value == 'RESOLVED'
+    assert [plan.segments[0].routeId for plan in result.plans] == ['CJB_FORWARD']
+    assert result.recommendedPlan.segments[0].routeNo == '611'
+    assert calls == [origin.stopId, alight.stopId, 'CJB_FORWARD', 'CJB_REVERSE']

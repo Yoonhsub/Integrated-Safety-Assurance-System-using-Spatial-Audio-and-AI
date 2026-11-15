@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import math
 import time
 from dataclasses import dataclass, replace
@@ -17,6 +18,18 @@ import httpx
 _DEFAULT_BASE_URL = "https://api.odcloud.kr/api"
 _DEFAULT_PATH = "/15041896/v1/uddi:083f11f7-5067-429b-a75d-e32f94269aaf"
 _CACHE_ONLY = ContextVar("tago_stop_cache_only", default=False)
+
+
+class StopLookupError(ValueError):
+    """Fixed diagnostic code only; never retain upstream exception text/URL."""
+    def __init__(self, code):
+        allowed = {"TAGO_STOP_TIMEOUT", "TAGO_STOP_HTTP_ERROR", "TAGO_STOP_MALFORMED",
+                   "TAGO_STOP_PROVIDER_REJECTED", "TAGO_STOP_INCOMPLETE_PAGE",
+                   "TAGO_STOP_CITY_MISSING", "TAGO_STOP_INVALID_ROW", "TAGO_STOP_CONFLICTING_NODE",
+                   "TAGO_STOP_READ_TIMEOUT", "TAGO_STOP_CONNECT_TIMEOUT", "TAGO_STOP_CONNECTION_ERROR",
+                   "TAGO_STOP_BUSY", "TAGO_STOP_CACHE_NOT_READY", "TAGO_STOP_KEY_MISSING",
+                   "TAGO_STOP_UNAVAILABLE", "TAGO_STOP_INVALID_COORDINATES"}
+        super().__init__(code if code in allowed else "TAGO_STOP_UNAVAILABLE")
 
 
 def stop_cache_only_active() -> bool:
@@ -312,16 +325,26 @@ class TagoBusStopsService(CheongjuBusStopsService):
     def endpoint(self) -> str:
         return self._base
 
+    def _valid_cache_rows(self, operation: str, rows: tuple[CheongjuBusStopMatch, ...]) -> bool:
+        expected_endpoint = f"{self.endpoint}/{operation}"
+        now = datetime.now(timezone.utc)
+        return bool(rows) and all(
+            row.endpoint == expected_endpoint
+            and row.fetched_at.utcoffset() is not None
+            and 0 <= (now - row.fetched_at).total_seconds() < self._cache_seconds
+            for row in rows
+        )
+
     def _query(self, operation: str, params: dict) -> list[CheongjuBusStopMatch]:
         # Exact request identity; never cache credentials, failures or empty results.
         # Nonblocking lock avoids queueing another external lookup behind a slow one.
         if not self._is_enabled():
             return []
         if not os.getenv("PUBLIC_DATA_API_KEY", "").strip():
-            raise ValueError("TAGO_STOP_KEY_MISSING")
+            raise StopLookupError("TAGO_STOP_KEY_MISSING")
         identity = (self._base, "33010", operation, tuple(sorted(params.items())))
         if not self._query_lock.acquire(blocking=False):
-            raise ValueError("TAGO_STOP_BUSY")
+            raise StopLookupError("TAGO_STOP_BUSY")
         try:
             now = time.monotonic()
             expired = [k for k, (at, _) in self._queries.items() if now - at >= self._cache_seconds]
@@ -329,14 +352,17 @@ class TagoBusStopsService(CheongjuBusStopsService):
                 del self._queries[k]
             cached = self._queries.get(identity)
             if cached is not None:
-                self._queries.move_to_end(identity)
-                return [replace(m, cache_hit=True) for m in cached[1]]
+                if self._valid_cache_rows(operation, cached[1]):
+                    self._queries.move_to_end(identity)
+                    return [replace(m, cache_hit=True) for m in cached[1]]
+                del self._queries[identity]
             from app.services.vision_binding_service import vision_binding_service
             if _CACHE_ONLY.get() or vision_binding_service.has_camera_reservation():
-                raise ValueError("TAGO_STOP_CACHE_NOT_READY")
+                raise StopLookupError("TAGO_STOP_CACHE_NOT_READY")
             rows = self._fetch_query(operation, params)
-            if rows and self._cache_seconds > 0:
-                self._queries[identity] = (time.monotonic(), tuple(rows))
+            cache_rows = tuple(rows)
+            if self._valid_cache_rows(operation, cache_rows):
+                self._queries[identity] = (time.monotonic(), cache_rows)
                 while len(self._queries) > 128:
                     self._queries.popitem(last=False)
             return rows
@@ -351,11 +377,19 @@ class TagoBusStopsService(CheongjuBusStopsService):
                 self._client = None
 
     def _fetch_query(self, operation: str, params: dict) -> list[CheongjuBusStopMatch]:
+        try:
+            return self._fetch_query_checked(operation, params)
+        except StopLookupError as exc:
+            logging.getLogger(__name__).warning("tago_stop_diagnostic operation=%s code=%s",
+                operation if operation in {"getSttnNoList", "getCrdntPrxmtSttnList"} else "unknown", str(exc))
+            raise
+
+    def _fetch_query_checked(self, operation: str, params: dict) -> list[CheongjuBusStopMatch]:
         if not self._is_enabled():
             return []
         key = os.getenv("PUBLIC_DATA_API_KEY", "").strip()
         if not key:
-            raise ValueError("TAGO_STOP_KEY_MISSING")
+            raise StopLookupError("TAGO_STOP_KEY_MISSING")
         # The key is decoded once; httpx performs the one URL encoding step.
         from urllib.parse import unquote
         params = {**params, "serviceKey": unquote(key), "_type": "json", "pageNo": 1, "numOfRows": 100}
@@ -372,51 +406,62 @@ class TagoBusStopsService(CheongjuBusStopsService):
             response.raise_for_status()
             payload = response.json()["response"]
             if str(payload["header"]["resultCode"]) not in {"0", "00"}:
-                raise ValueError("TAGO_STOP_PROVIDER_REJECTED")
+                raise StopLookupError("TAGO_STOP_PROVIDER_REJECTED")
             body = payload["body"]
             total = int(body["totalCount"])
             rows = (body.get("items") or {}).get("item", [])
             if isinstance(rows, dict):
                 rows = [rows]
             if not isinstance(rows, list) or total < 0:
-                raise ValueError("TAGO_STOP_MALFORMED")
+                raise StopLookupError("TAGO_STOP_MALFORMED")
             if total != len(rows) or int(body.get("pageNo", 1)) != 1:
-                raise ValueError("TAGO_STOP_INCOMPLETE_PAGE")
+                raise StopLookupError("TAGO_STOP_INCOMPLETE_PAGE")
             fetched = datetime.now(timezone.utc)
             unique = {}
             for row in rows:
                 # Nearby API includes citycode; name lookup is scoped by cityCode.
                 city = row.get("citycode")
                 if operation == "getCrdntPrxmtSttnList" and city is None:
-                    raise ValueError("TAGO_STOP_CITY_MISSING")
+                    raise StopLookupError("TAGO_STOP_CITY_MISSING")
                 if city is not None and str(city) != "33010":
                     continue
                 if not isinstance(row["nodeid"], str) or not isinstance(row["nodenm"], str):
-                    raise ValueError("TAGO_STOP_INVALID_ROW")
+                    raise StopLookupError("TAGO_STOP_INVALID_ROW")
                 node = row["nodeid"].strip()
                 name = row["nodenm"].strip()
                 lat, lng = float(row["gpslati"]), float(row["gpslong"])
                 import re
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", node) or not name or not (-90 <= lat <= 90 and -180 <= lng <= 180):
-                    raise ValueError("TAGO_STOP_INVALID_ROW")
+                    raise StopLookupError("TAGO_STOP_INVALID_ROW")
                 match = CheongjuBusStopMatch(node, name, lng, lat, url, fetched, total)
                 if node in unique and unique[node] != match:
-                    raise ValueError("TAGO_STOP_CONFLICTING_NODE")
+                    raise StopLookupError("TAGO_STOP_CONFLICTING_NODE")
                 unique[node] = match
             return list(unique.values())
+        except httpx.ReadTimeout:
+            raise StopLookupError("TAGO_STOP_READ_TIMEOUT") from None
+        except httpx.ConnectTimeout:
+            raise StopLookupError("TAGO_STOP_CONNECT_TIMEOUT") from None
+        except httpx.ConnectError:
+            raise StopLookupError("TAGO_STOP_CONNECTION_ERROR") from None
         except httpx.TimeoutException:
-            raise ValueError("TAGO_STOP_TIMEOUT") from None
+            raise StopLookupError("TAGO_STOP_TIMEOUT") from None
+        except httpx.HTTPStatusError as exc:
+            logging.getLogger(__name__).warning("tago_stop_http status=%s", exc.response.status_code)
+            raise StopLookupError("TAGO_STOP_HTTP_ERROR") from None
         except httpx.HTTPError:
-            raise ValueError("TAGO_STOP_HTTP_ERROR") from None
+            raise StopLookupError("TAGO_STOP_HTTP_ERROR") from None
         except (KeyError, TypeError, AttributeError, OverflowError):
-            raise ValueError("TAGO_STOP_MALFORMED") from None
+            raise StopLookupError("TAGO_STOP_MALFORMED") from None
+        except StopLookupError:
+            raise
         except ValueError as exc:
             # Never expose JSON parser text, raw body, URL or service key.
             allowed = {"TAGO_STOP_PROVIDER_REJECTED", "TAGO_STOP_MALFORMED", "TAGO_STOP_INCOMPLETE_PAGE", "TAGO_STOP_CITY_MISSING", "TAGO_STOP_INVALID_ROW", "TAGO_STOP_CONFLICTING_NODE"}
-            raise ValueError(str(exc) if str(exc) in allowed else "TAGO_STOP_MALFORMED") from None
+            raise StopLookupError(str(exc) if str(exc) in allowed else "TAGO_STOP_MALFORMED") from None
 
     def search_by_name(self, *, stop_name: str, limit: int = 5) -> list[CheongjuBusStopMatch]:
-        query = stop_name.strip()
+        query = stop_name.strip().replace("·", ".")
         if not query:
             return []
         rows = self._query("getSttnNoList", {"cityCode": "33010", "nodeNm": query})
@@ -431,7 +476,7 @@ class TagoBusStopsService(CheongjuBusStopsService):
 
     def find_nearest(self, *, stop_name: str, origin_lat: float, origin_lng: float) -> CheongjuBusStopMatch | None:
         if not (-90 <= origin_lat <= 90 and -180 <= origin_lng <= 180):
-            raise ValueError("TAGO_STOP_INVALID_COORDINATES")
+            raise StopLookupError("TAGO_STOP_INVALID_COORDINATES")
         matches = self.search_by_name(stop_name=stop_name, limit=100)
         if not matches:
             return None
@@ -443,7 +488,7 @@ class TagoBusStopsService(CheongjuBusStopsService):
 
     def find_nearby(self, *, origin_lat: float, origin_lng: float, limit: int = 5, radius_meters: float = 1000.0) -> list[CheongjuBusStopMatch]:
         if not (-90 <= origin_lat <= 90 and -180 <= origin_lng <= 180) or not math.isfinite(radius_meters) or radius_meters < 0:
-            raise ValueError("TAGO_STOP_INVALID_COORDINATES")
+            raise StopLookupError("TAGO_STOP_INVALID_COORDINATES")
         from dataclasses import replace
         matches = self._query("getCrdntPrxmtSttnList", {"gpsLati": origin_lat, "gpsLong": origin_lng})
         matches = [replace(m, distance_meters=self._distance_meters(origin_lat, origin_lng, m.latitude, m.longitude)) for m in matches]

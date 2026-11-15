@@ -12,6 +12,7 @@ from app.schemas.v3 import (
     AgentIntent,
     DestinationCandidateType,
     DestinationResolveResponse,
+    FallbackSource,
     GuidanceSessionState,
     RoutePlanReadiness,
     RoutePlanResponse,
@@ -128,7 +129,7 @@ def classify_agent_intent(
         term in compact
         for term in (
             "몇번", "가야", "가려면", "가고싶", "가자", "가는법", "어떻게가", "타야",
-            "가는버스", "가는노선", "가는길", "노선검색", "경로검색", "길찾기",
+            "가는버스", "가는노선", "가는길", "가는경로", "노선검색", "경로검색", "길찾기",
             "길찾아줘", "경로찾아줘",
         )
     ):
@@ -318,6 +319,7 @@ def plan_transit_route_tool(
     *,
     resolver: DestinationCandidateResolver | None = None,
     trace: AgentTraceRecorder | None = None,
+    route_no: str | None = None,
 ) -> RoutePlanResponse:
     live = _resolve_live(mode)
     arrivals_by_route: dict[tuple[str, str, str], V3BusArrivalsResponse] = {}
@@ -344,6 +346,7 @@ def plan_transit_route_tool(
             origin_lat=origin_lat,
             origin_lng=origin_lng,
             live=live,
+            **({"route_no": route_no} if route_no is not None else {}),
         )
     )
     if trace:
@@ -558,6 +561,27 @@ def _record_route_plan_trace(
 ) -> None:
     destination = route_plan.destination
     top_candidate = destination.topCandidate
+    if destination.fallbackSource == FallbackSource.ERROR:
+        # A provider failure is not a completed search or verified local result.
+        # Do not invent the failing transport phase from an aggregate response.
+        trace.record(
+            "DESTINATION_RESOLVE", "목적지 조회 실패",
+            "정류장 공급자 조회 실패로 목적지를 확인하지 못했습니다.",
+            status="FAILED", operation="resolveDestination",
+            safe_payload={"resolutionStatus": destination.status.value, "fallbackSource": "ERROR"},
+            warning="공급자 조회 실패. 정상 빈 결과와 구분합니다.",
+        )
+        for event_type, title in (
+            ("KAKAO_PLACE_SEARCH", "외부 장소 검색"),
+            ("NEARBY_STOP_SEARCH", "주변 정류장 후보 확인"),
+            ("NEAR_DESTINATION_GUARD", "목적지 근접 여부 확인"),
+            ("ODSAY_ROUTE_SEARCH", "경로 탐색"),
+            ("TAGO_ROUTE_VERIFY", "노선 방향 검증"),
+            ("TAGO_ARRIVAL_LOOKUP", "도착정보 확인"),
+            ("SERVICE_STATUS_CHECK", "운행 시간 확인"),
+        ):
+            trace.skip(event_type, title, "목적지 조회 실패로 이 단계의 완료를 확인할 수 없습니다.")
+        return
     trace.record(
         "DESTINATION_RESOLVE",
         "목적지 후보 확인 완료",
@@ -755,7 +779,7 @@ def _destination_candidate_text(utterance: str) -> str | None:
         r"(으로|로|에)?\s*가려면.*$",
         r"(으로|로)?\s*가야\s*(하는데|돼|해)?.*$",
         r"(으로|로)?\s*가자.*$",
-        r"(으로|로)?\s*가는\s*(법|길|버스|노선).*$",
+        r"(으로|로)?\s*가는\s*(법|길|버스|노선|경로).*$",
         r"(까지)?\s*어떻게\s*가.*$",
         r"(까지)?\s*몇\s*번.*$",
         r"(까지)?\s*몇번.*$",

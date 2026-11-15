@@ -7,6 +7,8 @@ from typing import Iterable, Sequence
 from app.schemas.v3 import FallbackSource
 from services.public_data.public_data_client import BusRouteService
 
+_MAX_DYNAMIC_ROUTES = 3
+
 
 @dataclass(frozen=True)
 class RouteStopNode:
@@ -111,6 +113,29 @@ class RouteStopSequenceCache:
     def load_live_routes(self, route_nos: Iterable[str]) -> None:
         with self._load_lock:
             self._load_live_routes(route_nos)
+
+    def lookup_verified_route(self, route_no: str) -> list[RouteSequence]:
+        route_ids = self._route_service.resolve_route_ids(self._city_code, route_no, verify_page=True)
+        return self._verified_sequences({route_id: route_no for route_id in route_ids})
+
+    def discover_direct(self, origin_ids: list[str], destination_ids: list[str], *, route_no: str | None = None) -> list[RouteSequence]:
+        stop_routes = {stop_id: self._route_service.routes_serving_stop(self._city_code, stop_id)
+                       for stop_id in dict.fromkeys(origin_ids + destination_ids)}
+        origin_routes = {route_id: number for stop_id in origin_ids for route_id, number in stop_routes[stop_id].items()}
+        destination_routes = {route_id: number for stop_id in destination_ids for route_id, number in stop_routes[stop_id].items()}
+        common = {route_id: number for route_id, number in origin_routes.items()
+                  if destination_routes.get(route_id) == number and (route_no is None or number == route_no)}
+        return self._verified_sequences(common)
+
+    def _verified_sequences(self, routes: dict[str, str]) -> list[RouteSequence]:
+        sequences = []
+        for route_id, number in list(routes.items())[:_MAX_DYNAMIC_ROUTES]:
+            result = self._route_service.get_route_stops(self._city_code, route_id, verify_page=True)
+            if result.nodes:
+                nodes = tuple(RouteStopNode(node.nodeId, node.nodeNm, node.nodeOrd)
+                              for node in sorted(result.nodes, key=lambda node: node.nodeOrd))
+                sequences.append(RouteSequence(route_id, number, nodes, FallbackSource.PUBLIC_API))
+        return sequences
 
     def live_load_status(self, route_nos: Iterable[str]) -> str:
         requested = {route_no.strip() for route_no in route_nos if route_no.strip()}
