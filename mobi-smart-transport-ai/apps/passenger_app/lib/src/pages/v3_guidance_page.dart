@@ -1560,8 +1560,12 @@ class _V3GuidancePageState extends State<V3GuidancePage>
   }
 
   bool _looksLikeRouteRequest(String utterance) {
-    final compact = utterance.replaceAll(' ', '');
-    return ['가는버스', '가는노선', '가는길', '노선검색', '경로검색', '길찾기', '길찾아', '경로찾아', '가려면']
+    final compact = utterance.replaceAll(RegExp(r'\s+'), '');
+    final bareDestination =
+        RegExp(r'^[가-힣0-9·.]{2,40}(?:대학교|대입구역?|입구역?|정류장|정문|후문)[?!.]*$')
+            .hasMatch(compact);
+    return bareDestination ||
+        ['가는버스', '가는노선', '가는길', '노선검색', '경로검색', '길찾기', '길찾아', '경로찾아', '가려면']
             .any(compact.contains) ||
         utterance.contains('가야') ||
         utterance.contains('가고 싶') ||

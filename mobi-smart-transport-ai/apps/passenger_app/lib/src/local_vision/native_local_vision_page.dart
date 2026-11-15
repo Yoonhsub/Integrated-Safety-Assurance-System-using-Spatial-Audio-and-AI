@@ -17,7 +17,7 @@ import '../services/vision_screen_audio.dart';
 import '../widgets/vision_screen_audio_panel.dart';
 import '../features/hardware_bus/wit_sensor_panel.dart';
 
-/// Offline by default. Optional transport and opt-in screen-only information audio.
+/// Optional transport and camera-screen information audio.
 /// Safety output remains disabled. The shared engine is owned by Guidance.
 class LocalVisionPage extends StatefulWidget {
   const LocalVisionPage(
@@ -63,6 +63,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   final _runTime = Stopwatch();
   late final FramePump _pump;
   VisionScreenAudio? _previewAudio;
+  final _history = DetectedFrameHistory();
+  bool get _automaticPreviewAudio =>
+      widget.remoteApi != null && widget.onResult != null;
   Uint8List? _model;
   VisionWorker? _worker;
   CameraController? _camera;
@@ -86,12 +89,15 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     WidgetsBinding.instance.addObserver(this);
     _pump = FramePump(
         (frame) => _worker!.infer(frame), () => _clock.elapsedMicroseconds,
+        onLocalResult: _onLocalResult,
         onResult: widget.onResult ?? widget.producer?.submit);
     _authSubscription = widget.authChanges?.listen((_) {
       if (widget.sessionCurrent?.call() == false) {
+        _history.clear();
         unawaited(_stop(reason: '로그인 또는 안내 세션이 종료되었습니다'));
       }
     }, onError: (Object _) {
+      _history.clear();
       unawaited(_stop(reason: '로그인 상태를 확인할 수 없어 카메라를 중지했습니다'));
     });
     if (widget.previewPriority != null && widget.previewEngine != null) {
@@ -99,7 +105,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           priority: widget.previewPriority!,
           engine: widget.previewEngine!,
           sessionGeneration: widget.previewScope,
-          confirmationFrames: 3,
+          confirmationFrames: _automaticPreviewAudio ? 1 : 3,
           sceneMode: false,
           pingOnly: false,
           minimumInterval: const Duration(seconds: 8),
@@ -109,6 +115,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               mounted &&
               !_disposing &&
               _pump.active &&
+              !_pump.lost &&
               widget.sessionCurrent?.call() != false);
     }
     _pump.addListener(_changed);
@@ -118,19 +125,23 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   void _changed() {
     if (!mounted || _disposing) return;
     setState(() {});
-    final item = _pump.observation;
-    if (item != null && _pump.active && _pump.error == null) {
-      _previewAudio?.observe(item.toDetectionResult(),
-          receivedAt: item.frame.receivedAt,
-          inferenceMs: item.inferenceMs,
-          processingMs: item.processingMs,
-          age: Duration(
-              microseconds:
-                  _clock.elapsedMicroseconds - item.frame.receivedMicros));
-    }
     if (_pump.error != null && _camera != null) {
       unawaited(_stop(reason: _pump.error!));
     }
+  }
+
+  void _onLocalResult(LocalObservation item, Map<String, Object?> result) {
+    if (!mounted || _disposing || widget.sessionCurrent?.call() == false) {
+      return;
+    }
+    _history.record(item);
+    _previewAudio?.observe(result,
+        receivedAt: item.frame.receivedAt,
+        inferenceMs: item.inferenceMs,
+        processingMs: item.processingMs,
+        age: Duration(
+            microseconds:
+                _clock.elapsedMicroseconds - item.frame.receivedMicros));
   }
 
   @override
@@ -251,6 +262,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
         return;
       }
       _pump.start();
+      if (_automaticPreviewAudio) _previewAudio?.setEnabled(true);
       _runTime
         ..reset()
         ..start();
@@ -285,6 +297,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   void _onFrame(CameraImage image, int generation) {
     if (_disposing || generation != _generation) return;
     if (widget.sessionCurrent?.call() == false) {
+      _history.clear();
       unawaited(_stop(reason: '안내 세션 종료 · 카메라 중지'));
       return;
     }
@@ -364,6 +377,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_authSubscription?.cancel());
     _pump.removeListener(_changed);
+    _history.dispose();
     _previewAudio?.dispose(); // Retire UI callbacks before any lease release.
     unawaited(_stop());
     _pump.dispose();
@@ -424,16 +438,18 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                         aspectRatio: _camera!.value.aspectRatio,
                         child: CameraPreview(_camera!))
                     : null,
-                snapshot: item == null
-                    ? null
-                    : AspectRatio(
-                        aspectRatio: item.width / item.height,
-                        child: Stack(fit: StackFit.expand, children: [
-                          Image.memory(item.jpeg,
-                              fit: BoxFit.fill, gaplessPlayback: true),
-                          CustomPaint(painter: _BoxPainter(item.boxes)),
-                        ])),
               ),
+              DescribedAction.button(
+                  label: '인식 프레임 확인',
+                  description: '객체가 검출된 프레임을 별도 화면에서 확인합니다.',
+                  immediate: false,
+                  child: OutlinedButton(
+                      onPressed: () {
+                        final page = _DetectedFramesPage(_history);
+                        Navigator.of(context).push(
+                            MaterialPageRoute<void>(builder: (_) => page));
+                      },
+                      child: const Text('인식 프레임 확인'))),
               if (item != null && item.boxes.isNotEmpty)
                 Card(
                     child: Padding(
@@ -458,21 +474,10 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                                     '외 ${item.boxes.length - 3}개 · 검출 이미지에서 확인'),
                             ]))),
               const SizedBox(height: 12),
-              const Card(
-                  child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text(
-                          '화면 기준의 객체 안내입니다. 실제 거리·공간 방향·출입문·승차 가능 여부를 판단하지 않습니다.'))),
-              Text(widget.producer == null && widget.onResult == null
-                  ? 'LOCAL_DEMO · Backend 미연결 · 로컬 결과만 표시'
-                  : _pump.error != null
-                      ? 'UNAVAILABLE · 온라인 전송 중지 · 연결 상태를 확인한 뒤 다시 시작해 주세요'
-                      : 'ONLINE 연결 경로 · 서버 수신 여부는 아래 서버 관찰에서 확인'),
-              Text(widget.producer == null && widget.onResult == null
-                  ? '휴대폰 내부 관찰 · 서버로 전송하지 않습니다. 승차 판단에 사용하지 않습니다.'
-                  : _previewAudio == null
-                      ? '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·자동 음성 안내는 없습니다.'
-                      : '현재 안내 세션으로 검출 결과만 전송합니다. 영상 업로드·위험 안내는 없습니다. 객체 음성·방향음은 직접 켠 경우만 출력합니다.'),
+              if (widget.remoteApi == null &&
+                  widget.producer == null &&
+                  widget.onResult == null)
+                const Text('휴대폰 내부 관찰 · 서버로 전송하지 않습니다.'),
               Wrap(spacing: 8, children: [
                 DescribedAction.button(
                     label: widget.bundledModel ? '모델 다시 준비' : 'TFLite 모델 선택',
@@ -502,7 +507,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                     audio: _previewAudio!,
                     cameraActive: _pump.active,
                     showStopButton: false,
-                    diagnostics: widget.remoteApi == null),
+                    diagnostics: widget.remoteApi == null,
+                    automaticallyEnabled: _automaticPreviewAudio),
               if (_previewAudio != null && widget.remoteApi == null)
                 ExpansionTile(
                     title: const Text('WT901 Head Tracking (기본 OFF)'),
@@ -600,27 +606,91 @@ class _BoxPainter extends CustomPainter {
   bool shouldRepaint(_BoxPainter oldDelegate) => oldDelegate.boxes != boxes;
 }
 
-/// Live video does not depend on inference/HTTP cadence. Expired detections
-/// disappear independently; no historical boxes are painted over live video.
+/// Fixed live surface. Detection images are rendered only in the history page.
 class CameraObservationSurface extends StatelessWidget {
-  const CameraObservationSurface({super.key, this.livePreview, this.snapshot});
+  const CameraObservationSurface({super.key, this.livePreview});
   final Widget? livePreview;
-  final Widget? snapshot;
   @override
-  Widget build(BuildContext context) => Column(children: [
-        SizedBox(
-          key: const ValueKey('live-camera-surface'),
-          height: 300,
-          child: livePreview == null
-              ? const Center(child: Text('카메라 시작을 기다리고 있습니다'))
-              : Center(child: livePreview),
+  Widget build(BuildContext context) => SizedBox(
+        key: const ValueKey('live-camera-surface'),
+        height: 300,
+        child: livePreview == null
+            ? const Center(child: Text('카메라 시작을 기다리고 있습니다'))
+            : Center(child: livePreview),
+      );
+}
+
+typedef DetectedFrame = ({
+  String id,
+  DateTime receivedAt,
+  Uint8List jpeg,
+  List<LocalBox> boxes,
+  int width,
+  int height,
+});
+
+/// Keep compressed images and boxes in camera-screen memory, without raw planes.
+class DetectedFrameHistory extends ValueNotifier<List<DetectedFrame>> {
+  DetectedFrameHistory() : super(const []);
+
+  void record(LocalObservation item) {
+    if (item.boxes.isEmpty || item.jpeg.isEmpty) return;
+    final id = item.frame.frameId;
+    if (value.isNotEmpty && value.first.id == id) return;
+    value = List.unmodifiable([
+      (
+        id: id,
+        receivedAt: item.frame.receivedAt,
+        jpeg: item.jpeg,
+        boxes: List<LocalBox>.unmodifiable(item.boxes),
+        width: item.width,
+        height: item.height,
+      ),
+      ...value.take(23),
+    ]);
+  }
+
+  void clear() => value = const [];
+}
+
+class _DetectedFramesPage extends StatelessWidget {
+  _DetectedFramesPage(this.history) : frames = history.value;
+  final DetectedFrameHistory history;
+  final List<DetectedFrame> frames;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('인식 프레임 확인')),
+        body: ValueListenableBuilder(
+          valueListenable: history,
+          builder: (context, current, child) =>
+              frames.isEmpty || current.isEmpty
+                  ? const Center(child: Text('저장된 검출 프레임이 없습니다.'))
+                  : child!,
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: frames.length,
+            itemBuilder: (context, index) {
+              final frame = frames[index];
+              return Padding(
+                key: ValueKey(frame.id),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('수신 시각: ${frame.receivedAt.toLocal()}'),
+                    AspectRatio(
+                      aspectRatio: frame.width / frame.height,
+                      child: Stack(fit: StackFit.expand, children: [
+                        Image.memory(frame.jpeg, fit: BoxFit.fill),
+                        CustomPaint(painter: _BoxPainter(frame.boxes)),
+                      ]),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
-        Text(snapshot == null
-            ? '최신 인식 결과를 기다리는 중 · 이전 결과는 안내에 사용하지 않습니다'
-            : '최신 인식 결과 수신 · 실시간 영상과 추론 시점은 다를 수 있습니다'),
-        ExpansionTile(
-          title: const Text('인식 프레임 확인'),
-          children: [if (snapshot != null) snapshot!],
-        ),
-      ]);
+      );
 }

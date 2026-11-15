@@ -177,6 +177,38 @@ def test_destination_preview_prepares_shared_stops_for_route_search(monkeypatch)
     assert planned.recommendedPlan.segments[0].routeId == "CJB270002000"
 
 
+@pytest.mark.parametrize(("query", "expected_status"), [
+    ("충북대학교 가고싶어", "NEEDS_CONFIRMATION"),
+    ("충북대학교입구역", "RESOLVED"),
+])
+def test_chungbuk_campus_and_entrance_use_verified_bus_stops(monkeypatch, query, expected_status):
+    hospital = dict(row("hospital"), nodenm="충북대학교병원")
+    catalog, calls = service(monkeypatch, [row(), row("CJB271000091"), hospital])
+    result = DestinationCandidateResolver(stop_catalog=catalog).resolve(heard_text=query, live=True)
+
+    assert result.status.value == expected_status
+    assert result.fallbackSource == FallbackSource.PUBLIC_API
+    assert result.topCandidate.name == "충북대학교입구"
+    assert {stop.stopId for stop in result.destinationStops} == {"CJB271000091", "CJB271000129"}
+    assert len(calls) == 1 and calls[0].url.path.endswith("/getCrdntPrxmtSttnList")
+    if expected_status == "NEEDS_CONFIRMATION":
+        assert "충북대학교입구 정류장" in result.question
+
+
+def test_cheongju_campus_asks_before_using_verified_nyusis_stop(monkeypatch):
+    record = dict(row("CJB284000031", lat=36.65074073), nodenm="청주대학교.뉴시스", gpslong=127.48905996)
+    catalog, calls = service(monkeypatch, [record])
+    resolver = DestinationCandidateResolver(stop_catalog=catalog)
+    result = resolver.resolve(heard_text="청주대학교", live=True)
+
+    assert result.status.value == "NEEDS_CONFIRMATION"
+    assert result.fallbackSource == FallbackSource.PUBLIC_API
+    assert result.topCandidate.stopId == "CJB284000031"
+    assert result.topCandidate.name in result.question
+    assert resolver.resolve(heard_text=result.topCandidate.name, live=True).status.value == "RESOLVED"
+    assert len(calls) == 1 and calls[0].url.path.endswith("/getCrdntPrxmtSttnList")
+
+
 @pytest.mark.parametrize("node, name", [("CJB284000032", "청주대학교.뉴시스"), ("CJB284000031", "다른 정류장")])
 def test_nyusis_anchor_requires_live_stop_id_and_name(monkeypatch, node, name):
     record = dict(row(node, lat=36.65074073), nodenm=name, gpslong=127.48905996)

@@ -33,25 +33,25 @@ LocalObservation detection(int ticks,
     LocalObservation(camera.frame(ticks), Uint8List(0),
         boxes ?? [LocalBox('bus', confidence, x, .2, .2, .3)], 2, 2, 1, 2);
 void main() {
-  testWidgets('live camera remains mounted when inference expires or returns',
+  testWidgets('live camera remains mounted while detection count changes',
       (tester) async {
     var created = 0, disposed = 0;
     Widget view(bool fresh) => MaterialApp(
             home: Scaffold(
-                body: CameraObservationSurface(
-          livePreview: _PreviewLifetime(
-              onCreate: () => created++, onDispose: () => disposed++),
-          snapshot: fresh ? const Text('fresh detection snapshot') : null,
-        )));
+                body: Column(children: [
+          CameraObservationSurface(
+            livePreview: _PreviewLifetime(
+                onCreate: () => created++, onDispose: () => disposed++),
+          ),
+          if (fresh) const Text('current detection')
+        ])));
     await tester.pumpWidget(view(true));
     final before =
         tester.getRect(find.byKey(const ValueKey('live-camera-surface')));
-    await tester.tap(find.text('인식 프레임 확인'));
-    await tester.pumpAndSettle();
-    expect(find.text('fresh detection snapshot'), findsOneWidget);
+    expect(find.text('current detection'), findsOneWidget);
     await tester.pumpWidget(view(false));
     await tester.pumpAndSettle();
-    expect(find.text('fresh detection snapshot'), findsNothing);
+    expect(find.text('current detection'), findsNothing);
     expect(find.text('live video'), findsOneWidget);
     expect(tester.getRect(find.byKey(const ValueKey('live-camera-surface'))),
         before);
@@ -61,6 +61,30 @@ void main() {
     expect(created, 1);
     await tester.pumpWidget(const SizedBox());
     expect(disposed, 1);
+  });
+
+  test('history keeps only recent detections and ignores duplicate frames', () {
+    final history = DetectedFrameHistory();
+    LocalObservation result(int ticks, List<LocalBox> boxes) =>
+        LocalObservation(
+            camera.frame(ticks), Uint8List.fromList([1]), boxes, 2, 2, 1, 2);
+    const boxes = [LocalBox('pole', .9, .2, .3, .15, .4)];
+    history.record(result(0, []));
+    expect(history.value, isEmpty);
+    final first = result(1, boxes);
+    history.record(first);
+    history.record(first);
+    expect(history.value, hasLength(1));
+    for (var ticks = 2; ticks <= 25; ticks++) {
+      history.record(result(ticks, boxes));
+    }
+    expect(history.value, hasLength(24));
+    expect(history.value.first.boxes.single.classId, 'pole');
+    expect(
+        history.value.any((frame) => frame.id == first.frame.frameId), isFalse);
+    history.clear();
+    expect(history.value, isEmpty);
+    history.dispose();
   });
 
   Future<void> flush(WidgetTester t) async {
@@ -367,8 +391,46 @@ void main() {
     await engine.dispose();
     priority.dispose();
   });
+  testWidgets('first fresh obstacle reaches cue while server delivery waits',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final delivery = Completer<void>();
+    final audio = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 'camera',
+        isCurrent: () => true,
+        requireDoorInBus: true);
+    final pump = FramePump(
+        (f) async => LocalObservation(f, Uint8List(0),
+            [const LocalBox('pole', .9, .05, .2, .2, .3)], 2, 2, 1, 2),
+        () => 0,
+        onLocalResult: (_, result) => audio.observe(result, age: Duration.zero),
+        onResult: (_) => delivery.future);
+    pump.start();
+    audio.setEnabled(true);
+    pump.submit(camera.frame(0));
+    await flush(t);
+    expect(delivery.isCompleted, isFalse);
+    expect(pump.observation, isNull);
+    expect(port.active!['direction'], 'LEFT');
+    port.finish();
+    await flush(t);
+    expect(tts.spoken.single, contains('보도 기둥'));
+    await audio.stop();
+    delivery.complete();
+    await pump.stop();
+    pump.dispose();
+    audio.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
   testWidgets(
-      'online object audio hides test calibration but retains explicit enable',
+      'online object audio displays automatic state without an enable switch',
       (t) async {
     final engine = SpatialVerificationEngine(
         NativeDirectionalCueOutput(port: native.Port()), speech.FakeTts());
@@ -381,17 +443,20 @@ void main() {
     await t.pumpWidget(MaterialApp(
         home: Scaffold(
             body: VisionScreenAudioPanel(
-                audio: audio, cameraActive: true, diagnostics: false))));
+                audio: audio,
+                cameraActive: true,
+                diagnostics: false,
+                automaticallyEnabled: true))));
     expect(find.text('객체 음성·방향음 안내'), findsOneWidget);
     expect(find.text('카메라 장착 방식'), findsNothing);
     expect(find.text('화면 음향 Live Hold'), findsNothing);
-    expect(audio.enabled, isFalse);
-    await t.tap(find.byType(Switch));
+    expect(find.byType(Switch), findsNothing);
+    audio.setEnabled(true);
     await t.pump();
-    expect(audio.enabled, isTrue);
-    await t.tap(find.byType(Switch));
+    expect(find.text('카메라와 함께 켜짐'), findsOneWidget);
+    await audio.stop();
     await t.pump();
-    expect(audio.enabled, isFalse);
+    expect(find.text('카메라와 함께 켜짐'), findsNothing);
     await t.pumpWidget(const SizedBox());
     audio.dispose();
     await engine.dispose();

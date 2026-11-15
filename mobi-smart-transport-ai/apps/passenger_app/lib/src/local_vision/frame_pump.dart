@@ -8,10 +8,15 @@ import 'vision_codec.dart';
 /// One in-flight inference and at most one replaceable pending frame.
 class FramePump extends ChangeNotifier {
   FramePump(this.infer, this.nowMicros,
-      {this.ttl = const Duration(seconds: 2), this.onResult});
+      {this.ttl = const Duration(seconds: 2),
+      this.onLocalResult,
+      this.onResult});
   final Future<LocalObservation> Function(VisionFrame) infer;
   final int Function() nowMicros;
   final Duration ttl;
+
+  /// Runs once for each validated, fresh inference, before optional delivery.
+  final void Function(LocalObservation, Map<String, Object?>)? onLocalResult;
   final Future<void> Function(LocalObservation)? onResult;
   VisionFrame? _latest;
   bool active = false, _busy = false, _disposed = false;
@@ -94,11 +99,12 @@ class FramePump extends ChangeNotifier {
               value.frame.receivedAt != frame.receivedAt) {
             throw StateError("프레임 식별 정보 불일치");
           }
-          value.toDetectionResult();
+          final result = value.toDetectionResult();
           if (nowMicros() - frame.receivedMicros >= ttl.inMicroseconds) {
             expired++;
             observation = null;
           } else {
+            onLocalResult?.call(value, result);
             await onResult?.call(value);
             if (!active || generation != _generation) break;
             if (nowMicros() - frame.receivedMicros >= ttl.inMicroseconds) {

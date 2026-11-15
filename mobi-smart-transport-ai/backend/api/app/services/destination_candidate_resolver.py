@@ -42,6 +42,11 @@ _STT_CONFIRMATION_ALIASES = {
 # seed the query, and only a matching TAGO row can become a destination.
 _NYUSIS_STOP_ID = "CJB284000031"
 _NYUSIS_STOP_COORDINATES = (36.65074073, 127.48905996)
+# Previously observed TAGO stop coordinates serve only as a search origin.
+_CHUNGBUK_ENTRANCE_COORDINATES = (36.63443041, 127.454072)
+_CHUNGBUK_ENTRANCE = frozenset({"충북대학교입구", "충북대학교입구역", "충북대입구", "충북대입구역"})
+_CHUNGBUK_CAMPUS = frozenset({"충북대학교", "충북대"})
+_CHEONGJU_CAMPUS = frozenset({"청주대학교", "청주대", "청대"})
 
 
 @dataclass(frozen=True)
@@ -385,6 +390,10 @@ def is_known_destination_name(text: str) -> bool:
     Do not use fuzzy matches here: ordinary conversation must remain UNKNOWN.
     """
     compact = re.sub(r"\s+", "", text).strip(" .,?!~…")
+    if _normalize(compact) in (
+        _CHUNGBUK_ENTRANCE | _CHUNGBUK_CAMPUS | _CHEONGJU_CAMPUS | {"청주대학교뉴시스"}
+    ):
+        return True
     return any(
         compact == re.sub(r"\s+", "", name)
         for place in _KNOWN_PLACES
@@ -456,16 +465,30 @@ class DestinationCandidateResolver:
             )
 
         destination_stops = None
-        if live and getattr(self._stop_catalog, "requires_public_stops", False) and normalized == "청주대학교뉴시스":
-            stop = self._find_nyusis_stop()
-            candidates = []
-            if stop is not None:
-                destination_stops = [_nearby_from_public(stop)]
-                candidates = [DestinationCandidate(
-                    name=stop.stop_name, type=DestinationCandidateType.STOP, confidence=0.96,
-                    latitude=stop.latitude, longitude=stop.longitude, stopId=stop.service_id,
-                    fetchedAt=stop.fetched_at, cacheHit=stop.cache_hit, source=FallbackSource.PUBLIC_API,
-                )]
+        confirm_campus_stop = False
+        verified_entrance_alias = False
+        if live and getattr(self._stop_catalog, "requires_public_stops", False):
+            if normalized == "청주대학교뉴시스" or normalized in _CHEONGJU_CAMPUS:
+                stop = self._find_nyusis_stop()
+                destination_stops = [_nearby_from_public(stop)] if stop is not None else []
+                confirm_campus_stop = normalized in _CHEONGJU_CAMPUS
+            elif normalized in _CHUNGBUK_ENTRANCE or normalized in _CHUNGBUK_CAMPUS:
+                matches = self._find_stops_near_reference(_CHUNGBUK_ENTRANCE_COORDINATES)
+                destination_stops = [
+                    _nearby_from_public(stop)
+                    for stop in matches if _normalize(stop.stop_name) == "충북대학교입구"
+                ]
+                confirm_campus_stop = normalized in _CHUNGBUK_CAMPUS
+                verified_entrance_alias = normalized in _CHUNGBUK_ENTRANCE
+        if destination_stops is not None:
+            candidates = [
+                DestinationCandidate(
+                    name=stop.stopName, type=DestinationCandidateType.STOP, confidence=0.96,
+                    latitude=stop.latitude, longitude=stop.longitude, stopId=stop.stopId,
+                    fetchedAt=stop.fetchedAt, cacheHit=stop.cacheHit, source=stop.source,
+                )
+                for stop in destination_stops
+            ]
         else:
             candidates = self._build_candidates(
                 cleaned,
@@ -537,6 +560,13 @@ class DestinationCandidateResolver:
             # 받침 유무에 따라 '이/가'가 달라지는 문제를 피하려고 조사 없이 묻는다.
             question = f"혹시 {top.name} 맞을까요?"
 
+        if confirm_campus_stop:
+            status = DestinationResolveStatus.NEEDS_CONFIRMATION
+            question = f"{cleaned} 근처의 {top.name} 정류장까지 가는 경로를 찾을까요?"
+        elif verified_entrance_alias:
+            status = DestinationResolveStatus.RESOLVED
+            question = None
+
         if top.latitude is None or top.longitude is None:
             status = DestinationResolveStatus.NOT_FOUND
             question = f"{top.name}의 위치 좌표를 확인하지 못했어요. 장소명이나 주소를 조금 더 정확히 말씀해 주세요."
@@ -563,15 +593,18 @@ class DestinationCandidateResolver:
         )
 
     def _find_nyusis_stop(self) -> CheongjuBusStopMatch | None:
-        lat, lng = _NYUSIS_STOP_COORDINATES
+        matches = self._find_stops_near_reference(_NYUSIS_STOP_COORDINATES)
+        return next((match for match in matches if match.service_id == _NYUSIS_STOP_ID
+                     and _normalize(match.stop_name) == "청주대학교뉴시스"), None)
+
+    def _find_stops_near_reference(self, coordinates: tuple[float, float]) -> list[CheongjuBusStopMatch]:
+        lat, lng = coordinates
         try:
-            matches = self._stop_catalog.find_nearby(origin_lat=lat, origin_lng=lng, limit=6, radius_meters=500.0)
+            return self._stop_catalog.find_nearby(origin_lat=lat, origin_lng=lng, limit=6, radius_meters=500.0)
         except StopLookupError:
             raise
         except Exception:
             raise StopLookupError("TAGO_STOP_UNAVAILABLE") from None
-        return next((match for match in matches if match.service_id == _NYUSIS_STOP_ID
-                     and _normalize(match.stop_name) == "청주대학교뉴시스"), None)
 
     def _build_candidates(
         self,
