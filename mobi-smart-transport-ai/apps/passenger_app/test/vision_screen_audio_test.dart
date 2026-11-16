@@ -952,6 +952,62 @@ void main() {
       priority.dispose();
     });
   }
+
+  testWidgets(
+      'standalone bus_door without parent bus is admitted when requireDoorInBus is false and still yields to same-rank obstacle',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: false,
+        confirmationFrames: 3,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+    for (var i = 1; i <= 3; i++) {
+      now = i * 1000;
+      a.observe(
+          detection(now, boxes: const [
+            LocalBox('bus_door', .92, .4, .2, .2, .35),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'bus_door');
+    expect(port.active?['direction'], 'CENTER');
+
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+
+    for (var i = 4; i <= 6; i++) {
+      now = i * 1000;
+      a.observe(
+          detection(now, boxes: const [
+            LocalBox('bus_door', .92, .4, .2, .2, .35),
+            LocalBox('pole', .88, .1, .2, .2, .45),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 2);
+    expect(a.diagnostic['classId'], 'pole');
+    expect(port.active?['direction'], 'LEFT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
 }
 
 class _PreviewLifetime extends StatefulWidget {

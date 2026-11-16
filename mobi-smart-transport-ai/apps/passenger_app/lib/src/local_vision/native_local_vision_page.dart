@@ -109,7 +109,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           sceneMode: false,
           pingOnly: false,
           minimumInterval: const Duration(seconds: 8),
-          requireDoorInBus: true,
+          requireDoorInBus: false,
           prioritizeByDistance: true,
           isCurrent: () =>
               mounted &&

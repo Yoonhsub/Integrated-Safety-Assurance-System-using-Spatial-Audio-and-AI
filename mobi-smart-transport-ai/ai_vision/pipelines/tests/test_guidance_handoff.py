@@ -15,6 +15,7 @@ if str(_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(_PIPELINES_DIR))
 
 from guidance_handoff import PROPOSED_SCHEMA_VERSION, build_vision_guidance_handoff  # noqa: E402
+from spatial_guidance import interpret_bus_door_guidance  # noqa: E402
 from vision_result import ImageSize, RawDetection, build_vision_result  # noqa: E402
 
 
@@ -66,7 +67,7 @@ class GuidanceHandoffTest(unittest.TestCase):
         self.assertEqual(door["relativeDistance"], "NEAR")
         self.assertEqual(door["motion"], "UNKNOWN")
 
-    def test_omits_door_candidate_when_door_is_not_inside_bus(self) -> None:
+    def test_includes_standalone_door_by_default_and_omits_when_strict(self) -> None:
         current = self.result(
             [
                 RawDetection("bus", 0.90, 0, 100, 300, 800),
@@ -76,7 +77,10 @@ class GuidanceHandoffTest(unittest.TestCase):
 
         payload = build_vision_guidance_handoff(current).as_dict()
 
-        self.assertEqual([candidate["classId"] for candidate in payload["candidates"]], ["bus"])
+        self.assertEqual([candidate["classId"] for candidate in payload["candidates"]], ["bus", "bus_door"])
+        self.assertEqual(payload["candidates"][1]["direction"], "RIGHT")
+        self.assertEqual(payload["candidates"][1]["relativeDistance"], "MEDIUM")
+        self.assertIsNone(interpret_bus_door_guidance(current, require_door_in_bus=True))
 
     def test_context_audio_fixture_is_a_policy_free_bus_and_door_handoff(self) -> None:
         fixture_path = _PIPELINES_DIR / "fixtures" / "bus_door_guidance_candidate.json"
