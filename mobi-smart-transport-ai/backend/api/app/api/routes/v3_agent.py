@@ -26,6 +26,7 @@ from app.schemas.v3 import (
     utc_now,
 )
 from app.services import cheongju_route_catalog
+from app.services.destination_candidate_resolver import is_known_destination_name
 from app.services.cheongju_route_planner import dynamic_route_discovery_enabled
 from app.services.route_stop_sequence_cache import RouteStopSequenceCache
 from app.services.route_service_status import redact_default_schedule_notice
@@ -581,11 +582,12 @@ def _run_converse(
         "요청 의도 분류",
         operation="classifyAgentIntent",
     )
-    keyword_intent = classify_agent_intent(
+    keyword_result = classify_agent_intent(
         payload.utterance,
         session.to_response(),
         wake_word=wake_word,
-    ).intent
+    )
+    keyword_intent = keyword_result.intent
     contextual_reply_hint = (
         _contextual_followup_reply(session=session, utterance=utterance)
         if keyword_intent == AgentIntent.UNKNOWN
@@ -626,6 +628,9 @@ def _run_converse(
                                 or _explicit_route_numbers(nlp_destination)
                                 or _compact(nlp_destination).upper() == route_no):
             nlp_destination = None
+        explicit_place = keyword_result.explicit_destination
+        if explicit_place and is_known_destination_name(explicit_place):
+            nlp_destination = explicit_place
         if route_numbers and intent == AgentIntent.UNKNOWN:
             intent = AgentIntent.FIND_ROUTE
     trace.done(

@@ -172,6 +172,27 @@ def pending_numbered_route(monkeypatch):
     return calls, statuses
 
 
+@pytest.mark.parametrize(("utterance", "model_place", "search_place"), [
+    ("충북대학교 가고싶어", "충북대", "충북대학교"),
+    ("청주대학교", "청주대", "청주대학교"),
+    ("충북대학교입구역", "충북대학교", "충북대학교입구역"),
+])
+def test_live_chat_and_voice_text_keeps_the_spoken_place(
+    pending_numbered_route, monkeypatch, utterance, model_place, search_place
+):
+    calls, _ = pending_numbered_route
+    monkeypatch.setattr(v3_agent, "classify_intent", lambda **_: {
+        "intent": "FIND_ROUTE", "destination": model_place,
+    })
+    response = _say("campus-query", utterance, mode="live",
+                    originLat=36.64, originLng=127.46)
+    assert response.status_code == 200
+    assert response.json()["routePlan"]["heardText"] == search_place
+    assert calls[0]["heard_text"] == search_place
+    assert calls[0]["origin_lat"] == 36.64
+    assert calls[0]["origin_lng"] == 127.46
+
+
 @pytest.mark.parametrize("initial_status,answer", [
     ("NEEDS_CONFIRMATION", "응 맞아"),
     ("NEEDS_CHOICE", "첫 번째"),

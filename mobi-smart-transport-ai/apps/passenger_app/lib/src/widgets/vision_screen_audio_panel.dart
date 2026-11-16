@@ -11,11 +11,13 @@ class VisionScreenAudioPanel extends StatelessWidget {
     required this.cameraActive,
     this.showStopButton = true,
     this.diagnostics = true,
+    this.automaticallyEnabled = false,
   });
   final VisionScreenAudio audio;
   final bool cameraActive;
   final bool showStopButton;
   final bool diagnostics;
+  final bool automaticallyEnabled;
 
   Future<void> _recordMeasuredOffset(BuildContext context) async {
     final controller = TextEditingController();
@@ -64,13 +66,20 @@ class VisionScreenAudioPanel extends StatelessWidget {
           if (!diagnostics) {
             return Card(
                 child: Column(children: [
-              SwitchListTile(
-                title: const Text('객체 음성·방향음 안내'),
-                subtitle:
-                    const Text('화면 기준 객체 정보입니다. 거리나 안전한 이동 방향을 판단하지 않습니다.'),
-                value: audio.enabled,
-                onChanged: cameraActive ? audio.setEnabled : null,
-              ),
+              if (automaticallyEnabled)
+                ListTile(
+                  title: const Text('객체 음성·방향음 안내'),
+                  subtitle: Text(
+                      audio.enabled ? '카메라와 함께 켜짐' : '카메라를 시작하면 자동으로 켜집니다.'),
+                )
+              else
+                SwitchListTile(
+                  title: const Text('객체 음성·방향음 안내'),
+                  subtitle:
+                      const Text('화면 기준 객체 정보입니다. 거리나 안전한 이동 방향을 판단하지 않습니다.'),
+                  value: audio.enabled,
+                  onChanged: cameraActive ? audio.setEnabled : null,
+                ),
               Text(audio.status),
               if (audio.sceneMode)
                 DescribedAction.button(

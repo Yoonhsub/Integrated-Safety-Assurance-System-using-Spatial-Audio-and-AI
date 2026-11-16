@@ -191,7 +191,7 @@ def test_verify_route_tool_removes_arrival_for_another_route() -> None:
 
 @pytest.mark.parametrize("utterance", [
     "충북대병원", "사창사거리", "청주대", "상당산성", "사창 사거리 정류장",
-    "모비야 충북대병원", "청주대학교?",
+    "모비야 충북대병원", "청주대학교?", "충북대학교", "충북대학교입구역",
 ])
 def test_bare_known_destination_does_not_require_external_nlu(utterance) -> None:
     result = classify_agent_intent(utterance)
@@ -201,6 +201,7 @@ def test_bare_known_destination_does_not_require_external_nlu(utterance) -> None
 
 @pytest.mark.parametrize(("utterance", "destination"), [
     ("청주대 가는 버스", "청주대"),
+    ("충북대학교 가고싶어", "충북대학교"),
     ("새로운장소 가는 노선 알려줘", "새로운장소"),
     ("충북대병원 노선 검색", "충북대병원"),
     ("사창사거리 경로 검색해줘", "사창사거리"),
