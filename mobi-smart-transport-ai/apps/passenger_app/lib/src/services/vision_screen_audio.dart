@@ -77,7 +77,9 @@ class VisionScreenAudio extends ChangeNotifier {
       headTrackingEnabled = false,
       busy = false,
       _activeHeadTracked = false,
+      _doorAnchorLocked = false,
       _disposed = false;
+  bool get doorAnchorLocked => _doorAnchorLocked;
   int _revision = 0, admitted = 0, completed = 0, skippedBusy = 0;
   int _streakCount = 0;
   String status = '카메라 화면 음향 시연 OFF';
@@ -356,6 +358,7 @@ class VisionScreenAudio extends ChangeNotifier {
   void _invalidateHeadTracking(String reason) {
     final mustStop = headTrackingEnabled && _activeHeadTracked;
     headTrackingEnabled = false;
+    _doorAnchorLocked = false;
     if (mustStop) {
       _revision++;
       unawaited(_stopOwned());
@@ -392,6 +395,7 @@ class VisionScreenAudio extends ChangeNotifier {
     if (_disposed) return;
     if (!value) {
       headTrackingEnabled = false;
+      _doorAnchorLocked = false;
       status = 'Head Tracking OFF · 기존 화면 기준 Cue 사용';
       _notify();
       return;
@@ -431,6 +435,7 @@ class VisionScreenAudio extends ChangeNotifier {
     _sceneTracker.invalidate(reason: 'stopped');
     _sceneMeaning = null;
     enabled = false;
+    _doorAnchorLocked = false;
     _revision++;
     _streakMeaning = null;
     _streakCount = 0;
@@ -527,6 +532,9 @@ class VisionScreenAudio extends ChangeNotifier {
       _streakMeaning = null;
       _streakCount = 0;
       if (rows.isEmpty) _lastMeaning = null;
+      if (_doorAnchorLocked && headTrackingEnabled && canActivateHeadTracking) {
+        _emitLockedDoorAnchorCue(result, age);
+      }
       return;
     }
     final box = selected['bbox'] as Map;
@@ -601,6 +609,9 @@ class VisionScreenAudio extends ChangeNotifier {
           cameraCapturedAt: headTracking.snapshot.receivedAt!,
           now: DateTime.now().toUtc(),
         );
+        if (lockedReferenceYaw != null) {
+          _doorAnchorLocked = true;
+        }
       }
       correctedAngle = headTrackedAngleForMount(
         cameraAngle: cameraAngle,
@@ -694,6 +705,141 @@ class VisionScreenAudio extends ChangeNotifier {
             status = '시작 전 만료 또는 취소 · 새 검출 대기';
           } else {
             enabled = false;
+            status = '음향 시연 오류 · 출력 상태를 확인해 주세요';
+          }
+        }
+      } finally {
+        engine.retireGuidance(command);
+        busy = false;
+        _activeHeadTracked = false;
+        _notify();
+      }
+    }());
+  }
+
+  /// Continues emitting spatial HRTF pings toward the previously locked
+  /// `bus_door` world azimuth even when the door leaves the camera FOV.
+  void _emitLockedDoorAnchorCue(Map<String, Object?> result, Duration age) {
+    final correctedAngle = lockedTargetAzimuthForHead(
+      sensor: headTracking.snapshot,
+      now: DateTime.now().toUtc(),
+    );
+    if (correctedAngle == null) {
+      _invalidateHeadTracking('장착·센서 조건 무효');
+      return;
+    }
+    const anchorPingInterval = Duration(milliseconds: 1200);
+    if (_lastStarted != null &&
+        _now() - _lastStarted! < anchorPingInterval.inMicroseconds) {
+      return;
+    }
+    final side = correctedAngle < -15
+        ? TestDirection.left
+        : correctedAngle > 15
+            ? TestDirection.right
+            : TestDirection.center;
+    final meaning = 'bus_door_anchor:${side.name}';
+    final revision = _revision;
+    bool valid() =>
+        !_disposed &&
+        enabled &&
+        _doorAnchorLocked &&
+        headTrackingEnabled &&
+        revision == _revision &&
+        isCurrent() &&
+        !priority.priorityActive;
+    final admission = ObservationAdmission(
+      deadlineMicros: _now() +
+          const Duration(seconds: 2).inMicroseconds -
+          age.inMicroseconds,
+      nowMicros: _now,
+      eventId: '${result['frameId']}:door_anchor',
+      sessionGeneration: sessionGeneration,
+      receivedAt: DateTime.now().toUtc().toIso8601String(),
+      eventCreatedAt: result['capturedAt'],
+    );
+    bool admit() {
+      final already = admission.started;
+      if (!admission.admit()) return false;
+      if (!already) {
+        _lastMeaning = meaning;
+        _lastStarted = _now();
+        admitted++;
+      }
+      return true;
+    }
+
+    const text = '고정된 버스 문 기준 방향 안내입니다.';
+    final guidance = DirectionalGuidance(
+      guidanceId: '${result['frameId']}:door_anchor',
+      sessionGeneration: sessionGeneration,
+      authEpoch: 0,
+      priority: GuidancePriority.observation,
+      text: text,
+      provenance: DirectionalGuidance.screenProvenance,
+      testDirection: side,
+      headTrackedAzimuthDegrees: correctedAngle,
+      directionEvidence: DirectionEvidence.cameraScreenBbox,
+    );
+    final command = engine.registerGuidance(
+      guidance,
+      valid,
+      admit: admit,
+      cueOnly: true,
+      spokenText: text,
+      phase: (phase) {
+        if (valid()) {
+          status = phase;
+          diagnostic = {...diagnostic, 'phase': phase};
+          _notify();
+        }
+      },
+    );
+    if (command == null) return;
+    diagnostic = {
+      'frameId': result['frameId'],
+      'capturedAt': result['capturedAt'],
+      'classId': 'bus_door',
+      'className': '버스 문 (기준점 고정)',
+      'doorAnchorTracking': true,
+      'screenDirection': side.name.toUpperCase(),
+      'headTrackingStatus': headTracking.snapshot.status.name,
+      'headTrackingEnabled': true,
+      'headTrackingMount': mountCalibration.mount.name,
+      'axesAlignmentVerified': mountCalibration.axesAlignmentVerified,
+      'correctedAngleDegrees': correctedAngle,
+      'lockedReferenceYawDegrees': headTracking.snapshot.referenceYaw,
+      'coordinateFrame': 'world-door-anchor',
+      'provenance': DirectionalGuidance.screenProvenance,
+      'guidanceEligible': false,
+      'text': text,
+    };
+    busy = true;
+    _activeHeadTracked = true;
+    status = '고정된 문 기준점 HRTF 핑 재생';
+    _notify();
+    unawaited(() async {
+      try {
+        final ok = await priority.speakObservation(
+          _owner,
+          command,
+          valid,
+          onDeadline: () => admission.cancel('PLAYBACK_WATCHDOG'),
+        );
+        admission.finish(ok);
+        if (ok) completed++;
+        if (revision == _revision && !_disposed) {
+          status = ok ? '고정된 문 기준점 핑 완료' : '취소 또는 시작 전 만료 · 새 검출 대기';
+        }
+      } catch (error) {
+        admission.cancel('AUDIO_FAILURE');
+        debugPrint('Locked door anchor cue failure: ${error.runtimeType}');
+        if (!_disposed && revision == _revision) {
+          if (error is SpeechCancelled && !priority.outputUncertain) {
+            status = '시작 전 만료 또는 취소 · 새 검출 대기';
+          } else {
+            enabled = false;
+            _doorAnchorLocked = false;
             status = '음향 시연 오류 · 출력 상태를 확인해 주세요';
           }
         }
@@ -965,6 +1111,7 @@ class VisionScreenAudio extends ChangeNotifier {
     _sceneTimer?.cancel();
     _sceneTracker.clear();
     enabled = false;
+    _doorAnchorLocked = false;
     _revision++;
     priority.removeListener(_priorityChanged);
     headTracking.removeListener(_headTrackingChanged);

@@ -1058,6 +1058,78 @@ void main() {
     await engine.dispose();
     priority.dispose();
   });
+
+  testWidgets(
+      'locked door anchor continues emitting spatial HRTF pings when door leaves camera view',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 70,
+        confirmationFrames: 1,
+        requireDoorInBus: false,
+        nowMicros: () => now);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 30,
+        filteredYaw: 30,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setEnabled(true);
+    a.setHeadTrackingEnabled(true);
+
+    // 1. Detect bus_door off-center (+21 deg) -> locks referenceYaw to 51 deg.
+    a.observe(
+        detection(now, boxes: const [
+          LocalBox('bus_door', .92, .7, .2, .2, .4),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.doorAnchorLocked, isTrue);
+    expect(sensor.snapshot.referenceYaw, closeTo(51.0, 1e-6));
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    // 2. User rotates head left to 10 deg; door is no longer visible (empty frame).
+    now = const Duration(seconds: 2).inMicroseconds;
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: sensor.snapshot.referenceYaw,
+        receivedAt: DateTime.now().toUtc()));
+    final startsBefore = headPort.calls.where((c) => c == 'start').length;
+
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(headPort.calls.where((c) => c == 'start').length, startsBefore + 1);
+    expect(a.diagnostic['doorAnchorTracking'], isTrue);
+    expect(a.diagnostic['correctedAngleDegrees'], closeTo(41.0, 1e-6));
+    expect(a.diagnostic['screenDirection'], 'RIGHT');
+
+    await a.stop();
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
 }
 
 class _PreviewLifetime extends StatefulWidget {

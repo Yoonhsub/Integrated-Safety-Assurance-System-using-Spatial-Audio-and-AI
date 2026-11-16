@@ -196,3 +196,14 @@ double? headTrackedAngleForMount({
   final headRight = relativeAngle(sensor.filteredYaw!, sensor.referenceYaw!);
   return relativeAngle(alignedCameraAngle, headRight);
 }
+
+/// Returns the azimuth (in degrees, positive right) of a previously locked
+/// world-frame target ([HeadTrackingSnapshot.referenceYaw]) relative to the
+/// user's current head yaw ([HeadTrackingSnapshot.filteredYaw]).
+double? lockedTargetAzimuthForHead({
+  required HeadTrackingSnapshot sensor,
+  required DateTime now,
+}) {
+  if (!sensor.usable(now)) return null;
+  return relativeAngle(sensor.referenceYaw!, sensor.filteredYaw!);
+}
