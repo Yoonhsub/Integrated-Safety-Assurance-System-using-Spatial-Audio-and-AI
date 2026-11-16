@@ -210,7 +210,7 @@ class VisionScreenAudioPanel extends StatelessWidget {
                     title: const Text('Head Tracking HRTF 핑'),
                     subtitle: Text(
                       audio.hasCameraCalibration
-                          ? '기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
+                          ? '수평 화각 ${audio.horizontalFovDegrees.toStringAsFixed(1)}° · 기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
                           : '카메라 수평 화각 미확인 · 화면 기준 Cue 유지',
                     ),
                     value: audio.headTrackingEnabled,

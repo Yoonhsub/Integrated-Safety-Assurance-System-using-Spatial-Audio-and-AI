@@ -40,6 +40,7 @@ class VisionScreenAudio extends ChangeNotifier {
     this.headTracking.addListener(_headTrackingChanged);
   }
   static final _clock = Stopwatch()..start();
+  static const double defaultSmartphoneHorizontalFovDegrees = 68.0;
   static final double _configuredFov = double.tryParse(
         const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
       ) ??
@@ -68,7 +69,7 @@ class VisionScreenAudio extends ChangeNotifier {
       !priority.priorityActive &&
       scene.isFresh(DateTime.now().toUtc());
   final HeadTrackingState headTracking;
-  final double horizontalFovDegrees;
+  double horizontalFovDegrees;
   final int Function() _now;
   final _owner = Object();
   HeadTrackingMountCalibration mountCalibration =
@@ -388,6 +389,21 @@ class VisionScreenAudio extends ChangeNotifier {
           ? cameraAxisOffsetDegrees
           : null,
     );
+    _notify();
+  }
+
+  void setHorizontalFovDegrees(double fov) {
+    if (_disposed) return;
+    if (!fov.isFinite || fov <= 0 || fov >= 180) {
+      horizontalFovDegrees = 0;
+      if (headTrackingEnabled) {
+        _invalidateHeadTracking('카메라 수평 화각 미확인');
+      } else {
+        _notify();
+      }
+      return;
+    }
+    horizontalFovDegrees = fov;
     _notify();
   }
 

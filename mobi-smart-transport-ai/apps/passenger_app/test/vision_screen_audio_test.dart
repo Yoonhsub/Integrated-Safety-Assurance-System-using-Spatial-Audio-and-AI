@@ -1130,6 +1130,53 @@ void main() {
     await engine.dispose();
     priority.dispose();
   });
+
+  testWidgets('setHorizontalFovDegrees dynamically enables and invalidates HRTF calibration',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 0);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 0,
+        filteredYaw: 0,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    expect(a.hasCameraCalibration, isFalse);
+
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isFalse);
+
+    a.setHorizontalFovDegrees(68.4);
+    expect(a.hasCameraCalibration, isTrue);
+    expect(a.horizontalFovDegrees, closeTo(68.4, 1e-6));
+
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isTrue);
+
+    a.setHorizontalFovDegrees(0);
+    expect(a.hasCameraCalibration, isFalse);
+    expect(a.headTrackingEnabled, isFalse);
+    expect(a.status, contains('카메라 수평 화각 미확인'));
+
+    await a.stop();
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }
 
 class _PreviewLifetime extends StatefulWidget {

@@ -58,6 +58,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
     with WidgetsBindingObserver {
   static const _hardwarePermissions =
       MethodChannel('mobi.passenger/hardware-permissions');
+  static const _cameraHardware =
+      MethodChannel('mobi.passenger/camera-hardware');
   StreamSubscription<String?>? _authSubscription;
   final _clock = Stopwatch()..start();
   final _runTime = Stopwatch();
@@ -75,6 +77,41 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   int _generation = 0;
   Future<void>? _stopping;
   String _status = '통합 비전 모델 파일을 선택해 주세요';
+
+  double? _configuredCameraHorizontalFov() {
+    final parsed = double.tryParse(
+      const String.fromEnvironment('MOBI_CAMERA_HORIZONTAL_FOV_DEGREES'),
+    );
+    if (parsed != null && parsed.isFinite && parsed > 0 && parsed < 180) {
+      return parsed;
+    }
+    return null;
+  }
+
+  Future<double> _resolveCameraHorizontalFov(
+      CameraDescription description) async {
+    final configured = _configuredCameraHorizontalFov();
+    if (configured != null) return configured;
+    if (Platform.isAndroid) {
+      try {
+        final info = await _cameraHardware.invokeMapMethod<String, dynamic>(
+          'getCameraFov',
+          {
+            'cameraName': description.name,
+            'lensDirection': description.lensDirection.name,
+          },
+        );
+        final rawFov = info?['horizontalFovDegrees'];
+        if (rawFov is num) {
+          final fov = rawFov.toDouble();
+          if (fov.isFinite && fov > 0 && fov < 180) {
+            return fov;
+          }
+        }
+      } catch (_) {/* fallback to smartphone default */}
+    }
+    return VisionScreenAudio.defaultSmartphoneHorizontalFovDegrees;
+  }
 
   Future<bool> _ensureHeadTrackingReady() async {
     if (!Platform.isAndroid) return false;
@@ -105,6 +142,8 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           priority: widget.previewPriority!,
           engine: widget.previewEngine!,
           sessionGeneration: widget.previewScope,
+          horizontalFovDegrees: _configuredCameraHorizontalFov() ??
+              VisionScreenAudio.defaultSmartphoneHorizontalFovDegrees,
           confirmationFrames: _automaticPreviewAudio ? 1 : 3,
           sceneMode: false,
           pingOnly: false,
@@ -248,6 +287,13 @@ class _LocalVisionPageState extends State<LocalVisionPage>
       final matches = devices.where((d) => d.lensDirection == wanted);
       if (matches.isEmpty) throw CameraException('LensUnavailable', '');
       _description = matches.first;
+      final fov = await _resolveCameraHorizontalFov(_description!);
+      if (!mounted || generation != _generation) {
+        await worker.close();
+        if (_worker == worker) _worker = null;
+        return;
+      }
+      _previewAudio?.setHorizontalFovDegrees(fov);
       final camera = CameraController(_description!, ResolutionPreset.medium,
           enableAudio: false, imageFormatGroup: ImageFormatGroup.nv21);
       _camera = camera;
