@@ -1008,6 +1008,56 @@ void main() {
     await engine.dispose();
     priority.dispose();
   });
+
+  testWidgets(
+      'off-center bus_door on headMountedCamera locks referenceYaw to door world azimuth',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 70,
+        confirmationFrames: 1,
+        requireDoorInBus: false,
+        nowMicros: () => now);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 30,
+        filteredYaw: 30,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setEnabled(true);
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isTrue);
+
+    a.observe(
+        detection(now, boxes: const [
+          LocalBox('bus_door', .92, .7, .2, .2, .4),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(sensor.snapshot.referenceYaw, closeTo(51.0, 1e-6));
+    expect(a.diagnostic['lockedReferenceYawDegrees'], closeTo(51.0, 1e-6));
+    expect(headPort.calls, contains('start'));
+
+    await a.stop();
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
 }
 
 class _PreviewLifetime extends StatefulWidget {

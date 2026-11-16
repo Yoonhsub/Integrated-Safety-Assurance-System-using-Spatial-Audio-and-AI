@@ -258,7 +258,8 @@ class VisionScreenAudioPanel extends StatelessWidget {
                             'bbox: ${d['bbox']} · 중심 x: ${d['screenCenterX']}'),
                         if (d['cameraAngleDegrees'] != null)
                           Text(
-                            '카메라 각 ${d['cameraAngleDegrees']}° · 보정 각 ${d['correctedAngleDegrees']}°',
+                            '카메라 각 ${d['cameraAngleDegrees']}° · 보정 각 ${d['correctedAngleDegrees']}°'
+                            '${d['lockedReferenceYawDegrees'] != null ? ' · 문 기준 잠금 ${d['lockedReferenceYawDegrees']}°' : ''}',
                           ),
                         Text('${d['provenance']} · guidanceEligible=false'),
                       ],

@@ -584,13 +584,24 @@ class VisionScreenAudio extends ChangeNotifier {
       return true;
     }
 
-    double? cameraAngle, correctedAngle;
+    double? cameraAngle, correctedAngle, lockedReferenceYaw;
     if (headTrackingEnabled && canActivateHeadTracking) {
       cameraAngle = horizontalAngleForNormalizedBbox(
         x: (box['x'] as num).toDouble(),
         width: (box['w'] as num).toDouble(),
         horizontalFovDegrees: horizontalFovDegrees,
       );
+      if (selected['classId'] == 'bus_door' &&
+          mountCalibration.mount == HeadTrackingCameraMount.headMountedCamera &&
+          headTracking.snapshot.receivedAt != null) {
+        lockedReferenceYaw = headTracking.calibrateZeroReferenceFromCameraAngle(
+          cameraAngle,
+          calibration: mountCalibration,
+          horizontalFovDegrees: horizontalFovDegrees,
+          cameraCapturedAt: headTracking.snapshot.receivedAt!,
+          now: DateTime.now().toUtc(),
+        );
+      }
       correctedAngle = headTrackedAngleForMount(
         cameraAngle: cameraAngle,
         sensor: headTracking.snapshot,
@@ -651,6 +662,8 @@ class VisionScreenAudio extends ChangeNotifier {
       'axesAlignmentVerified': mountCalibration.axesAlignmentVerified,
       if (cameraAngle != null) 'cameraAngleDegrees': cameraAngle,
       if (correctedAngle != null) 'correctedAngleDegrees': correctedAngle,
+      if (lockedReferenceYaw != null)
+        'lockedReferenceYawDegrees': lockedReferenceYaw,
       'coordinateFrame': 'upright-mirrored-camera-image',
       'provenance': DirectionalGuidance.screenProvenance,
       'guidanceEligible': false,
