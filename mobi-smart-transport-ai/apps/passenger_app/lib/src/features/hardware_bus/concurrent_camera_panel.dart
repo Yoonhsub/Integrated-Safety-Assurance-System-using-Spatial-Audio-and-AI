@@ -12,6 +12,11 @@ import '../../services/spatial_verification_engine.dart';
 import '../../services/speech_priority_coordinator.dart';
 import '../../services/vision_scene_summary.dart';
 import '../../services/vision_screen_audio.dart';
+import '../../services/head_tracking_direction.dart';
+
+import 'diagnostic_action_hint.dart';
+
+import '../../widgets/described_action.dart';
 
 /// Independent camera lifetime. No BLE, WT, backend or safety ownership.
 abstract class ConcurrentCameraSource extends ChangeNotifier {
@@ -131,6 +136,8 @@ class NativeConcurrentCameraSource extends ConcurrentCameraSource {
     if (!_valid(generation) || !_pump.active) return;
     final camera = _camera, description = _description;
     if (camera == null || description == null) return;
+    final receivedAt = DateTime.now().toUtc();
+    final receivedMicros = _clock.elapsedMicroseconds;
     final degrees = switch (camera.value.deviceOrientation) {
       DeviceOrientation.portraitUp => 0,
       DeviceOrientation.landscapeLeft => 90,
@@ -143,18 +150,26 @@ class NativeConcurrentCameraSource extends ConcurrentCameraSource {
             : image.format.group == ImageFormatGroup.yuv420
                 ? 'yuv420'
                 : 'unsupported';
-    _pump.submit(VisionFrame(
+    _pump.submit(
+      VisionFrame(
         width: image.width,
         height: image.height,
         format: format,
         planes: image.planes
-            .map((p) => FramePlane(Uint8List.fromList(p.bytes), p.bytesPerRow,
-                p.bytesPerPixel ?? 1))
+            .map(
+              (p) => FramePlane(
+                Uint8List.fromList(p.bytes),
+                p.bytesPerRow,
+                p.bytesPerPixel ?? 1,
+              ),
+            )
             .toList(),
         rotation: frameRotation(description.sensorOrientation, degrees, false),
         mirror: false,
-        receivedAt: DateTime.now().toUtc(),
-        receivedMicros: _clock.elapsedMicroseconds));
+        receivedAt: receivedAt,
+        receivedMicros: receivedMicros,
+      ),
+    );
   }
 
   Future<void> _cleanup() async {
@@ -212,20 +227,33 @@ typedef ConcurrentObservationPlayer = Future<bool> Function(
 
 /// Mounted alongside BLE/WT; audio is explicitly opt-in and shared, not mixed.
 class ConcurrentCameraPanel extends StatefulWidget {
-  const ConcurrentCameraPanel(
-      {super.key,
-      required this.priority,
-      required this.engine,
-      required this.isCurrent,
-      this.source,
-      this.compact = false,
-      this.playObservation});
+  const ConcurrentCameraPanel({
+    super.key,
+    required this.priority,
+    required this.engine,
+    required this.isCurrent,
+    this.source,
+    this.compact = false,
+    this.playObservation,
+    this.headTracking,
+    this.mountCalibration = const HeadTrackingMountCalibration(),
+    this.horizontalFovDegrees = 0,
+    this.headTrackedAudioEnabled = false,
+    this.now,
+  });
   final SpeechPriorityCoordinator priority;
   final SpatialVerificationEngine engine;
   final bool Function() isCurrent;
   final ConcurrentCameraSource? source;
   final bool compact;
   final ConcurrentObservationPlayer? playObservation;
+
+  /// Read-only WT state. The BLE panel remains the sole sensor connection owner.
+  final HeadTrackingState? headTracking;
+  final HeadTrackingMountCalibration mountCalibration;
+  final double horizontalFovDegrees;
+  final bool headTrackedAudioEnabled;
+  final DateTime Function()? now;
   @override
   State<ConcurrentCameraPanel> createState() => _ConcurrentCameraPanelState();
 }
@@ -233,6 +261,7 @@ class ConcurrentCameraPanel extends StatefulWidget {
 class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
     with WidgetsBindingObserver {
   late final ConcurrentCameraSource _source;
+  late final HeadTrackingState _headTracking;
   final _tracker = VisionSceneSummaryTracker(confirmationFrames: 3);
   final _owner = Object();
   final _clock = Stopwatch()..start();
@@ -249,8 +278,10 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
   DateTime? _lastReceivedAt;
   final _viewRevision = ValueNotifier<int>(0);
   Map<String, Object?> _outputDiagnostic = const {};
+  bool Function()? _activeHrtfValid;
   String _status = '화면 위치 소리 OFF';
   String? _audioStopFailure;
+  DateTime get _now => widget.now?.call() ?? DateTime.now().toUtc();
   bool get _valid => !_disposed && _foreground && widget.isCurrent();
   @override
   void initState() {
@@ -259,10 +290,26 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
       throw ArgumentError('Shared audio owner mismatch');
     }
     _source = widget.source ?? NativeConcurrentCameraSource();
+    _headTracking = widget.headTracking ?? sharedHeadTrackingState;
+    _headTracking.addListener(_headTrackingChanged);
     _source.addListener(_changed);
     WidgetsBinding.instance.addObserver(this);
-    _expiry =
-        Timer.periodic(const Duration(milliseconds: 150), (_) => _expire());
+    _expiry = Timer.periodic(
+      const Duration(milliseconds: 150),
+      (_) => _expire(),
+    );
+  }
+
+  void _headTrackingChanged() {
+    _checkHeadTrackedOutput();
+  }
+
+  void _checkHeadTrackedOutput() {
+    if (_activeHrtfValid?.call() != false) return;
+    _activeHrtfValid = null;
+    _lastPlayed = null;
+    _status = 'WT 표본이 유효하지 않습니다 · 새 화면부터 화면 기준 안내';
+    unawaited(_silence());
   }
 
   void _refresh() {
@@ -275,6 +322,7 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
   Future<void> _silence({bool disable = false}) {
     ++_revision;
     _meaning = _activeMeaning = null;
+    _activeHrtfValid = null;
     if (disable) {
       _audio = false;
       _status = '화면 소리 중지 · 새 요청만 허용';
@@ -296,12 +344,12 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
     return task.whenComplete(() => _silencing = null);
   }
 
-  VisionSceneSummary get _scene => _tracker.snapshot(DateTime.now().toUtc());
+  VisionSceneSummary get _scene => _tracker.snapshot(_now);
   bool _wasFresh = false;
 
   void _expire() {
-    final fresh =
-        _valid && _source.running && _scene.isFresh(DateTime.now().toUtc());
+    _checkHeadTrackedOutput();
+    final fresh = _valid && _source.running && _scene.isFresh(_now);
     if (!fresh && (_meaning != null || _busy)) {
       unawaited(_silence(disable: !_valid));
     }
@@ -333,11 +381,13 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
     _lastReceivedAt = item.frame.receivedAt;
     try {
       _tracker.update(
-          frameId: item.frame.frameId,
-          receivedAt: item.frame.receivedAt,
-          now: DateTime.now().toUtc(),
-          detections: VisionScreenAudio.verifiedDoorDetections(
-              item.toDetectionResult()['detections'] as List));
+        frameId: item.frame.frameId,
+        receivedAt: item.frame.receivedAt,
+        now: _now,
+        detections: VisionScreenAudio.verifiedDoorDetections(
+          item.toDetectionResult()['detections'] as List,
+        ),
+      );
     } catch (_) {
       _tracker.invalidate(reason: 'malformed_observation');
       _status = '관찰 형식 확인 실패 · 새 화면 대기';
@@ -352,7 +402,7 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
       unawaited(_silence());
       return;
     }
-    if (!scene.isFresh(DateTime.now().toUtc())) {
+    if (!scene.isFresh(_now)) {
       _status = '오래되거나 유효하지 않은 관찰 · 새 화면 대기';
       _refresh();
       return;
@@ -368,13 +418,16 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
     unawaited(_playScene(scene));
   }
 
-  Future<void> _playScene(VisionSceneSummary scene,
-      {bool detail = false}) async {
+  Future<void> _playScene(
+    VisionSceneSummary scene, {
+    bool detail = false,
+  }) async {
     if (_audioStopFailure != null ||
         !_valid ||
         !_source.running ||
         _busy ||
-        !scene.isFresh(DateTime.now().toUtc()) ||
+        _silencing != null ||
+        !scene.isFresh(_now) ||
         widget.priority.priorityActive ||
         widget.priority.outputUncertain) {
       return;
@@ -396,54 +449,129 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
       return;
     }
     final revision = _revision;
+    final text = detail ? scene.detailText : scene.briefText;
+    final observation = _source.observation;
+    final rows = observation?.toDetectionResult()['detections'];
+    final detections = rows is List
+        ? VisionScreenAudio.verifiedDoorDetections(rows)
+        : const <dynamic>[];
+    final oneBox = scene.status == VisionSceneStatus.single &&
+            scene.groups.length == 1 &&
+            detections.length == 1 &&
+            detections.single is Map &&
+            (detections.single as Map)['bbox'] is Map
+        ? Map<String, Object?>.from((detections.single as Map)['bbox'] as Map)
+        : null;
+    final frameMatch = observation == null
+        ? null
+        : _headTracking.matchCameraFrame(
+            frameReceivedAt: observation.frame.receivedAt,
+            now: _now,
+          );
+    final calibration = widget.mountCalibration;
+    final fov = widget.horizontalFovDegrees;
+    double? hrtfAngle;
+    if (widget.headTrackedAudioEnabled &&
+        !detail &&
+        oneBox != null &&
+        frameMatch != null &&
+        calibration.verified &&
+        calibration.mount != HeadTrackingCameraMount.handheldPhone &&
+        fov > 0 &&
+        fov < 180) {
+      final cameraAngle = horizontalAngleForNormalizedBbox(
+        x: (oneBox['x'] as num).toDouble(),
+        width: (oneBox['w'] as num).toDouble(),
+        horizontalFovDegrees: fov,
+      );
+      hrtfAngle = headTrackedAngleForMount(
+        cameraAngle: cameraAngle,
+        sensor: frameMatch.sample,
+        now: _now,
+        calibration: calibration,
+      );
+    }
+    bool hrtfStillValid() {
+      final now = _now;
+      final matched = frameMatch!.sample;
+      final latest = _headTracking.snapshot;
+      final cameraFrame = _source.observation?.frame;
+      return widget.headTrackedAudioEnabled &&
+          cameraFrame != null &&
+          identical(widget.mountCalibration, calibration) &&
+          widget.horizontalFovDegrees == fov &&
+          latest.referenceYaw == matched.referenceYaw &&
+          _headTracking.matchCameraFrame(
+                frameReceivedAt: cameraFrame.receivedAt,
+                now: now,
+              ) !=
+              null;
+    }
+
     bool valid() =>
         _valid &&
         (detail || _audio) &&
         revision == _revision &&
         _source.running &&
         _scene.signature == meaning &&
-        scene.isFresh(DateTime.now().toUtc()) &&
-        !widget.priority.priorityActive;
-    final text = detail ? scene.detailText : scene.briefText;
+        scene.isFresh(_now) &&
+        !widget.priority.priorityActive &&
+        (hrtfAngle == null || hrtfStillValid());
     var admitted = false;
     final requestedAtMicros = _clock.elapsedMicroseconds;
     _outputDiagnostic = {'phase': 'REQUESTED'};
     final command = widget.engine.registerGuidance(
-        DirectionalGuidance(
-            guidanceId: 'concurrent-camera-${++_sequence}',
-            sessionGeneration: 'concurrent-camera-${identityHashCode(this)}',
-            authEpoch: 0,
-            priority: GuidancePriority.observation,
-            text: text,
-            provenance: DirectionalGuidance.screenProvenance,
-            testDirection: side,
-            directionEvidence: side == null
-                ? DirectionEvidence.unverified
-                : DirectionEvidence.cameraScreenBbox),
-        valid,
-        cueOnly: _pingOnly && !detail,
-        informationalTone: side == null ? null : InformationalCueTone.neutral,
-        phase: (phase) {
-      if (!valid()) return;
-      _outputDiagnostic = {
-        'phase': phase,
-        'requestElapsedMicros': _clock.elapsedMicroseconds - requestedAtMicros,
-        'callbackObservedAt': DateTime.now().toUtc().toIso8601String()
-      };
-      _refresh();
-    }, admit: () {
-      if (!valid()) return false;
-      if (!admitted) {
-        admitted = true;
-        // Throttle from software output admission, including interrupted
-        // speech. A dropped shared-audio slot must not consume this budget.
-        _lastPlayed = _clock.elapsedMilliseconds;
-      }
-      return true;
-    });
+      DirectionalGuidance(
+        guidanceId: 'concurrent-camera-${++_sequence}',
+        sessionGeneration: 'concurrent-camera-${identityHashCode(this)}',
+        authEpoch: 0,
+        priority: GuidancePriority.observation,
+        text: text,
+        provenance: DirectionalGuidance.screenProvenance,
+        testDirection: side,
+        headTrackedAzimuthDegrees: hrtfAngle,
+        directionEvidence: side == null
+            ? DirectionEvidence.unverified
+            : DirectionEvidence.cameraScreenBbox,
+      ),
+      valid,
+      cueOnly: _pingOnly && !detail,
+      informationalTone: side == null ? null : InformationalCueTone.neutral,
+      phase: (phase) {
+        if (!valid()) return;
+        _outputDiagnostic = {
+          'phase': phase,
+          'frameSensorSkewMs': frameMatch?.skew.inMilliseconds,
+          'frameSensorReceiptMatched': frameMatch != null,
+          'headTrackedCueEnabled': hrtfAngle != null,
+          'requestElapsedMicros':
+              _clock.elapsedMicroseconds - requestedAtMicros,
+          'callbackObservedAt': _now.toIso8601String(),
+        };
+        _refresh();
+      },
+      admit: () {
+        if (!valid()) return false;
+        if (!admitted) {
+          if (hrtfAngle != null &&
+              !frameMatch!.sample.usable(
+                _now,
+                maximumAge: maximumHeadSampleAgeForCue,
+              )) {
+            return false;
+          }
+          admitted = true;
+          // Throttle from software output admission, including interrupted
+          // speech. A dropped shared-audio slot must not consume this budget.
+          _lastPlayed = _clock.elapsedMilliseconds;
+        }
+        return true;
+      },
+    );
     if (command == null) return;
     _busy = true;
     _activeMeaning = meaning;
+    _activeHrtfValid = hrtfAngle == null ? null : hrtfStillValid;
     _status = text;
     _refresh();
     try {
@@ -463,6 +591,7 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
       widget.engine.retireGuidance(command);
       _busy = false;
       _activeMeaning = null;
+      _activeHrtfValid = null;
       _refresh();
     }
   }
@@ -495,6 +624,7 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
     _expiry?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _source.removeListener(_changed);
+    _headTracking.removeListener(_headTrackingChanged);
     _viewRevision.dispose();
     unawaited(
         widget.priority.stopObservation(_owner).catchError((Object error) {
@@ -522,11 +652,13 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
               appBar: AppBar(
                 automaticallyImplyLeading: false,
                 title: const Text('카메라 상태와 안내'),
-                leading: IconButton(
-                  tooltip: 'Close camera details',
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () => Navigator.pop(routeContext),
-                ),
+                leading: DiagnosticActionHint(
+                    hint: '추가 정보 또는 설정 화면을 엽니다.',
+                    child: IconButton(
+                      tooltip: 'Close camera details',
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.pop(routeContext),
+                    )),
               ),
               body: SafeArea(
                 top: false,
@@ -604,27 +736,37 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
                         Expanded(
                             child: Text('카메라 $cameraState · $sceneStatus',
                                 style: Theme.of(context).textTheme.titleSmall)),
-                        IconButton(
-                            tooltip: '카메라 상태와 안내 상세',
-                            onPressed: _showDetails,
-                            icon: const Icon(Icons.info_outline)),
+                        DiagnosticActionHint(
+                            hint: '추가 정보 또는 설정 화면을 엽니다.',
+                            child: IconButton(
+                                tooltip: '카메라 상태와 안내 상세',
+                                onPressed: _showDetails,
+                                icon: const Icon(Icons.info_outline))),
                       ]),
                       Row(children: [
                         Expanded(
-                            child: FilledButton(
-                                onPressed: _valid &&
-                                        !_source.running &&
-                                        !_source.starting
-                                    ? () => _source.start()
-                                    : null,
-                                child: const Text('카메라 시작'))),
+                            child: DescribedAction.button(
+                                label: '카메라 시작',
+                                description:
+                                    '\uce74\uba54\ub77c\uc640 \uc628\ub514\ubc14\uc774\uc2a4 \ud0d0\uc9c0\ub97c \uc2dc\uc791\ud569\ub2c8\ub2e4. \uac70\ub9ac\ub97c \ud655\uc815\ud558\uc9c0\ub294 \uc54a\uc2b5\ub2c8\ub2e4.',
+                                retapWindowAfterDescription: true,
+                                child: FilledButton(
+                                    onPressed: _valid &&
+                                            !_source.running &&
+                                            !_source.starting
+                                        ? () => _source.start()
+                                        : null,
+                                    child: const Text('카메라 시작')))),
                         const SizedBox(width: 8),
                         Expanded(
-                            child: OutlinedButton(
-                                onPressed: _source.running || _source.starting
-                                    ? () => _stopCamera()
-                                    : null,
-                                child: const Text('카메라 중지'))),
+                            child: DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed:
+                                        _source.running || _source.starting
+                                            ? () => _stopCamera()
+                                            : null,
+                                    child: const Text('카메라 중지')))),
                       ]),
                       if (item != null && item.jpeg.isNotEmpty)
                         SizedBox(
@@ -639,56 +781,68 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
                               child: Text(summary,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis))),
-                      SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: const Text('핑만 재생 (음성 제외)'),
-                          value: _pingOnly,
-                          onChanged: (v) async {
-                            await _silence();
-                            if (!_disposed) setState(() => _pingOnly = v);
-                          }),
+                      DiagnosticActionHint(
+                          hint: '현재 진단 설정을 켜거나 끔니다.',
+                          child: SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              title: const Text('핑만 재생 (음성 제외)'),
+                              value: _pingOnly,
+                              onChanged: (v) async {
+                                await _silence();
+                                if (!_disposed) setState(() => _pingOnly = v);
+                              })),
                       Row(children: [
                         Expanded(
                             child: Semantics(
                                 label: '화면 위치 소리 시작',
-                                child: FilledButton(
-                                    onPressed: _valid &&
-                                            _source.running &&
-                                            !_audio &&
-                                            _audioStopFailure == null
-                                        ? () {
-                                            _lastFrame = null;
-                                            _lastPlayed = null;
-                                            setState(() {
-                                              _audio = true;
-                                              _status = '새 프레임부터 화면 위치 소리 시작';
-                                            });
-                                          }
-                                        : null,
-                                    child: const Text('소리 시작')))),
+                                child: DescribedAction.button(
+                                    label: '소리 시작',
+                                    description:
+                                        '\uce74\uba54\ub77c \uac1d\uccb4 \uc704\uce58 \uc74c\ud5a5 \uc548\ub0b4\ub97c \uc2dc\uc791\ud569\ub2c8\ub2e4.',
+                                    retapWindowAfterDescription: true,
+                                    child: FilledButton(
+                                        onPressed: _valid &&
+                                                _source.running &&
+                                                !_audio &&
+                                                _audioStopFailure == null
+                                            ? () {
+                                                _lastFrame = null;
+                                                _lastPlayed = null;
+                                                setState(() {
+                                                  _audio = true;
+                                                  _status =
+                                                      '새 프레임부터 화면 위치 소리 시작';
+                                                });
+                                              }
+                                            : null,
+                                        child: const Text('소리 시작'))))),
                         const SizedBox(width: 8),
                         Expanded(
                             child: Semantics(
                                 label: '화면 위치 소리 중지',
-                                child: OutlinedButton(
-                                    onPressed: _audio || _busy
-                                        ? () => _silence(disable: true)
-                                        : null,
-                                    child: const Text('소리 중지')))),
+                                child: DiagnosticActionHint(
+                                    hint: '이 진단 조작을 실행합니다.',
+                                    child: OutlinedButton(
+                                        onPressed: _audio || _busy
+                                            ? () => _silence(disable: true)
+                                            : null,
+                                        child: const Text('소리 중지'))))),
                       ]),
                       Row(children: [
                         Expanded(
                             child: Text(
                                 '소리 ${_audio ? 'ON' : 'OFF'}${_busy ? ' · 재생 중' : ''}')),
-                        OutlinedButton(
-                            onPressed: _valid &&
-                                    _source.running &&
-                                    !_busy &&
-                                    _scene.isFresh(DateTime.now().toUtc())
-                                ? () => _playScene(_scene, detail: true)
-                                : null,
-                            child: const Text('자세히 듣기')),
+                        DiagnosticActionHint(
+                            hint: '이 진단 조작을 실행합니다.',
+                            child: OutlinedButton(
+                                onPressed: _valid &&
+                                        _source.running &&
+                                        !_busy &&
+                                        _scene.isFresh(DateTime.now().toUtc())
+                                    ? () => _playScene(_scene, detail: true)
+                                    : null,
+                                child: const Text('자세히 듣기'))),
                       ]),
                       const Text('화면 위치만 안내 · 거리/접근 판단 없음',
                           style: TextStyle(fontSize: 12)),
@@ -720,16 +874,24 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
                   ? '프레임 수신 기록 없음'
                   : '마지막 프레임 수신: ${_lastReceivedAt!.toIso8601String()} (촬영 시각 아님)'),
               Wrap(spacing: 8, children: [
-                FilledButton(
-                    onPressed: _valid && !_source.running && !_source.starting
-                        ? () => _source.start()
-                        : null,
-                    child: const Text('카메라 시작')),
-                OutlinedButton(
-                    onPressed: _source.running || _source.starting
-                        ? () => _stopCamera()
-                        : null,
-                    child: const Text('카메라 중지')),
+                DescribedAction.button(
+                    label: '카메라 시작',
+                    description:
+                        '\uce74\uba54\ub77c\uc640 \uc628\ub514\ubc14\uc774\uc2a4 \ud0d0\uc9c0\ub97c \uc2dc\uc791\ud569\ub2c8\ub2e4. \uac70\ub9ac\ub97c \ud655\uc815\ud558\uc9c0\ub294 \uc54a\uc2b5\ub2c8\ub2e4.',
+                    retapWindowAfterDescription: true,
+                    child: FilledButton(
+                        onPressed:
+                            _valid && !_source.running && !_source.starting
+                                ? () => _source.start()
+                                : null,
+                        child: const Text('카메라 시작'))),
+                DiagnosticActionHint(
+                    hint: '이 진단 조작을 실행합니다.',
+                    child: OutlinedButton(
+                        onPressed: _source.running || _source.starting
+                            ? () => _stopCamera()
+                            : null,
+                        child: const Text('카메라 중지'))),
               ]),
               if (item != null && item.jpeg.isNotEmpty)
                 SizedBox(
@@ -743,36 +905,46 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
                     '검출 ${item.boxes.length}개 · ${item.boxes.map((b) => visionClassNames[b.classId] ?? b.classId).join(', ')}'),
               const Text(
                   '화면 기준 좌·가운데·우 정보입니다. 거리·안전 경로·실제 접근 여부를 판단하지 않습니다. 다른 장치 수집은 소리와 독립적으로 계속됩니다.'),
-              SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('핑만 사용 (음성 제외)'),
-                  value: _pingOnly,
-                  onChanged: (v) async {
-                    await _silence();
-                    if (!_disposed) {
-                      setState(() => _pingOnly = v);
-                    }
-                  }),
+              DiagnosticActionHint(
+                  hint: '현재 진단 설정을 켜거나 끔니다.',
+                  child: SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('핑만 사용 (음성 제외)'),
+                      value: _pingOnly,
+                      onChanged: (v) async {
+                        await _silence();
+                        if (!_disposed) {
+                          setState(() => _pingOnly = v);
+                        }
+                      })),
               Wrap(spacing: 8, children: [
-                FilledButton(
-                    onPressed: _valid &&
-                            _source.running &&
-                            !_audio &&
-                            _audioStopFailure == null
-                        ? () {
-                            _lastFrame = null;
-                            _lastPlayed = null;
-                            setState(() {
-                              _audio = true;
-                              _status = '새 검출부터 화면 위치 소리 시작';
-                            });
-                          }
-                        : null,
-                    child: const Text('화면 위치 소리 시작')),
-                OutlinedButton(
-                    onPressed:
-                        _audio || _busy ? () => _silence(disable: true) : null,
-                    child: const Text('화면 위치 소리 중지')),
+                DescribedAction.button(
+                    label: '화면 위치 소리 시작',
+                    description:
+                        '\uce74\uba54\ub77c \uac1d\uccb4 \uc704\uce58 \uc74c\ud5a5 \uc548\ub0b4\ub97c \uc2dc\uc791\ud569\ub2c8\ub2e4.',
+                    retapWindowAfterDescription: true,
+                    child: FilledButton(
+                        onPressed: _valid &&
+                                _source.running &&
+                                !_audio &&
+                                _audioStopFailure == null
+                            ? () {
+                                _lastFrame = null;
+                                _lastPlayed = null;
+                                setState(() {
+                                  _audio = true;
+                                  _status = '새 검출부터 화면 위치 소리 시작';
+                                });
+                              }
+                            : null,
+                        child: const Text('화면 위치 소리 시작'))),
+                DiagnosticActionHint(
+                    hint: '이 진단 조작을 실행합니다.',
+                    child: OutlinedButton(
+                        onPressed: _audio || _busy
+                            ? () => _silence(disable: true)
+                            : null,
+                        child: const Text('화면 위치 소리 중지'))),
               ]),
               Semantics(
                   liveRegion: true,
@@ -781,14 +953,16 @@ class _ConcurrentCameraPanelState extends State<ConcurrentCameraPanel>
                       : '현재 화면을 확인하기 어렵습니다')),
               const Text(
                   '시각 정보 시각은 앱의 프레임 수신 시각이며 촬영 시각이 아닙니다. 거리와 통행 가능 여부는 판단하지 않습니다.'),
-              OutlinedButton(
-                  onPressed: _valid &&
-                          _source.running &&
-                          !_busy &&
-                          _scene.isFresh(DateTime.now().toUtc())
-                      ? () => _playScene(_scene, detail: true)
-                      : null,
-                  child: const Text('자세히 듣기')),
+              DiagnosticActionHint(
+                  hint: '이 진단 조작을 실행합니다.',
+                  child: OutlinedButton(
+                      onPressed: _valid &&
+                              _source.running &&
+                              !_busy &&
+                              _scene.isFresh(DateTime.now().toUtc())
+                          ? () => _playScene(_scene, detail: true)
+                          : null,
+                      child: const Text('자세히 듣기'))),
               Text(visionReceiptAgeLabel(
                   _lastReceivedAt, DateTime.now().toUtc())),
               Text(

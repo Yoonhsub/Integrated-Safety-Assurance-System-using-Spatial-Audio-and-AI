@@ -4,6 +4,8 @@ import 'cue_control.dart';
 import 'direction_audio_panel.dart';
 import 'obstacle_cue_input.dart';
 
+import 'diagnostic_action_hint.dart';
+
 /// Local synthetic producers only. No camera, BLE scanner or server writes.
 class SafetyIntegrationCheckPage extends StatefulWidget {
   const SafetyIntegrationCheckPage({super.key, this.elapsed});
@@ -108,67 +110,81 @@ class _SafetyIntegrationCheckPageState extends State<SafetyIntegrationCheckPage>
                 if (v != null) _change(() => _angle = v);
               }),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            OutlinedButton(
-                onPressed: !_foreground
-                    ? null
-                    : () => _change(() {
-                          _beaconAt = _epoch.add(_now);
-                          _beaconStream = true;
-                          _action = '새 비콘 수신 중. 유효 관측도 필요하며 자동 시작하지 않습니다.';
-                        }),
-                child: const Text('새 비콘 수신 (모의)')),
-            OutlinedButton(
-                onPressed: !_camera || _hazard
-                    ? null
-                    : () => _change(() {
-                          _oldBeaconAt = _beaconAt;
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: !_foreground
+                        ? null
+                        : () => _change(() {
+                              _beaconAt = _epoch.add(_now);
+                              _beaconStream = true;
+                              _action = '새 비콘 수신 중. 유효 관측도 필요하며 자동 시작하지 않습니다.';
+                            }),
+                    child: const Text('새 비콘 수신 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: !_camera || _hazard
+                        ? null
+                        : () => _change(() {
+                              _oldBeaconAt = _beaconAt;
+                              _beaconStream = false;
+                              _hazard = true;
+                              _hazardAt = _now;
+                              _action = '고위험 경고 선점을 확인하세요. 비콘은 이전 값으로 고정했습니다.';
+                            }),
+                    child: const Text('고위험 발생 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: !_hazard
+                        ? null
+                        : () => _change(() {
+                              _hazard = false;
+                              _beaconStream = false;
+                              _action = '위험 해제. 과거 비콘으로 재개되면 실패입니다.';
+                            }),
+                    child: const Text('위험 해제 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: _oldBeaconAt == null
+                        ? null
+                        : () => _change(() {
+                              _beaconStream = false;
+                              _beaconAt = _oldBeaconAt;
+                              _action = '위험 이전 비콘 시각 재사용. 시작이 차단되어야 합니다.';
+                            }),
+                    child: const Text('과거 비콘 재사용 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: () => _change(() {
                           _beaconStream = false;
-                          _hazard = true;
-                          _hazardAt = _now;
-                          _action = '고위험 경고 선점을 확인하세요. 비콘은 이전 값으로 고정했습니다.';
+                          _action = '비콘 새 수신 중지. 기존 TTL 만료 후 중단을 확인하세요.';
                         }),
-                child: const Text('고위험 발생 (모의)')),
-            OutlinedButton(
-                onPressed: !_hazard
-                    ? null
-                    : () => _change(() {
-                          _hazard = false;
-                          _beaconStream = false;
-                          _action = '위험 해제. 과거 비콘으로 재개되면 실패입니다.';
-                        }),
-                child: const Text('위험 해제 (모의)')),
-            OutlinedButton(
-                onPressed: _oldBeaconAt == null
-                    ? null
-                    : () => _change(() {
-                          _beaconStream = false;
-                          _beaconAt = _oldBeaconAt;
-                          _action = '위험 이전 비콘 시각 재사용. 시작이 차단되어야 합니다.';
-                        }),
-                child: const Text('과거 비콘 재사용 (모의)')),
-            OutlinedButton(
-                onPressed: () => _change(() {
-                      _beaconStream = false;
-                      _action = '비콘 새 수신 중지. 기존 TTL 만료 후 중단을 확인하세요.';
-                    }),
-                child: const Text('비콘 신호 상실 (모의)')),
-            OutlinedButton(
-                onPressed: !_camera
-                    ? null
-                    : () => _change(() {
-                          _camera = false;
-                          _beaconStream = false;
-                          _action = '카메라 입력 상실. 위험 해제로 처리하면 안 됩니다.';
-                        }),
-                child: const Text('카메라 입력 상실 (모의)')),
-            OutlinedButton(
-                onPressed: _camera || !_foreground
-                    ? null
-                    : () => _change(() {
-                          _camera = true;
-                          _action = '새 카메라 관측 복구. 위험 상태는 유지하며 새 비콘도 필요합니다.';
-                        }),
-                child: const Text('카메라 입력 복구 (모의)')),
+                    child: const Text('비콘 신호 상실 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: !_camera
+                        ? null
+                        : () => _change(() {
+                              _camera = false;
+                              _beaconStream = false;
+                              _action = '카메라 입력 상실. 위험 해제로 처리하면 안 됩니다.';
+                            }),
+                    child: const Text('카메라 입력 상실 (모의)'))),
+            DiagnosticActionHint(
+                hint: '실제 센서 신호가 아닌 모의 상태를 설정합니다.',
+                child: OutlinedButton(
+                    onPressed: _camera || !_foreground
+                        ? null
+                        : () => _change(() {
+                              _camera = true;
+                              _action = '새 카메라 관측 복구. 위험 상태는 유지하며 새 비콘도 필요합니다.';
+                            }),
+                    child: const Text('카메라 입력 복구 (모의)'))),
           ]),
           Text(_action),
           const Divider(),

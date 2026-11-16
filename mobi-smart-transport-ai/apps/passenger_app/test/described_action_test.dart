@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/widgets/described_action.dart';
@@ -5,15 +6,21 @@ import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart
 
 class Voice implements SpeechEngine {
   final spoken = <String>[];
+  int stops = 0;
+  Completer<void>? hold;
   @override
   Future<void> prepare({required bool requireKoreanVoice}) async {}
   @override
   Future<void> speak(String text) async {
     spoken.add(text);
+    await hold?.future;
   }
 
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async {
+    stops++;
+    if (hold?.isCompleted == false) hold!.complete();
+  }
 }
 
 void main() {
@@ -103,4 +110,76 @@ void main() {
       semantics.dispose();
     });
   }
+
+  testWidgets('hardware action stays armed through its spoken description',
+      (t) async {
+    final voice = Voice()..hold = Completer<void>();
+    final coordinator = SpeechPriorityCoordinator(voice);
+    var runs = 0;
+    await t.pumpWidget(MaterialApp(
+        home: ActionSpeechScope(
+            speech: coordinator,
+            child: Scaffold(
+                body: DescribedAction.button(
+                    label: 'Start hardware',
+                    description: 'Start the sensor.',
+                    retapWindowAfterDescription: true,
+                    child: FilledButton(
+                        onPressed: () => runs++,
+                        child: const Text('Start hardware')))))));
+    await t.tap(find.text('Start hardware'));
+    await t.pump();
+    await t.pump(const Duration(seconds: 2));
+    expect(voice.spoken, ['Start the sensor.']);
+    expect(runs, 0);
+
+    voice.hold!.complete();
+    await t.pump();
+    await t.pump();
+    await t.tap(find.text('Start hardware'));
+    await t.pump();
+    expect(runs, 1);
+    await t.pumpWidget(const SizedBox());
+    await t.pump();
+    coordinator.dispose();
+  });
+
+  testWidgets('leaving a page interrupts its pending action description',
+      (t) async {
+    final voice = Voice()..hold = Completer<void>();
+    final coordinator = SpeechPriorityCoordinator(voice);
+    var runs = 0;
+    await t.pumpWidget(MaterialApp(
+        home: ActionSpeechScope(
+            speech: coordinator,
+            child: Builder(
+                builder: (context) => Scaffold(
+                        body: Column(
+                      children: [
+                        DescribedAction.button(
+                            label: 'Start hardware',
+                            description: 'Start the sensor.',
+                            retapWindowAfterDescription: true,
+                            child: FilledButton(
+                                onPressed: () => runs++,
+                                child: const Text('Start hardware'))),
+                        TextButton(
+                            onPressed: () => Navigator.of(context).push<void>(
+                                MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        const Scaffold(body: Text('Next')))),
+                            child: const Text('Next page')),
+                      ],
+                    ))))));
+    await t.tap(find.text('Start hardware'));
+    await t.pump();
+    expect(voice.spoken, ['Start the sensor.']);
+    await t.tap(find.text('Next page'));
+    await t.pumpAndSettle();
+    expect(voice.stops, greaterThan(0));
+    expect(runs, 0);
+    await t.pumpWidget(const SizedBox());
+    await t.pump();
+    coordinator.dispose();
+  });
 }

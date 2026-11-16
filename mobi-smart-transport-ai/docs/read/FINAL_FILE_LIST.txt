@@ -815,6 +815,7 @@ apps/passenger_app/android/gradlew.bat
 apps/passenger_app/lib/src/pages/passenger_presentation.dart
 docs/WT901_INTEGRATION_ARCHITECTURE.md
 apps/passenger_app/lib/src/features/hardware_bus/concurrent_camera_panel.dart
+apps/passenger_app/lib/src/features/hardware_bus/diagnostic_action_hint.dart
 apps/passenger_app/lib/src/features/hardware_bus/concurrent_hardware_test_page.dart
 apps/passenger_app/lib/src/features/hardware_bus/concurrent_test_control.dart
 apps/passenger_app/test/concurrent_test_entry_test.dart
@@ -856,6 +857,7 @@ docs/rw/TAGO_DIAGNOSTICS.md
 backend/api/tests/test_tago_stop_provider.py
 apps/passenger_app/lib/src/widgets/described_action.dart
 apps/passenger_app/test/described_action_test.dart
+apps/passenger_app/test/diagnostic_action_accessibility_test.dart
 apps/passenger_app/lib/src/widgets/app_navigation.dart
 apps/passenger_app/test/app_navigation_test.dart
 apps/passenger_app/lib/src/services/shared_guidance_session.dart

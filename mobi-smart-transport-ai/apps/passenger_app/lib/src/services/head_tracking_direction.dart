@@ -81,6 +81,21 @@ class HeadTrackingSnapshot {
   }
 }
 
+// Diagnostic host-receipt trial limits, not measured exposure synchronization.
+const maximumCameraSensorSkew = Duration(milliseconds: 150);
+const maximumHeadSampleAgeForCue = Duration(milliseconds: 250);
+
+@immutable
+class HeadTrackingFrameMatch {
+  const HeadTrackingFrameMatch({required this.sample, required this.skew});
+  final HeadTrackingSnapshot sample;
+
+  /// Signed host-receipt difference: positive means the camera callback came
+  /// after the WT notification. This is not sensor capture-time synchronization.
+  final Duration skew;
+  Duration get absoluteSkew => skew.isNegative ? -skew : skew;
+}
+
 /// Shared read-only state contract. The existing WT901 panel remains the only
 /// BLE owner; tests may inject samples through a separate controller instance.
 class HeadTrackingState extends ChangeNotifier {
@@ -88,10 +103,59 @@ class HeadTrackingState extends ChangeNotifier {
     status: HeadTrackingStatus.disconnected,
   );
   HeadTrackingSnapshot get snapshot => _snapshot;
+  final List<HeadTrackingSnapshot> _readySamples = [];
 
   void publish(HeadTrackingSnapshot value) {
+    final previous = _snapshot;
     _snapshot = value;
+    if (previous.referenceYaw != value.referenceYaw) _readySamples.clear();
+    if (value.status != HeadTrackingStatus.ready ||
+        value.receivedAt == null ||
+        value.filteredYaw?.isFinite != true ||
+        value.referenceYaw?.isFinite != true) {
+      _readySamples.clear();
+    } else {
+      final at = value.receivedAt!.toUtc();
+      // A status or calibration update cannot replay the last BLE receipt.
+      final previousAt = previous.receivedAt;
+      if ((previousAt == null || at.isAfter(previousAt)) &&
+          (_readySamples.isEmpty ||
+              at.isAfter(_readySamples.last.receivedAt!))) {
+        _readySamples.add(value);
+      }
+      if (_readySamples.length > 128) _readySamples.removeAt(0);
+    }
     notifyListeners();
+  }
+
+  /// Finds the closest READY WT sample to a camera frame using host receipt
+  /// timestamps. Old or future samples fail closed. This does not claim exposure
+  /// time synchronization or physical angle accuracy.
+  HeadTrackingFrameMatch? matchCameraFrame({
+    required DateTime frameReceivedAt,
+    required DateTime now,
+    Duration maximumSkew = maximumCameraSensorSkew,
+    Duration maximumSampleAge = maximumHeadSampleAgeForCue,
+  }) {
+    if (maximumSkew.isNegative || maximumSampleAge <= Duration.zero) {
+      throw ArgumentError('Positive sample age and nonnegative skew required');
+    }
+    final checkedAt = now.toUtc();
+    if (!_snapshot.usable(checkedAt, maximumAge: maximumSampleAge)) return null;
+    final frameAt = frameReceivedAt.toUtc();
+    if (frameAt.isAfter(checkedAt)) return null;
+    HeadTrackingFrameMatch? best;
+    for (final sample in _readySamples) {
+      final at = sample.receivedAt!.toUtc();
+      if (!sample.usable(checkedAt, maximumAge: maximumSampleAge)) continue;
+      final skew = frameAt.difference(at);
+      final absoluteSkew = skew.isNegative ? -skew : skew;
+      if (absoluteSkew > maximumSkew) continue;
+      if (best == null || absoluteSkew < best.absoluteSkew) {
+        best = HeadTrackingFrameMatch(sample: sample, skew: skew);
+      }
+    }
+    return best;
   }
 
   /// Locks a target reference only for a verified head-mounted camera.
@@ -141,11 +205,11 @@ class HeadTrackingState extends ChangeNotifier {
   }
 
   void resetForSession() => publish(
-    const HeadTrackingSnapshot(
-      status: HeadTrackingStatus.disconnected,
-      message: '새 세션 · 센서 재연결 및 정면 보정 필요',
-    ),
-  );
+        const HeadTrackingSnapshot(
+          status: HeadTrackingStatus.disconnected,
+          message: '새 세션 · 센서 재연결 및 정면 보정 필요',
+        ),
+      );
 }
 
 final sharedHeadTrackingState = HeadTrackingState();

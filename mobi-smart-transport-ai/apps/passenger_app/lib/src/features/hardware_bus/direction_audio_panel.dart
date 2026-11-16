@@ -8,6 +8,10 @@ import 'wit_sensor_protocol.dart';
 import 'beacon_tone_interval.dart';
 import 'stationary_beacon_heading.dart';
 
+import 'diagnostic_action_hint.dart';
+
+import '../../widgets/described_action.dart';
+
 class DirectionAudioPanel extends StatefulWidget {
   const DirectionAudioPanel({
     super.key,
@@ -478,17 +482,19 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
         if (widget.stationaryBeacon) ...[
           const Text(
               '먼저 위의 도로 정면 기준을 설정한 뒤 목표 비콘을 바라보고 보정하세요. 정지 비콘 수동 방향 시연 · 비콘과 사용자 위치를 고정하세요. RSSI는 거리나 방위가 아닙니다. 근접 거리: UNKNOWN.'),
-          OutlinedButton(
-            onPressed: widget.busEnabled &&
-                    widget.audioScope.isNotEmpty &&
-                    _sensorReady &&
-                    _beaconFresh &&
-                    !_playing &&
-                    !_starting
-                ? _calibrateStationary
-                : null,
-            child: const Text('목표 비콘을 바라보고 방향 보정'),
-          ),
+          DiagnosticActionHint(
+              hint: '이 진단 조작을 실행합니다.',
+              child: OutlinedButton(
+                onPressed: widget.busEnabled &&
+                        widget.audioScope.isNotEmpty &&
+                        _sensorReady &&
+                        _beaconFresh &&
+                        !_playing &&
+                        !_starting
+                    ? _calibrateStationary
+                    : null,
+                child: const Text('목표 비콘을 바라보고 방향 보정'),
+              )),
           Text(_stationary.calibrated
               ? '보정된 목표 방향 사용 · 이동 시 재보정 필요'
               : '목표 방향 미보정 · 버스 재생 차단'),
@@ -510,34 +516,44 @@ class _DirectionAudioPanelState extends State<DirectionAudioPanel>
                 ? '장애물 상대 방향: ${pan.targetAngle.toStringAsFixed(1)}° (정면 0° · 오른쪽 +90° · 후방 ±180°)'
                 : '목표 상대각: ${pan.targetAngle.toStringAsFixed(1)}° · 왼쪽 ${(pan.left * 100).round()}% / 오른쪽 ${(pan.right * 100).round()}%',
           ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('회전 방향 반대로'),
-          subtitle: const Text('좌우 변화가 예상과 반대라면 중지 후 변경'),
-          value: _reverse,
-          onChanged: _playing || _starting
-              ? null
-              : (v) => setState(() {
-                    _directionTracker.reset();
-                    _reverse = v;
-                    _stationary.invalidate();
-                  }),
-        ),
+        DiagnosticActionHint(
+            hint: '현재 진단 설정을 켜거나 끔니다.',
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('회전 방향 반대로'),
+              subtitle: const Text('좌우 변화가 예상과 반대라면 중지 후 변경'),
+              value: _reverse,
+              onChanged: _playing || _starting
+                  ? null
+                  : (v) => setState(() {
+                        _directionTracker.reset();
+                        _reverse = v;
+                        _stationary.invalidate();
+                      }),
+            )),
         Text(_message),
         if (_route.isNotEmpty) Text('출력: $_route'),
         Wrap(
           spacing: 8,
           children: [
-            FilledButton(
-              onPressed: _ready && !_playing && !_starting ? _start : null,
-              child: Text(widget.obstacles != null ? '안내 소리 시작' : '버스 소리 시작'),
-            ),
-            OutlinedButton(
-              onPressed: _playing || _starting
-                  ? () => unawaited(_stop('사용자가 테스트음을 중지했습니다.'))
-                  : null,
-              child: const Text('소리 중지'),
-            ),
+            DescribedAction.button(
+                label: widget.obstacles != null ? '안내 소리 시작' : '버스 소리 시작',
+                description:
+                    '\uc774\uc5b4\ud3f0\uc73c\ub85c \ubc29\ud5a5 \uc2dc\ud5d8 \uc74c\ud5a5\uc744 \uc7ac\uc0dd\ud569\ub2c8\ub2e4.',
+                retapWindowAfterDescription: true,
+                child: FilledButton(
+                  onPressed: _ready && !_playing && !_starting ? _start : null,
+                  child:
+                      Text(widget.obstacles != null ? '안내 소리 시작' : '버스 소리 시작'),
+                )),
+            DiagnosticActionHint(
+                hint: '이 진단 조작을 실행합니다.',
+                child: OutlinedButton(
+                  onPressed: _playing || _starting
+                      ? () => unawaited(_stop('사용자가 테스트음을 중지했습니다.'))
+                      : null,
+                  child: const Text('소리 중지'),
+                )),
           ],
         ),
         if (widget.busEnabled && !widget.stationaryBeacon)

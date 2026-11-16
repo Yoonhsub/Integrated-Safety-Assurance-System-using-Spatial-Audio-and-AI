@@ -3,12 +3,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/direction_audio_panel.dart';
+import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
+import 'package:mobi_passenger_app/src/widgets/described_action.dart';
+
+class _ActionVoice implements SpeechEngine {
+  @override
+  Future<void> prepare({required bool requireKoreanVoice}) async {}
+  @override
+  Future<void> speak(String text) async {}
+  @override
+  Future<void> stop() async {}
+}
 
 void main() {
   const channel = MethodChannel('mobi.passenger/hardware-tone');
   final calls = <MethodCall>[];
+  late SpeechPriorityCoordinator actionSpeech;
   setUp(() {
     calls.clear();
+    actionSpeech = SpeechPriorityCoordinator(_ActionVoice());
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
@@ -17,10 +30,11 @@ void main() {
           : {'running': true, 'route': 'Test headset'};
     });
   });
-  tearDown(
-    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null),
-  );
+  tearDown(() {
+    actionSpeech.dispose();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
 
   Widget panel({
     double z = 0,
@@ -32,21 +46,27 @@ void main() {
     int rssi = -85,
     DateTime? seen,
   }) =>
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: DirectionAudioPanel(
-              key: const ValueKey('tone'),
-              z: z,
-              reference: 0,
-              fresh: fresh,
-              sensorAgeMs: 0,
-              busAngle: angle,
-              warning: warning,
-              busEnabled: enabled,
-              audioScope: scope,
-              beaconRssi: rssi,
-              beaconSeenAt: seen ?? DateTime.now(),
+      ActionSpeechScope(
+        speech: actionSpeech,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+              data: const MediaQueryData(accessibleNavigation: true),
+              child: child!),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DirectionAudioPanel(
+                key: const ValueKey('tone'),
+                z: z,
+                reference: 0,
+                fresh: fresh,
+                sensorAgeMs: 0,
+                busAngle: angle,
+                warning: warning,
+                busEnabled: enabled,
+                audioScope: scope,
+                beaconRssi: rssi,
+                beaconSeenAt: seen ?? DateTime.now(),
+              ),
             ),
           ),
         ),
@@ -54,7 +74,9 @@ void main() {
 
   Future<void> start(WidgetTester tester) async {
     await tester.ensureVisible(find.text('버스 소리 시작'));
-    await tester.tap(find.text('버스 소리 시작'));
+    final action = find.ancestor(
+        of: find.text('버스 소리 시작'), matching: find.byType(DescribedAction));
+    await tester.tap(action);
     await tester.pump();
   }
 
@@ -242,8 +264,7 @@ void main() {
     expect(calls.where((c) => c.method == 'start'), hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets(
-      'disabled hardware input stops sound until explicitly restarted',
+  testWidgets('disabled hardware input stops sound until explicitly restarted',
       (tester) async {
     await tester.pumpWidget(panel());
     await start(tester);
@@ -256,8 +277,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('changing radio source stops old output',
-      (tester) async {
+  testWidgets('changing radio source stops old output', (tester) async {
     await tester.pumpWidget(panel());
     await start(tester);
     await tester.pumpWidget(panel(scope: 'radio-target-b'));

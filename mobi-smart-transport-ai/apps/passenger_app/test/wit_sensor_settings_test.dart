@@ -53,6 +53,11 @@ Future<void> open(WidgetTester t) async {
 }
 
 void main() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   testWidgets('WT configuration remains opt in and performs no default load',
       (t) async {
     final store = Store()..value = 'AA:BB:CC:DD:EE:01';

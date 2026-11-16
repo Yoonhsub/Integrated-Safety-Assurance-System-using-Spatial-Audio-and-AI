@@ -23,40 +23,49 @@ class DescribedAction extends StatefulWidget {
       required this.description,
       required this.onActivate,
       required this.child,
-      this.immediate = false});
+      this.immediate = false,
+      this.retapWindowAfterDescription = false});
   factory DescribedAction.button(
           {Key? key,
           required String label,
           required String description,
           required ButtonStyleButton child,
-          bool immediate = false}) =>
+          bool immediate = false,
+          bool retapWindowAfterDescription = false}) =>
       DescribedAction(
           key: key,
           label: label,
           description: description,
           onActivate: child.onPressed,
           immediate: immediate,
+          retapWindowAfterDescription: retapWindowAfterDescription,
           child: child);
   factory DescribedAction.icon(
           {Key? key,
           required String label,
           required String description,
           required IconButton child,
-          bool immediate = false}) =>
+          bool immediate = false,
+          bool retapWindowAfterDescription = false}) =>
       DescribedAction(
           key: key,
           label: label,
           description: description,
           onActivate: child.onPressed,
           immediate: immediate,
+          retapWindowAfterDescription: retapWindowAfterDescription,
           child: child);
   final String label, description;
   final VoidCallback? onActivate;
   final Widget child;
-  final bool immediate;
+  final bool immediate, retapWindowAfterDescription;
   static void cancelDescriptions() {
-    for (final state
-        in List<_DescribedActionState>.of(_DescribedActionState.active)) {
+    final pending = <_DescribedActionState>{};
+    final armedAction = _DescribedActionState.armed;
+    final speakingAction = _DescribedActionState.speaking;
+    if (armedAction != null) pending.add(armedAction);
+    if (speakingAction != null) pending.add(speakingAction);
+    for (final state in pending) {
       state.cancel();
     }
   }
@@ -67,10 +76,11 @@ class DescribedAction extends StatefulWidget {
 
 class _DescribedActionState extends State<DescribedAction>
     with WidgetsBindingObserver {
-  static final active = <_DescribedActionState>{};
   static _DescribedActionState? armed;
+  static _DescribedActionState? speaking;
   final owner = Object();
   Timer? timer;
+  Future<void>? stopRequest;
   int generation = 0;
   bool executing = false, foreground = true;
   SpeechPriorityCoordinator? speech;
@@ -79,7 +89,6 @@ class _DescribedActionState extends State<DescribedAction>
   @override
   void initState() {
     super.initState();
-    active.add(this);
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -99,26 +108,43 @@ class _DescribedActionState extends State<DescribedAction>
         oldWidget.description != widget.description ||
         widget.onActivate == null ||
         oldWidget.onActivate != widget.onActivate ||
-        oldWidget.immediate != widget.immediate) {
+        oldWidget.immediate != widget.immediate ||
+        oldWidget.retapWindowAfterDescription !=
+            widget.retapWindowAfterDescription) {
       cancel();
     }
   }
 
   Future<void> stopDescription() async {
+    if (!identical(speaking, this) && stopRequest == null) return;
+    if (identical(speaking, this)) speaking = null;
+    final existing = stopRequest;
+    if (existing != null) {
+      await existing;
+      return;
+    }
     try {
-      await speech?.stopObservation(owner);
-    } catch (_) {/* Action remains available. */}
+      final request = speech?.stopObservation(owner);
+      if (request == null) return;
+      stopRequest = request;
+      await request;
+    } catch (_) {/* Action remains available. */} finally {
+      stopRequest = null;
+    }
   }
 
   void cancel() {
     generation++;
     timer?.cancel();
     if (identical(armed, this)) armed = null;
-    unawaited(stopDescription());
+    if (identical(speaking, this) || stopRequest != null) {
+      unawaited(stopDescription());
+    }
   }
 
-  Future<void> describe(int ticket) async {
+  Future<void> describe(int ticket, {bool armAfterSpeech = false}) async {
     try {
+      speaking = this;
       await speech?.speakObservation(
           owner,
           widget.description,
@@ -127,14 +153,25 @@ class _DescribedActionState extends State<DescribedAction>
               ticket == generation &&
               !executing &&
               !MediaQuery.accessibleNavigationOf(context));
-    } catch (_) {/* TTS failure must not execute an action. */}
+    } catch (_) {/* TTS failure must not execute an action. */} finally {
+      if (identical(speaking, this)) speaking = null;
+    }
+    if (armAfterSpeech &&
+        identical(armed, this) &&
+        ticket == generation &&
+        current) {
+      timer?.cancel();
+      timer = Timer(const Duration(milliseconds: 500), () {
+        if (identical(armed, this)) armed = null;
+      });
+    }
   }
 
   void executeAction() {
     if (!current || widget.onActivate == null || executing) return;
     DescribedAction.cancelDescriptions();
-    // Emergency actions never wait for speech cancellation acknowledgement.
-    if (widget.immediate) {
+    // Semantic activation and emergency actions must stay synchronous.
+    if (widget.immediate || MediaQuery.accessibleNavigationOf(context)) {
       widget.onActivate!();
       return;
     }
@@ -159,10 +196,16 @@ class _DescribedActionState extends State<DescribedAction>
     }
     DescribedAction.cancelDescriptions();
     armed = this;
-    timer = Timer(const Duration(milliseconds: 500), () {
-      if (identical(armed, this)) armed = null;
-    });
-    unawaited(describe(++generation));
+    timer?.cancel();
+    final ticket = ++generation;
+    if (widget.retapWindowAfterDescription) {
+      unawaited(describe(ticket, armAfterSpeech: true));
+    } else {
+      timer = Timer(const Duration(milliseconds: 500), () {
+        if (identical(armed, this)) armed = null;
+      });
+      unawaited(describe(ticket));
+    }
   }
 
   @override
@@ -180,7 +223,6 @@ class _DescribedActionState extends State<DescribedAction>
   @override
   void dispose() {
     cancel();
-    active.remove(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

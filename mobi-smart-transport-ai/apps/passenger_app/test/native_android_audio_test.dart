@@ -47,6 +47,22 @@ class Port implements NativeCuePort {
   }
 }
 
+class PendingHrtfPort implements HeadTrackedCuePort {
+  final startReply = Completer<Map<String, dynamic>>();
+  final calls = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> invoke(
+    String method,
+    Map<String, dynamic> args,
+  ) {
+    calls.add(method);
+    return method == 'start'
+        ? startReply.future
+        : Future.value({'confirmed': true});
+  }
+}
+
 class LocalTts extends FlutterTts {
   List<Map<String, String>> voices = [
     {'name': 'remote', 'locale': 'ko-KR', 'network_required': '1'},
@@ -90,7 +106,33 @@ class LocalTts extends FlutterTts {
 }
 
 void main() {
+  // Native audio lifecycle tests use semantic activation; the two-tap touch
+  // narration contract is covered in described_action_test.dart.
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('STOP targets HRTF before the native start reply', () async {
+    final port = Port();
+    final hrtf = PendingHrtfPort();
+    final output = NativeDirectionalCueOutput(
+      port: port,
+      headTrackedPort: hrtf,
+    );
+    await output.prepareFromGesture();
+    final play = output.playHeadTrackedCue(15);
+    expect(hrtf.calls, ['start']);
+    await output.stop();
+    expect(hrtf.calls, ['start', 'stop']);
+    expect(port.calls, isNot(contains('stop')));
+    hrtf.startReply.complete({'running': true});
+    expect(await play, isFalse);
+    expect(output.snapshot()['active'], isFalse);
+    await output.dispose();
+  });
+
   for (final direction in TestDirection.values) {
     test('native $direction passes exact direction and waits for marker',
         () async {

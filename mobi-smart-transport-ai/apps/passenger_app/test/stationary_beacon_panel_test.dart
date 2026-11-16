@@ -7,6 +7,11 @@ import 'package:mobi_passenger_app/src/features/hardware_bus/obstacle_cue_input.
 import 'package:mobi_passenger_app/src/features/hardware_bus/cue_control.dart';
 
 void main() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   const channel = MethodChannel('mobi.passenger/hardware-tone');
   final calls = <MethodCall>[];
   setUp(() {

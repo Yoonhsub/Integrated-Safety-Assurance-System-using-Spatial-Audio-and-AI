@@ -10,6 +10,10 @@ import 'direction_pan.dart';
 import 'spatial_warning_check_panel.dart';
 import '../../services/head_tracking_direction.dart';
 
+import 'diagnostic_action_hint.dart';
+
+import '../../widgets/described_action.dart';
+
 const witSensorMac = 'F1:35:40:62:CD:43';
 
 class WitSensorPanel extends StatefulWidget {
@@ -71,6 +75,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   StreamSubscription<BluetoothConnectionState>? _connection;
   Timer? _ticker;
   WitAngles? _latest;
+  DateTime? _sampleReceivedAt;
   double? _reference;
   int _generation = 0, _frames = 0, _referenceRevision = 0;
   bool _connecting = false, _connected = false, _closing = false;
@@ -99,7 +104,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
       rawYaw: _latest?.z,
       filteredYaw: _filteredYaw,
       referenceYaw: _reference,
-      receivedAt: _latest == null ? null : DateTime.now().toUtc(),
+      receivedAt: _sampleReceivedAt,
       message: message ?? _status,
     ));
   }
@@ -122,6 +127,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     ++_generation;
     ++_referenceRevision;
     _latest = null;
+    _sampleReceivedAt = null;
     _reference = null;
     _filteredYaw = null;
     _frames = 0;
@@ -228,19 +234,26 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                               if (_savingSettings) const Text('저장 중'),
                             ])),
                         actions: [
-                          TextButton(
-                              onPressed: _savingSettings
-                                  ? null
-                                  : () => Navigator.pop(dialogContext),
-                              child: const Text('취소')),
-                          TextButton(
-                              onPressed:
-                                  _savingSettings ? null : () => save(true),
-                              child: const Text('기본값 복원')),
-                          FilledButton(
-                              onPressed:
-                                  _savingSettings ? null : () => save(false),
-                              child: const Text('저장')),
+                          DiagnosticActionHint(
+                              hint: '이 진단 조작을 실행합니다.',
+                              child: TextButton(
+                                  onPressed: _savingSettings
+                                      ? null
+                                      : () => Navigator.pop(dialogContext),
+                                  child: const Text('취소'))),
+                          DiagnosticActionHint(
+                              hint: '이 진단 조작을 실행합니다.',
+                              child: TextButton(
+                                  onPressed:
+                                      _savingSettings ? null : () => save(true),
+                                  child: const Text('기본값 복원'))),
+                          DiagnosticActionHint(
+                              hint: '이 진단 조작을 실행합니다.',
+                              child: FilledButton(
+                                  onPressed: _savingSettings
+                                      ? null
+                                      : () => save(false),
+                                  child: const Text('저장'))),
                         ]));
               }));
       await Navigator.of(context, rootNavigator: true).push(route);
@@ -257,6 +270,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     final generation = ++_generation;
     _connecting = true;
     _latest = null;
+    _sampleReceivedAt = null;
     _reference = null;
     _frames = 0;
     _decoder.reset();
@@ -320,12 +334,14 @@ class _WitSensorPanelState extends State<WitSensorPanel>
       _notifications = characteristic.onValueReceived.listen(
         (bytes) {
           if (!_current(generation)) return;
+          final receivedAt = DateTime.now().toUtc();
           final readings = _decoder.add(bytes);
           if (readings.isEmpty) return;
           for (final reading in readings) {
             _filteredYaw = _yawFilter.add(reading.z, _clock.elapsed);
           }
           _latest = readings.last;
+          _sampleReceivedAt = receivedAt;
           _frames += readings.length;
           _age
             ..reset()
@@ -366,6 +382,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _connecting = false;
     _connected = false;
     _latest = null;
+    _sampleReceivedAt = null;
     _reference = null;
     _decoder.reset();
     _yawFilter.reset();
@@ -420,29 +437,35 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                       Row(children: [
                         const Expanded(child: Text('WT 자세 센서')),
                         if (widget.allowConfiguration)
-                          IconButton(
-                              tooltip: 'WT 주소 설정',
-                              icon: const Icon(Icons.settings),
-                              onPressed: _idle && _configurationReady
-                                  ? _configure
-                                  : null),
-                        IconButton(
-                            tooltip: '센서 상태 자세히',
-                            icon: const Icon(Icons.info_outline),
-                            onPressed: () => showDialog<void>(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                      title: const Text('WT 센서 상태'),
-                                      content: SingleChildScrollView(
-                                          child: Text(
-                                              '$_address\n$_status\n수신 $_frames 프레임\nYaw: ${_filteredYaw?.toStringAsFixed(2) ?? "없음"}°\n기준: ${_reference?.toStringAsFixed(2) ?? "미설정"}\n정면을 보고 기준을 설정하세요. 화면 전환은 센서 연결을 끊지 않습니다.')),
-                                      actions: [
-                                        TextButton(
-                                            onPressed: () =>
-                                                Navigator.pop(context),
-                                            child: const Text('닫기'))
-                                      ],
-                                    ))),
+                          DiagnosticActionHint(
+                              hint: '추가 정보 또는 설정 화면을 엽니다.',
+                              child: IconButton(
+                                  tooltip: 'WT 주소 설정',
+                                  icon: const Icon(Icons.settings),
+                                  onPressed: _idle && _configurationReady
+                                      ? _configure
+                                      : null)),
+                        DiagnosticActionHint(
+                            hint: '추가 정보 또는 설정 화면을 엽니다.',
+                            child: IconButton(
+                                tooltip: '센서 상태 자세히',
+                                icon: const Icon(Icons.info_outline),
+                                onPressed: () => showDialog<void>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                          title: const Text('WT 센서 상태'),
+                                          content: SingleChildScrollView(
+                                              child: Text(
+                                                  '$_address\n$_status\n수신 $_frames 프레임\nYaw: ${_filteredYaw?.toStringAsFixed(2) ?? "없음"}°\n기준: ${_reference?.toStringAsFixed(2) ?? "미설정"}\n정면을 보고 기준을 설정하세요. 화면 전환은 센서 연결을 끊지 않습니다.')),
+                                          actions: [
+                                            DiagnosticActionHint(
+                                                hint: '이 진단 조작을 실행합니다.',
+                                                child: TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(context),
+                                                    child: const Text('닫기')))
+                                          ],
+                                        )))),
                       ]),
                       if (_settingsLoadFailed)
                         const Text('주소 설정 오류 · 설정에서 저장/복원 필요'),
@@ -451,33 +474,46 @@ class _WitSensorPanelState extends State<WitSensorPanel>
                           : (_connecting ? '연결 중' : '연결 안 됨')),
                       Row(children: [
                         Expanded(
-                            child: FilledButton(
-                                onPressed: !_idle ||
-                                        !_configurationReady ||
-                                        _settingsLoadFailed
-                                    ? null
-                                    : _connect,
-                                child: const Text('센서 연결'))),
+                            child: DescribedAction.button(
+                                label: '센서 연결',
+                                description:
+                                    'WT \uc13c\uc11c\uc5d0 \uc5f0\uacb0\ud574 \ubc29\ud5a5 \ub370\uc774\ud130\ub97c \uc77d\uc2b5\ub2c8\ub2e4.',
+                                retapWindowAfterDescription: true,
+                                child: FilledButton(
+                                    onPressed: !_idle ||
+                                            !_configurationReady ||
+                                            _settingsLoadFailed
+                                        ? null
+                                        : _connect,
+                                    child: const Text('센서 연결')))),
                         const SizedBox(width: 8),
                         Expanded(
-                            child: OutlinedButton(
-                                onPressed: _connecting || _connected
-                                    ? () => unawaited(_close('센서 연결을 종료했습니다.'))
-                                    : null,
-                                child: const Text('연결 중지')))
+                            child: DescribedAction.button(
+                                label: '연결 중지',
+                                description:
+                                    'WT \uc13c\uc11c\uc5d0 \uc5f0\uacb0\ud574 \ubc29\ud5a5 \ub370\uc774\ud130\ub97c \uc77d\uc2b5\ub2c8\ub2e4.',
+                                retapWindowAfterDescription: true,
+                                child: OutlinedButton(
+                                    onPressed: _connecting || _connected
+                                        ? () =>
+                                            unawaited(_close('센서 연결을 종료했습니다.'))
+                                        : null,
+                                    child: const Text('연결 중지'))))
                       ]),
                       SizedBox(
                           width: double.infinity,
-                          child: OutlinedButton(
-                              onPressed: _fresh
-                                  ? () => setState(() {
-                                        _reference = _filteredYaw!;
-                                        _referenceRevision++;
-                                        _publish(HeadTrackingStatus.ready,
-                                            message: '정면 설정 완료');
-                                      })
-                                  : null,
-                              child: const Text('현재 방향을 정면으로 설정'))),
+                          child: DiagnosticActionHint(
+                              hint: '이 진단 조작을 실행합니다.',
+                              child: OutlinedButton(
+                                  onPressed: _fresh
+                                      ? () => setState(() {
+                                            _reference = _filteredYaw!;
+                                            _referenceRevision++;
+                                            _publish(HeadTrackingStatus.ready,
+                                                message: '정면 설정 완료');
+                                          })
+                                      : null,
+                                  child: const Text('현재 방향을 정면으로 설정')))),
                     ],
                   ))));
     }
@@ -493,9 +529,12 @@ class _WitSensorPanelState extends State<WitSensorPanel>
             ),
             SelectableText(_address),
             if (widget.allowConfiguration)
-              OutlinedButton(
-                  onPressed: _idle && _configurationReady ? _configure : null,
-                  child: const Text('WT 주소 설정')),
+              DiagnosticActionHint(
+                  hint: '이 진단 조작을 실행합니다.',
+                  child: OutlinedButton(
+                      onPressed:
+                          _idle && _configurationReady ? _configure : null,
+                      child: const Text('WT 주소 설정'))),
             Text(_status),
             Text('각도 프레임: $_frames개'),
             const SizedBox(height: 8),
@@ -522,30 +561,42 @@ class _WitSensorPanelState extends State<WitSensorPanel>
               spacing: 8,
               runSpacing: 8,
               children: [
-                FilledButton(
-                  onPressed:
-                      !_idle || !_configurationReady || _settingsLoadFailed
-                          ? null
-                          : _connect,
-                  child: const Text('센서 연결'),
-                ),
-                OutlinedButton(
-                  onPressed: _connecting || _connected
-                      ? () => unawaited(_close('센서 연결을 종료했습니다.'))
-                      : null,
-                  child: const Text('센서 연결 해제'),
-                ),
-                OutlinedButton(
-                  onPressed: _fresh
-                      ? () => setState(() {
-                            _reference = _filteredYaw!;
-                            _referenceRevision++;
-                            _publish(HeadTrackingStatus.ready,
-                                message: '정면 보정 완료');
-                          })
-                      : null,
-                  child: const Text('도로 정면을 기준으로 설정'),
-                ),
+                DescribedAction.button(
+                    label: '센서 연결',
+                    description:
+                        'WT \uc13c\uc11c\uc5d0 \uc5f0\uacb0\ud574 \ubc29\ud5a5 \ub370\uc774\ud130\ub97c \uc77d\uc2b5\ub2c8\ub2e4.',
+                    retapWindowAfterDescription: true,
+                    child: FilledButton(
+                      onPressed:
+                          !_idle || !_configurationReady || _settingsLoadFailed
+                              ? null
+                              : _connect,
+                      child: const Text('센서 연결'),
+                    )),
+                DescribedAction.button(
+                    label: '센서 연결 해제',
+                    description:
+                        'WT \uc13c\uc11c\uc5d0 \uc5f0\uacb0\ud574 \ubc29\ud5a5 \ub370\uc774\ud130\ub97c \uc77d\uc2b5\ub2c8\ub2e4.',
+                    retapWindowAfterDescription: true,
+                    child: OutlinedButton(
+                      onPressed: _connecting || _connected
+                          ? () => unawaited(_close('센서 연결을 종료했습니다.'))
+                          : null,
+                      child: const Text('센서 연결 해제'),
+                    )),
+                DiagnosticActionHint(
+                    hint: '이 진단 조작을 실행합니다.',
+                    child: OutlinedButton(
+                      onPressed: _fresh
+                          ? () => setState(() {
+                                _reference = _filteredYaw!;
+                                _referenceRevision++;
+                                _publish(HeadTrackingStatus.ready,
+                                    message: '정면 보정 완료');
+                              })
+                          : null,
+                      child: const Text('도로 정면을 기준으로 설정'),
+                    )),
               ],
             ),
             const Text(

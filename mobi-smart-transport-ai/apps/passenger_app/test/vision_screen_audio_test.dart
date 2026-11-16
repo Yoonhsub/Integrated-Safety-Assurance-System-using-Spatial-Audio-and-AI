@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:mobi_passenger_app/src/local_vision/native_local_vision_page.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -84,6 +85,44 @@ void main() {
         history.value.any((frame) => frame.id == first.frame.frameId), isFalse);
     history.clear();
     expect(history.value, isEmpty);
+    history.dispose();
+  });
+
+  testWidgets('detection review opens a pinned list and returns to camera', (
+    t,
+  ) async {
+    final history = DetectedFrameHistory();
+    final jpeg = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jMgAAAABJRU5ErkJggg==',
+    );
+    const boxes = [LocalBox('pole', .9, .2, .3, .15, .4)];
+    void capture(int tick) {
+      history.record(
+        LocalObservation(camera.frame(tick), jpeg, boxes, 2, 2, 1, 2),
+      );
+    }
+
+    capture(1);
+    await t.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(accessibleNavigation: true),
+          child: child!,
+        ),
+        home: Scaffold(body: DetectedFrameReviewButton(history: history)),
+      ),
+    );
+    await t.tap(find.text('인식 프레임 확인'));
+    await t.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+    capture(2);
+    await t.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+    await t.pageBack();
+    await t.pumpAndSettle();
+    expect(find.byType(DetectedFrameReviewButton), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
+    await t.pumpWidget(const SizedBox());
     history.dispose();
   });
 

@@ -24,6 +24,12 @@ class DelayedEngine extends f.FakeTts {
 }
 
 void main() {
+  // Lifecycle tests bypass touch narration; DescribedAction owns that test.
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   test(
       'active lease notifies normally; retired leases are inactive and idempotent',
       () async {

@@ -6,6 +6,11 @@ import 'package:mobi_passenger_app/src/features/hardware_bus/spatial_warning_che
 import 'package:mobi_passenger_app/src/features/hardware_bus/wit_sensor_panel.dart';
 
 void main() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   testWidgets(
       'listening check replaces regular output and preserves sensor state',
       (tester) async {

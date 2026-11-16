@@ -6,8 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/concurrent_camera_panel.dart';
 import 'package:mobi_passenger_app/src/local_vision/vision_codec.dart';
 import 'package:mobi_passenger_app/src/services/directional_guidance.dart';
+import 'package:mobi_passenger_app/src/services/head_tracking_direction.dart';
 import 'package:mobi_passenger_app/src/services/spatial_verification_engine.dart';
 import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
+import 'package:mobi_passenger_app/src/widgets/described_action.dart';
 
 class Source extends ConcurrentCameraSource {
   @override
@@ -67,8 +69,17 @@ class Output
     implements
         SpatialTestOutput,
         DirectionalCueOutput,
-        InformationalDirectionalCueOutput {
+        InformationalDirectionalCueOutput,
+        HeadTrackedCueOutput {
   final cues = <TestDirection>[];
+  final hrtf = <double>[];
+  Completer<bool>? activeHrtf;
+  @override
+  Future<bool> playHeadTrackedCue(double azimuthDegrees) {
+    hrtf.add(azimuthDegrees);
+    return (activeHrtf = Completer<bool>()).future;
+  }
+
   @override
   Future<void> prepareFromGesture() async {}
   @override
@@ -81,10 +92,15 @@ class Output
 
   @override
   Future<bool> playInformationalCue(
-          TestDirection direction, InformationalCueTone tone) =>
+    TestDirection direction,
+    InformationalCueTone tone,
+  ) =>
       playCue(direction);
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async {
+    if (activeHrtf?.isCompleted == false) activeHrtf!.complete(false);
+  }
+
   @override
   Future<void> dispose() async {}
   @override
@@ -134,21 +150,55 @@ void main() {
     await engine.dispose();
     source.dispose();
   });
-  Widget panel({ConcurrentObservationPlayer? player, bool compact = false}) =>
-      MaterialApp(
+  Widget panel({
+    ConcurrentObservationPlayer? player,
+    bool compact = false,
+    HeadTrackingState? headTracking,
+    DateTime Function()? now,
+    double fov = 0,
+    bool headTrackedAudioEnabled = false,
+    HeadTrackingMountCalibration calibration =
+        const HeadTrackingMountCalibration(),
+  }) =>
+      ActionSpeechScope(
+        speech: priority,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(accessibleNavigation: true),
+            child: child!,
+          ),
           home: Scaffold(
-              body: SingleChildScrollView(
-                  child: ConcurrentCameraPanel(
-                      source: source,
-                      engine: engine,
-                      priority: priority,
-                      isCurrent: () => true,
-                      compact: compact,
-                      playObservation: player))));
+            body: SingleChildScrollView(
+              child: ConcurrentCameraPanel(
+                source: source,
+                engine: engine,
+                priority: priority,
+                isCurrent: () => true,
+                compact: compact,
+                headTracking: headTracking,
+                mountCalibration: calibration,
+                horizontalFovDegrees: fov,
+                headTrackedAudioEnabled: headTrackedAudioEnabled,
+                now: now,
+                playObservation: player,
+              ),
+            ),
+          ),
+        ),
+      );
   Future<void> tap(WidgetTester t, String text) async {
     await t.ensureVisible(find.text(text));
-    await t.tap(find.text(text));
+    final target = text.contains('\uc2dc\uc791')
+        ? find.ancestor(
+            of: find.text(text), matching: find.byType(DescribedAction))
+        : find.text(text);
+    await t.tap(target);
     await t.pump();
+    if (text.contains('\uc2dc\uc791')) {
+      await t.tap(target);
+      await t.pump();
+      speech.spoken.clear();
+    }
   }
 
   Future<void> frames(WidgetTester t, {bool stale = false}) async {
@@ -158,6 +208,76 @@ void main() {
     }
   }
 
+  const measured = HeadTrackingMountCalibration(
+    mount: HeadTrackingCameraMount.headMountedCamera,
+    axesAlignmentVerified: true,
+    cameraAxisOffsetDegrees: 0,
+  );
+  for (final condition in [
+    'disconnect',
+    'age',
+    'missing fov',
+    'missing axes',
+    'missing opt-in',
+  ]) {
+    testWidgets('camera HRTF fallback on $condition', (t) async {
+      initialize();
+      final wt = HeadTrackingState();
+      var now = DateTime.utc(2026, 11, 16, 10);
+      void sample(DateTime timestamp) => wt.publish(
+            HeadTrackingSnapshot(
+              status: HeadTrackingStatus.ready,
+              filteredYaw: 10,
+              referenceYaw: 0,
+              receivedAt: timestamp,
+            ),
+          );
+      await t.pumpWidget(
+        panel(
+          headTracking: wt,
+          now: () => now,
+          fov: condition == 'missing fov' ? 0 : 90,
+          headTrackedAudioEnabled: condition != 'missing opt-in',
+          calibration: condition == 'missing axes'
+              ? const HeadTrackingMountCalibration()
+              : measured,
+        ),
+      );
+      await tap(t, '카메라 시작');
+      await tap(t, '화면 위치 소리 시작');
+      sample(now);
+      for (var i = 0; i < 3; i++) {
+        now = now.add(const Duration(milliseconds: 10));
+        source.emit(receivedAt: now);
+        await t.pump();
+      }
+      if (condition.startsWith('missing')) {
+        expect(output.hrtf, isEmpty);
+        expect(output.cues, [TestDirection.left]);
+      } else {
+        expect(output.hrtf, hasLength(1));
+        expect(output.cues, isEmpty);
+        if (condition == 'disconnect') {
+          wt.publish(
+            const HeadTrackingSnapshot(status: HeadTrackingStatus.disconnected),
+          );
+        } else {
+          now = now.add(const Duration(milliseconds: 260));
+        }
+        await t.pump(const Duration(milliseconds: 150));
+        expect(output.activeHrtf?.isCompleted, isTrue);
+        expect(output.cues, isEmpty);
+        now = now.add(const Duration(milliseconds: 10));
+        source.emit(receivedAt: now);
+        await t.pump();
+        expect(output.cues, [TestDirection.left]);
+      }
+      await t.pumpWidget(const SizedBox());
+      await t.pump();
+      wt.dispose();
+    });
+  }
+
   testWidgets('compact preview uses a readable height', (t) async {
     t.view.physicalSize = const Size(360, 800);
     t.view.devicePixelRatio = 1;
@@ -165,12 +285,19 @@ void main() {
     addTearDown(t.view.resetDevicePixelRatio);
     initialize();
     await t.pumpWidget(panel(compact: true));
+    await tap(t, '카메라 시작');
+    await t.pumpAndSettle();
+    expect(source.running, isTrue);
     source.emit(
         empty: true,
         jpeg: Uint8List.fromList(base64Decode(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jMgAAAABJRU5ErkJggg==')));
-    await t.pump();
-    expect(t.getSize(find.byType(Image).last).height, 180);
+    await t.pumpAndSettle();
+    expect(source.observation, isNotNull);
+    expect(source.observation!.jpeg, isNotEmpty);
+    final preview = find.byType(Image, skipOffstage: false);
+    expect(preview, findsOneWidget);
+    expect(t.getSize(preview).height, 180);
     expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox());
   });

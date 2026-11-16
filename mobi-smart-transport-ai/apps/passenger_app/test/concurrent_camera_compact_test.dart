@@ -7,6 +7,13 @@ import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart
 import 'concurrent_camera_panel_test.dart' show Source, Output, Speech;
 
 void main() {
+  // Hardware lifecycle assertions use one-action semantics. Touch narration
+  // is covered in described_action_test.dart.
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   testWidgets('compact camera controls fit 360x800 with details in dialog',
       (t) async {
     t.view.physicalSize = const Size(360, 800);
