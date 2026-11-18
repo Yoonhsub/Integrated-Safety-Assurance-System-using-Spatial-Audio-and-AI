@@ -5,6 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/hardware_bus_page.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/wit_sensor_panel.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
+import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
+import 'package:mobi_passenger_app/src/widgets/described_action.dart';
+
+class _ActionVoice implements SpeechEngine {
+  @override
+  Future<void> prepare({required bool requireKoreanVoice}) async {}
+  @override
+  Future<void> speak(String text) async {}
+  @override
+  Future<void> stop() async {}
+}
 
 void main() {
   testWidgets('scan start and timeout preserve the sensor panel state', (
@@ -22,11 +33,22 @@ void main() {
       ),
     );
     final scanner = _ControlledScanner();
+    final actionSpeech = SpeechPriorityCoordinator(_ActionVoice());
+    addTearDown(actionSpeech.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: HardwareBusPage(scannerFactory: (_) => scanner)),
+      MaterialApp(
+          home: ActionSpeechScope(
+              speech: actionSpeech,
+              child: HardwareBusPage(scannerFactory: (_) => scanner))),
     );
     final sensorBefore = tester.state(find.byType(WitSensorPanel));
-    await tester.tap(find.text('버스 탐색 시작 (5분)'));
+    await tester.tap(find.ancestor(
+        of: find.text('버스 탐색 시작 (5분)'),
+        matching: find.byType(DescribedAction)));
+    await tester.pump();
+    await tester.tap(find.ancestor(
+        of: find.text('버스 탐색 시작 (5분)'),
+        matching: find.byType(DescribedAction)));
     await tester.pump();
     await tester.pump();
     expect(
@@ -88,8 +110,17 @@ void main() {
     addTearDown(() => tester.binding.defaultBinaryMessenger
         .setMockMethodCallHandler(permissions, null));
     final scanner = _ControlledScanner();
-    await tester.pumpWidget(
-        MaterialApp(home: HardwareBusPage(scannerFactory: (_) => scanner)));
+    final actionSpeech = SpeechPriorityCoordinator(_ActionVoice());
+    addTearDown(actionSpeech.dispose);
+    await tester.pumpWidget(MaterialApp(
+        builder: (context, child) => MediaQuery(
+            data: const MediaQueryData(accessibleNavigation: true),
+            child: child!),
+        home: ActionSpeechScope(
+            speech: actionSpeech,
+            child: HardwareBusPage(scannerFactory: (_) => scanner))));
+    await tester.tap(find.text('버스 탐색 시작 (5분)'));
+    await tester.pump();
     await tester.tap(find.text('버스 탐색 시작 (5분)'));
     await tester.pump();
     await tester.pump();

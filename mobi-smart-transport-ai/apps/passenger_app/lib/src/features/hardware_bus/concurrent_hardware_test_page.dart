@@ -5,12 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import '../../services/native_directional_cue_output.dart';
+import '../../services/head_tracking_direction.dart';
 import '../../services/spatial_verification_engine.dart';
 import '../../services/speech_priority_coordinator.dart';
 import 'continuous_beacon_scanner.dart';
 import 'wit_sensor_panel.dart';
 import 'concurrent_camera_panel.dart';
 import 'concurrent_test_control.dart';
+
+import 'diagnostic_action_hint.dart';
+
+import '../../widgets/described_action.dart';
 
 typedef ConcurrentPanelBuilder = Widget Function(
     SpeechPriorityCoordinator,
@@ -27,13 +32,22 @@ class ConcurrentHardwareTestPage extends StatefulWidget {
       this.ensurePermission,
       this.cameraBuilder,
       this.sensorBuilder,
-      this.settingsStore});
+      this.settingsStore,
+      this.cameraMountCalibration = const HeadTrackingMountCalibration(),
+      this.cameraHorizontalFovDegrees = 0,
+      this.headTrackedAudioEnabled = false});
   final SpatialVerificationEngine? engine;
   final HardwareTestSettingsStore? settingsStore;
   final BeaconScanner Function(String mac)? scannerFactory;
   final Future<bool> Function()? ensurePermission;
   final ConcurrentPanelBuilder? cameraBuilder;
   final Widget Function(Future<bool> Function())? sensorBuilder;
+  /// Supplied only by a calibration owner that has measured this camera setup.
+  /// Defaults deliberately disable HRTF in the diagnostic workspace.
+  final HeadTrackingMountCalibration cameraMountCalibration;
+  final double cameraHorizontalFovDegrees;
+  // Caller grants this only after the user's explicit opt-in.
+  final bool headTrackedAudioEnabled;
   @override
   State<ConcurrentHardwareTestPage> createState() =>
       _ConcurrentHardwareTestPageState();
@@ -374,32 +388,40 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
                       if (busy) const Text('저장 변경 중…'),
                     ])),
                     actions: [
-                      TextButton(
-                          onPressed: editable && !busy
-                              ? () => persist(reset: true)
-                              : null,
-                          child: const Text('저장 초기화')),
-                      TextButton(
-                          onPressed: editable && !busy ? persist : null,
-                          child: const Text('저장')),
-                      TextButton(
-                          onPressed: busy
-                              ? null
-                              : () {
-                                  final value = BusTestPairing.parse(
-                                      route.text, mac.text);
-                                  if (editable && value != null) apply(value);
-                                  if (editable &&
-                                      value == null &&
-                                      (route.text.isNotEmpty ||
-                                          mac.text.isNotEmpty)) {
-                                    update(() => error =
-                                        '버스 번호와 올바른 Android MAC을 입력하세요.');
-                                    return;
-                                  }
-                                  Navigator.pop(context);
-                                },
-                          child: const Text('완료')),
+                      DiagnosticActionHint(
+                          hint: '이 진단 조작을 실행합니다.',
+                          child: TextButton(
+                              onPressed: editable && !busy
+                                  ? () => persist(reset: true)
+                                  : null,
+                              child: const Text('저장 초기화'))),
+                      DiagnosticActionHint(
+                          hint: '이 진단 조작을 실행합니다.',
+                          child: TextButton(
+                              onPressed: editable && !busy ? persist : null,
+                              child: const Text('저장'))),
+                      DiagnosticActionHint(
+                          hint: '이 진단 조작을 실행합니다.',
+                          child: TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () {
+                                      final value = BusTestPairing.parse(
+                                          route.text, mac.text);
+                                      if (editable && value != null) {
+                                        apply(value);
+                                      }
+                                      if (editable &&
+                                          value == null &&
+                                          (route.text.isNotEmpty ||
+                                              mac.text.isNotEmpty)) {
+                                        update(() => error =
+                                            '버스 번호와 올바른 Android MAC을 입력하세요.');
+                                        return;
+                                      }
+                                      Navigator.pop(context);
+                                    },
+                              child: const Text('완료'))),
                     ],
                   ));
             }));
@@ -418,19 +440,25 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
                 child: Text(
                     '임시 시연 화면입니다. 버스·WT와 카메라 화면을 바꿔도 센서 연결은 유지됩니다. 각 시작·중지는 해당 장치만 제어합니다. 소리는 겹치지 않게 한 번에 하나만 재생하며 센서는 계속 동작합니다. 실제 위험·버스 접근·통행 가능 여부를 검증하지 않습니다.\n\n버스 상태: $_status\n\n입력한 버스 번호: ${_route.text}\nMAC: ${_mac.text}')),
             actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('닫기'))
+              DiagnosticActionHint(
+                  hint: '이 진단 조작을 실행합니다.',
+                  child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('닫기')))
             ],
           ));
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => ActionSpeechScope(
+      speech: _priority,
+      child: Scaffold(
         resizeToAvoidBottomInset: false,
         appBar: AppBar(title: const Text('동시 테스트'), actions: [
-          IconButton(
-              onPressed: _information,
-              tooltip: '동시 테스트 안내 및 상세 상태',
-              icon: const Icon(Icons.info_outline)),
+          DiagnosticActionHint(
+              hint: '추가 정보 또는 설정 화면을 엽니다.',
+              child: IconButton(
+                  onPressed: _information,
+                  tooltip: '동시 테스트 안내 및 상세 상태',
+                  icon: const Icon(Icons.info_outline))),
         ]),
         body: SafeArea(
             child: Column(children: [
@@ -438,14 +466,19 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(children: [
                 Expanded(
-                    child: FilledButton.tonal(
-                        onPressed: () => setState(() => _view = 0),
-                        child: Text('1 버스·WT${_view == 0 ? " · 선택" : ""}'))),
+                    child: DiagnosticActionHint(
+                        hint: '이 진단 조작을 실행합니다.',
+                        child: FilledButton.tonal(
+                            onPressed: () => setState(() => _view = 0),
+                            child:
+                                Text('1 버스·WT${_view == 0 ? " · 선택" : ""}')))),
                 const SizedBox(width: 8),
                 Expanded(
-                    child: FilledButton.tonal(
-                        onPressed: () => setState(() => _view = 1),
-                        child: Text('2 카메라${_view == 1 ? " · 선택" : ""}'))),
+                    child: DiagnosticActionHint(
+                        hint: '이 진단 조작을 실행합니다.',
+                        child: FilledButton.tonal(
+                            onPressed: () => setState(() => _view = 1),
+                            child: Text('2 카메라${_view == 1 ? " · 선택" : ""}')))),
               ])),
           Expanded(
               child: IndexedStack(index: _view, children: [
@@ -467,12 +500,14 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
                                               : _running
                                                   ? '버스 시연 · 탐색 중'
                                                   : '버스 시연 · 대기')),
-                                      TextButton(
-                                          onPressed: _settingsLoading ||
-                                                  _settingsSaving
-                                              ? null
-                                              : _pairing,
-                                          child: const Text('번호·MAC 설정'))
+                                      DiagnosticActionHint(
+                                          hint: '이 진단 조작을 실행합니다.',
+                                          child: TextButton(
+                                              onPressed: _settingsLoading ||
+                                                      _settingsSaving
+                                                  ? null
+                                                  : _pairing,
+                                              child: const Text('번호·MAC 설정')))
                                     ]),
                                     Text(
                                         _route.text.isEmpty
@@ -482,29 +517,41 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
                                         overflow: TextOverflow.ellipsis),
                                     Row(children: [
                                       Expanded(
-                                          child: FilledButton(
-                                              onPressed: _settingsLoading ||
-                                                      _settingsSaving ||
-                                                      _running ||
-                                                      _starting ||
-                                                      _stopping
-                                                  ? null
-                                                  : _startScan,
-                                              child: const Text('버스 탐색 시작'))),
+                                          child: DescribedAction.button(
+                                              label: '버스 탐색 시작',
+                                              description:
+                                                  '\uc8fc\ubcc0 \ubc84\uc2a4 \ube44\ucf58\uc744 \uac80\uc0c9\ud569\ub2c8\ub2e4.',
+                                              retapWindowAfterDescription: true,
+                                              child: FilledButton(
+                                                  onPressed: _settingsLoading ||
+                                                          _settingsSaving ||
+                                                          _running ||
+                                                          _starting ||
+                                                          _stopping
+                                                      ? null
+                                                      : _startScan,
+                                                  child:
+                                                      const Text('버스 탐색 시작')))),
                                       const SizedBox(width: 8),
                                       Expanded(
-                                          child: OutlinedButton(
-                                              onPressed: _running || _starting
-                                                  ? () => unawaited(_stopScan(
-                                                      '사용자가 버스 탐색을 중지했습니다.'))
-                                                  : null,
-                                              child: const Text('버스 탐색 중지')))
+                                          child: DiagnosticActionHint(
+                                              hint: '이 진단 조작을 실행합니다.',
+                                              child: OutlinedButton(
+                                                  onPressed: _running ||
+                                                          _starting
+                                                      ? () => unawaited(_stopScan(
+                                                          '사용자가 버스 탐색을 중지했습니다.'))
+                                                      : null,
+                                                  child:
+                                                      const Text('버스 탐색 중지'))))
                                     ]),
-                                    SwitchListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        value: _voice,
-                                        onChanged: _toggleVoice,
-                                        title: const Text('버스 시연 음성 켜기')),
+                                    DiagnosticActionHint(
+                                        hint: '현재 진단 설정을 켜거나 끔니다.',
+                                        child: SwitchListTile(
+                                            contentPadding: EdgeInsets.zero,
+                                            value: _voice,
+                                            onChanged: _toggleVoice,
+                                            title: const Text('버스 시연 음성 켜기'))),
                                     Text(_status,
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis),
@@ -529,11 +576,17 @@ class _ConcurrentHardwareTestPageState extends State<ConcurrentHardwareTestPage>
                             priority: _priority,
                             engine: _engine,
                             isCurrent: () => _current,
+                            headTracking: sharedHeadTrackingState,
+                            mountCalibration: widget.cameraMountCalibration,
+                            horizontalFovDegrees:
+                                widget.cameraHorizontalFovDegrees,
+                            headTrackedAudioEnabled:
+                                widget.headTrackedAudioEnabled,
                             playObservation: _play,
                             compact: true))),
           ])),
         ])),
-      );
+      ));
   @override
   void dispose() {
     _disposed = true;

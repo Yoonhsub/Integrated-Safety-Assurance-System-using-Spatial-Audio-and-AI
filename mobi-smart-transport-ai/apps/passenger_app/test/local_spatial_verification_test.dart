@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobi_passenger_app/src/widgets/described_action.dart';
 import 'package:mobi_passenger_app/src/pages/local_spatial_verification_page.dart';
 import 'package:mobi_passenger_app/src/services/spatial_verification_engine.dart';
 import 'package:mobi_passenger_app/src/services/audio_haptic_cue_service.dart';
@@ -73,22 +74,30 @@ void main() {
       addTearDown(t.view.resetDevicePixelRatio);
       final output = Output(), speech = f.FakeTts();
       if (scenario == 'pending-prepare') output.preparing = Completer<void>();
-      await t.pumpWidget(MaterialApp(
-          home: LocalSpatialVerificationPage(
-              enabled: scenario != 'default-blocked',
-              output: output,
-              tts: speech,
-              cuesFactory: (p) => AudioHapticCueService(
-                  speechPriority: p,
-                  audioPlayer: f.FakePlayer(),
-                  liveAudioPlayer: f.FakeLive()))));
+      await t.pumpWidget(MediaQuery(
+          data: const MediaQueryData(accessibleNavigation: true),
+          child: MaterialApp(
+              home: LocalSpatialVerificationPage(
+                  enabled: scenario != 'default-blocked',
+                  output: output,
+                  tts: speech,
+                  cuesFactory: (p) => AudioHapticCueService(
+                      speechPriority: p,
+                      audioPlayer: f.FakePlayer(),
+                      liveAudioPlayer: f.FakeLive())))));
       await t.pump();
+      Future<void> tapAction(String label) async {
+        await t.tap(find.ancestor(
+            of: find.text(label), matching: find.byType(DescribedAction)));
+        await t.pump();
+      }
+
       expect(output.commands, isEmpty);
       expect(speech.spoken, isEmpty);
       if (scenario == 'default-blocked') {
         expect(find.text('SPATIAL_VERIFICATION_BLOCKED'), findsOneWidget);
       } else {
-        await t.tap(find.text('STEREO LEFT'));
+        await tapAction('STEREO LEFT');
         await t.pump();
         if (scenario == 'pending-prepare') {
           await t.tap(find.text('세션 종료'));
@@ -100,7 +109,7 @@ void main() {
           expect(output.commands, ['STEREO:LEFT']);
           if (scenario == 'complete') {
             output.finish();
-            await t.pump();
+            await t.pumpAndSettle();
             expect(
                 find.textContaining('STEREO LEFT COMPLETED'), findsOneWidget);
           } else if (scenario == 'hold') {
@@ -113,9 +122,9 @@ void main() {
             expect(output.commands.length, 1);
             expect(find.text('LIVE_HOLD_COMPLETED'), findsOneWidget);
           } else if (scenario == 'rapid') {
-            await t.tap(find.text('STEREO RIGHT'));
+            await tapAction('STEREO RIGHT');
             await t.pump();
-            await t.tap(find.text('HRTF CENTER'));
+            await tapAction('HRTF CENTER');
             await t.pump();
             expect(output.commands,
                 ['STEREO:LEFT', 'STEREO:RIGHT', 'HRTF:CENTER']);
@@ -125,7 +134,7 @@ void main() {
             await t.pump();
             expect(output.stops, greaterThan(0));
             expect(speech.spoken, ['테스트 음성 출력입니다.']);
-            await t.tap(find.text('STEREO RIGHT'));
+            await tapAction('STEREO RIGHT');
             await t.pump();
             expect(speech.stops, greaterThan(0));
             expect(output.commands.last, 'STEREO:RIGHT');
@@ -155,11 +164,11 @@ void main() {
               await t.pump();
               if (scenario == 'reset') {
                 expect(find.textContaining('generation=2'), findsWidgets);
-                await t.tap(find.text('HRTF RIGHT'));
+                await tapAction('HRTF RIGHT');
                 await t.pump();
                 expect(output.commands.last, 'HRTF:RIGHT');
               } else {
-                await t.tap(find.text('STEREO RIGHT'), warnIfMissed: false);
+                await tapAction('STEREO RIGHT');
                 await t.pump();
                 expect(output.commands.length, 1);
               }
@@ -169,6 +178,9 @@ void main() {
       }
       await t.pumpWidget(const SizedBox());
       await t.pump();
+      if (scenario == 'hold') {
+        await t.pump(const Duration(seconds: 3));
+      }
     });
   }
   test('old TTS preparation cannot emit speech after stop', () async {

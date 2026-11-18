@@ -188,9 +188,12 @@ class NativeDirectionalCueOutput
     }
     final id = ++_id, pending = Completer<bool>();
     _playing = pending;
-    unawaited(pending.future
-        .then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+    unawaited(
+      pending.future.then<void>((_) {}, onError: (Object _, StackTrace __) {}),
+    );
     try {
+      // The native start might be underway before its reply reaches Dart.
+      _headTrackedActive = true;
       final data = await _headTrackedPort.invoke('start', {
         'left': .7071067811865476,
         'right': .7071067811865476,
@@ -200,10 +203,12 @@ class NativeDirectionalCueOutput
         'pattern': 'warning',
         'azimuthDegrees': azimuthDegrees,
       });
+      if (_closed || id != _id || !identical(_playing, pending)) {
+        return pending.future;
+      }
       if (data['running'] != true) {
         throw StateError(data['reason'] ?? 'HRTF start not confirmed');
       }
-      _headTrackedActive = true;
       _probe = {
         ..._probe,
         ...data,
@@ -226,7 +231,6 @@ class NativeDirectionalCueOutput
       _probe = {..._probe, ...stopped, 'phase': 'completed', 'active': false};
       pending.complete(true);
     } catch (error, stack) {
-      _headTrackedActive = false;
       if (identical(_playing, pending)) {
         _playing = null;
         _uncertain = true;

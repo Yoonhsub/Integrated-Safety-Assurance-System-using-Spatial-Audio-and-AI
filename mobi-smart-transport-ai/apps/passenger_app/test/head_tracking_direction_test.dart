@@ -41,6 +41,47 @@ void main() {
     );
   });
 
+  test('camera frame pairs only with a fresh nearby WT receipt sample', () {
+    final state = HeadTrackingState();
+    final wtAt = now.subtract(const Duration(milliseconds: 40));
+    state.publish(HeadTrackingSnapshot(
+      status: HeadTrackingStatus.ready,
+      rawYaw: 10,
+      filteredYaw: 10,
+      referenceYaw: 0,
+      receivedAt: wtAt,
+    ));
+    final match = state.matchCameraFrame(
+      frameReceivedAt: now.subtract(const Duration(milliseconds: 20)),
+      now: now,
+    );
+    expect(match, isNotNull);
+    expect(match!.skew, const Duration(milliseconds: 20));
+    expect(match.sample.filteredYaw, 10);
+    expect(
+      state.matchCameraFrame(
+        frameReceivedAt: now.subtract(const Duration(milliseconds: 250)),
+        now: now,
+      ),
+      isNull,
+    );
+    expect(
+      state.matchCameraFrame(
+        frameReceivedAt: now.add(const Duration(milliseconds: 1)), now: now),
+      isNull,
+    );
+    state.publish(const HeadTrackingSnapshot(
+      status: HeadTrackingStatus.stale,
+    ));
+    expect(
+      state.matchCameraFrame(
+        frameReceivedAt: now.subtract(const Duration(milliseconds: 20)),
+        now: now,
+      ),
+      isNull,
+    );
+  });
+
   test('invalid bbox or unknown FOV is rejected', () {
     expect(
       () => horizontalAngleForNormalizedBbox(

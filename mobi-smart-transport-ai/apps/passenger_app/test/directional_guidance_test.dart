@@ -48,6 +48,13 @@ DirectionalGuidance message(
         testDirection: direction,
         directionEvidence: evidence);
 void main() {
+  // Exercise cue lifecycle through semantic activation; narration and retap
+  // are covered in described_action_test.dart.
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   for (final scenario in [
     'sequence',
     'stop-cue',

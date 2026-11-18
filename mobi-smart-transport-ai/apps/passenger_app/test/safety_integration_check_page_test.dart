@@ -4,6 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/safety_integration_check_page.dart';
 
 void main() {
+  setUp(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+  });
   const channel = MethodChannel('mobi.passenger/hardware-tone');
   final calls = <MethodCall>[];
   var now = Duration.zero;

@@ -4,6 +4,8 @@ import '../services/head_tracking_direction.dart';
 import '../services/vision_screen_audio.dart';
 import '../services/vision_scene_summary.dart';
 
+import '../features/hardware_bus/diagnostic_action_hint.dart';
+
 class VisionScreenAudioPanel extends StatelessWidget {
   const VisionScreenAudioPanel({
     super.key,
@@ -37,19 +39,25 @@ class VisionScreenAudioPanel extends StatelessWidget {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final parsed = double.tryParse(controller.text.trim());
-              if (parsed != null && parsed.isFinite && parsed.abs() <= 180) {
-                Navigator.pop(context, parsed);
-              }
-            },
-            child: const Text('측정 확인'),
-          ),
+          DiagnosticActionHint(
+              hint: '이 진단 조작을 실행합니다.',
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('취소'),
+              )),
+          DiagnosticActionHint(
+              hint: '이 진단 조작을 실행합니다.',
+              child: FilledButton(
+                onPressed: () {
+                  final parsed = double.tryParse(controller.text.trim());
+                  if (parsed != null &&
+                      parsed.isFinite &&
+                      parsed.abs() <= 180) {
+                    Navigator.pop(context, parsed);
+                  }
+                },
+                child: const Text('측정 확인'),
+              )),
         ],
       ),
     );
@@ -73,13 +81,18 @@ class VisionScreenAudioPanel extends StatelessWidget {
                       audio.enabled ? '카메라와 함께 켜짐' : '카메라를 시작하면 자동으로 켜집니다.'),
                 )
               else
-                SwitchListTile(
-                  title: const Text('객체 음성·방향음 안내'),
-                  subtitle:
-                      const Text('화면 기준 객체 정보입니다. 거리나 안전한 이동 방향을 판단하지 않습니다.'),
-                  value: audio.enabled,
-                  onChanged: cameraActive ? audio.setEnabled : null,
-                ),
+                DiagnosticActionHint(
+                    hint: '현재 진단 설정을 켜거나 끕니다.',
+                    child: SwitchListTile(
+                      title: const Text('객체 음성·방향음 안내'),
+                      subtitle: const Text(
+                          '화면 기준 객체 정보입니다. 거리나 안전한 이동 방향을 판단하지 않습니다.'),
+                      value: audio.enabled,
+                      onChanged: cameraActive ? audio.setEnabled : null,
+                    )),
+              if (automaticallyEnabled)
+                const Text(
+                    '객체 위치는 카메라 화면 기준입니다. 실제 거리와 안전한 이동 방향은 확인할 수 없습니다.'),
               Text(audio.status),
               if (audio.sceneMode)
                 DescribedAction.button(
@@ -100,18 +113,20 @@ class VisionScreenAudioPanel extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SwitchListTile(
-                    title: Text(audio.sceneMode
-                        ? '현재 화면 장면 안내'
-                        : audio.pingOnly
-                            ? '화면 방향 핑'
-                            : '화면 위치 소리·음성 안내'),
-                    subtitle: Text(audio.pingOnly
-                        ? '정보성 핑 · 근접 UNKNOWN · 실제 위험도 아님. 객체별 음색과 1초 간격은 청취 평가용 임시값입니다.'
-                        : '정보성 시연 · 실제 3D 방향·거리·안전 Guidance 아님'),
-                    value: audio.enabled,
-                    onChanged: cameraActive ? audio.setEnabled : null,
-                  ),
+                  DiagnosticActionHint(
+                      hint: '현재 진단 설정을 켜거나 끕니다.',
+                      child: SwitchListTile(
+                        title: Text(audio.sceneMode
+                            ? '현재 화면 장면 안내'
+                            : audio.pingOnly
+                                ? '화면 방향 핑'
+                                : '화면 위치 소리·음성 안내'),
+                        subtitle: Text(audio.pingOnly
+                            ? '정보성 핑 · 근접 UNKNOWN · 실제 위험도 아님. 객체별 음색과 1초 간격은 청취 평가용 임시값입니다.'
+                            : '정보성 시연 · 실제 3D 방향·거리·안전 Guidance 아님'),
+                        value: audio.enabled,
+                        onChanged: cameraActive ? audio.setEnabled : null,
+                      )),
                   Text(audio.status),
                   if (audio.sceneMode) ...[
                     Semantics(
@@ -123,11 +138,13 @@ class VisionScreenAudioPanel extends StatelessWidget {
                         : '마지막 관찰 수신: ${audio.lastSceneReceivedAt!.toLocal().toIso8601String()} · ${visionReceiptAgeLabel(audio.lastSceneReceivedAt, DateTime.now().toUtc())}'),
                     const Text(
                         '앱의 카메라 콜백 수신 시각입니다. 실제 촬영 시각이나 귀에 들린 시각을 측정한 값은 아닙니다.'),
-                    OutlinedButton(
-                        onPressed: cameraActive && audio.canDescribeScene
-                            ? audio.describeScene
-                            : null,
-                        child: const Text('자세히 듣기')),
+                    DiagnosticActionHint(
+                        hint: '이 진단 조작을 실행합니다.',
+                        child: OutlinedButton(
+                            onPressed: cameraActive && audio.canDescribeScene
+                                ? audio.describeScene
+                                : null,
+                            child: const Text('자세히 듣기'))),
                     const Text(
                         '통제된 정지 시연용입니다. 다중 장면에는 한 방향 핑을 붙이지 않으며 실제 위험·거리·안전한 경로를 판단하지 않습니다.'),
                   ],
@@ -149,34 +166,37 @@ class VisionScreenAudioPanel extends StatelessWidget {
                             '모델 처리와 소프트웨어 콜백의 진단값입니다. 촬영 시각이나 실제 귀에 도달한 시각·지연을 측정한 값이 아닙니다.'),
                       ],
                     ),
-                  DropdownButtonFormField<HeadTrackingCameraMount>(
-                    decoration: const InputDecoration(labelText: '카메라 장착 방식'),
-                    initialValue: audio.mountCalibration.mount,
-                    items: const [
-                      DropdownMenuItem(
-                        value: HeadTrackingCameraMount.unverified,
-                        child: Text('UNVERIFIED'),
-                      ),
-                      DropdownMenuItem(
-                        value: HeadTrackingCameraMount.fixedWorldCamera,
-                        child: Text('FIXED_WORLD_CAMERA'),
-                      ),
-                      DropdownMenuItem(
-                        value: HeadTrackingCameraMount.headMountedCamera,
-                        child: Text('HEAD_MOUNTED_CAMERA'),
-                      ),
-                      DropdownMenuItem(
-                        value: HeadTrackingCameraMount.handheldPhone,
-                        child: Text('HANDHELD_PHONE'),
-                      ),
-                    ],
-                    onChanged: cameraActive
-                        ? (value) {
-                            if (value != null) {
-                              audio.setHeadTrackingMount(value);
+                  DiagnosticActionHint(
+                    hint: '카메라 장착 방식을 선택합니다. 실제 축 측정은 별도로 확인합니다.',
+                    child: DropdownButtonFormField<HeadTrackingCameraMount>(
+                      decoration: const InputDecoration(labelText: '카메라 장착 방식'),
+                      initialValue: audio.mountCalibration.mount,
+                      items: const [
+                        DropdownMenuItem(
+                          value: HeadTrackingCameraMount.unverified,
+                          child: Text('UNVERIFIED'),
+                        ),
+                        DropdownMenuItem(
+                          value: HeadTrackingCameraMount.fixedWorldCamera,
+                          child: Text('FIXED_WORLD_CAMERA'),
+                        ),
+                        DropdownMenuItem(
+                          value: HeadTrackingCameraMount.headMountedCamera,
+                          child: Text('HEAD_MOUNTED_CAMERA'),
+                        ),
+                        DropdownMenuItem(
+                          value: HeadTrackingCameraMount.handheldPhone,
+                          child: Text('HANDHELD_PHONE'),
+                        ),
+                      ],
+                      onChanged: cameraActive
+                          ? (value) {
+                              if (value != null) {
+                                audio.setHeadTrackingMount(value);
+                              }
                             }
-                          }
-                        : null,
+                          : null,
+                    ),
                   ),
                   ListTile(
                     title: const Text('실물 축 정렬·오프셋'),
@@ -189,36 +209,43 @@ class VisionScreenAudioPanel extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (audio.mountCalibration.verified)
-                          IconButton(
-                            tooltip: '측정 확인 취소',
-                            onPressed: () =>
-                                audio.setMountAlignment(verified: false),
-                            icon: const Icon(Icons.clear),
-                          ),
-                        IconButton(
-                          tooltip: '실제 측정값 입력',
-                          onPressed: cameraActive &&
-                                  audio.mountCalibration.supportsHeadTrackedCue
-                              ? () => _recordMeasuredOffset(context)
-                              : null,
-                          icon: const Icon(Icons.straighten),
-                        ),
+                          DiagnosticActionHint(
+                              hint: '축 측정 확인을 해제합니다.',
+                              child: IconButton(
+                                tooltip: '측정 확인 취소',
+                                onPressed: () =>
+                                    audio.setMountAlignment(verified: false),
+                                icon: const Icon(Icons.clear),
+                              )),
+                        DiagnosticActionHint(
+                            hint: '실측한 카메라 축 오프셋을 입력합니다.',
+                            child: IconButton(
+                              tooltip: '실제 측정값 입력',
+                              onPressed: cameraActive &&
+                                      audio.mountCalibration
+                                          .supportsHeadTrackedCue
+                                  ? () => _recordMeasuredOffset(context)
+                                  : null,
+                              icon: const Icon(Icons.straighten),
+                            )),
                       ],
                     ),
                   ),
-                  CheckboxListTile(
-                    title: const Text('Head Tracking HRTF 핑'),
-                    subtitle: Text(
-                      audio.hasCameraCalibration
-                          ? '기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
-                          : '카메라 수평 화각 미확인 · 화면 기준 Cue 유지',
-                    ),
-                    value: audio.headTrackingEnabled,
-                    onChanged: cameraActive
-                        ? (value) =>
-                            audio.setHeadTrackingEnabled(value ?? false)
-                        : null,
-                  ),
+                  DiagnosticActionHint(
+                      hint: '검증된 장착·축·화각과 최신 WT 센서가 있을 때만 HRTF 핑을 사용합니다.',
+                      child: CheckboxListTile(
+                        title: const Text('Head Tracking HRTF 핑'),
+                        subtitle: Text(
+                          audio.hasCameraCalibration
+                              ? '기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
+                              : '카메라 수평 화각 미확인 · 화면 기준 Cue 유지',
+                        ),
+                        value: audio.headTrackingEnabled,
+                        onChanged: cameraActive
+                            ? (value) =>
+                                audio.setHeadTrackingEnabled(value ?? false)
+                            : null,
+                      )),
                   Text(
                     '센서: ${audio.headTrackingSnapshot.status.name} · 원본 ${audio.headTrackingSnapshot.rawYaw?.toStringAsFixed(1) ?? '-'}° · 필터 ${audio.headTrackingSnapshot.filteredYaw?.toStringAsFixed(1) ?? '-'}° · 기준 ${audio.headTrackingSnapshot.referenceYaw?.toStringAsFixed(1) ?? '-'}°',
                   ),
@@ -226,16 +253,22 @@ class VisionScreenAudioPanel extends StatelessWidget {
                     spacing: 8,
                     children: [
                       if (showStopButton)
-                        OutlinedButton(
-                          onPressed: audio.stop,
-                          child: const Text('화면 음향 STOP'),
-                        ),
-                      OutlinedButton(
-                        onPressed: audio.toggleHold,
-                        child: Text(
-                          audio.holding ? '화면 음향 Hold 해제' : '화면 음향 Live Hold',
-                        ),
-                      ),
+                        DiagnosticActionHint(
+                            hint: '진단 음향을 즉시 중지합니다.',
+                            child: OutlinedButton(
+                              onPressed: audio.stop,
+                              child: const Text('화면 음향 STOP'),
+                            )),
+                      DiagnosticActionHint(
+                          hint: '이 진단 조작을 실행합니다.',
+                          child: OutlinedButton(
+                            onPressed: audio.toggleHold,
+                            child: Text(
+                              audio.holding
+                                  ? '화면 음향 Hold 해제'
+                                  : '화면 음향 Live Hold',
+                            ),
+                          )),
                     ],
                   ),
                   const Text(

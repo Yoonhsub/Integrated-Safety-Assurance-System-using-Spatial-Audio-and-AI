@@ -9,6 +9,10 @@ import '../services/speech_priority_coordinator.dart';
 import '../services/audio_haptic_cue_service.dart';
 import '../services/audio_shutdown.dart';
 
+import '../features/hardware_bus/diagnostic_action_hint.dart';
+
+import '../widgets/described_action.dart';
+
 /// Local explicit debug page. No Backend, Firebase, sensors or automatic sound.
 class LocalSpatialVerificationPage extends StatefulWidget {
   const LocalSpatialVerificationPage(
@@ -307,114 +311,165 @@ class _SpatialState extends State<LocalSpatialVerificationPage>
       return const Scaffold(body: Text('SPATIAL_VERIFICATION_BLOCKED'));
     }
     final ready = _current && !_failed && !_stopping && !_hold;
-    return Scaffold(
-        appBar: AppBar(
-            title: Text(widget.nativeStereoOnly
-                ? 'Android Stereo Cue + TTS · 검증'
-                : 'LOCAL Spatial Audio · 검증 전용')),
-        body: SingleChildScrollView(
-            child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                          '로컬 생성 테스트 음원. 실제 버스·거리·출입문·Head Tracking 정보가 아닙니다.'),
-                      const Text(
-                          '헤드폰 좌우 채널을 확인하세요. 자동 재생 없음. TTS는 공간화되지 않습니다.'),
-                      Text(widget.nativeStereoOnly
-                          ? 'Stereo 채널: LEFT=L, CENTER=L/R 동일, RIGHT=R. 3D 정면·거리 검증 아님.'
-                          : '좌표: listener=(0,0,0), 정면=-Z, 오른쪽=+X, 위=+Y; LEFT=(-1,0,-1), CENTER=(0,0,-1), RIGHT=(1,0,-1). 테스트 임의 단위.'),
-                      Text(
-                          'epoch=$_epoch · generation=$_generation · current=$_current'),
-                      Text(
-                          'Engine: ${_probe['phase']} · context=${_probe['contextState']} · active=${_probe['active']} · run=${_probe['runId']}'),
-                      if (_failed)
-                        const Text('AUDIO_BLOCKED · 새 음원 금지, reload required'),
-                      for (final mode in (widget.nativeStereoOnly
-                          ? ['STEREO']
-                          : ['STEREO', 'HRTF']))
-                        Wrap(spacing: 8, children: [
-                          for (final direction in ['CENTER', 'LEFT', 'RIGHT'])
-                            ElevatedButton(
-                                onPressed:
-                                    ready ? () => _play(mode, direction) : null,
-                                child: Text('$mode $direction'))
-                        ]),
-                      Text(widget.nativeStereoOnly
-                          ? 'Android Stereo PCM Cue → 한국어 로컬 TTS · HRTF/실기기 청취 미검증'
-                          : '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
-                      if (widget.nativeStereoOnly)
-                        ExpansionTile(
-                            title: const Text('Native 출력 경로·TTS 상태'),
-                            children: [Text(jsonEncode(_probe))]),
-                      Wrap(spacing: 8, children: [
-                        for (final direction in TestDirection.values)
-                          ElevatedButton(
-                              onPressed:
-                                  ready ? () => _newGuidance(direction) : null,
-                              child: Text(
-                                  '${direction.name.toUpperCase()} Cue → TTS')),
-                        ElevatedButton(
-                            onPressed: ready ? () => _newGuidance(null) : null,
-                            child: const Text('방향 없는 TTS 안내')),
-                        OutlinedButton(
-                            onPressed: ready && _lastGuidance != null
-                                ? () => _submitGuidance(_lastGuidance!)
-                                : null,
-                            child: const Text('직전 guidanceId 재전송'))
-                      ]),
-                      Wrap(spacing: 8, children: [
-                        ElevatedButton(
-                            onPressed: ready ? _tts : null,
-                            child: const Text('TTS 원본 출력')),
-                        ElevatedButton(
-                            onPressed: ready ? _liveHold : null,
-                            child: const Text('Live Hold 선점')),
-                        OutlinedButton(
-                            onPressed: !_stopping ? () => _stop('STOP') : null,
-                            child: const Text('STOP')),
-                        OutlinedButton(
-                            onPressed: !_stopping
-                                ? () => _stop('SESSION_END', end: true)
-                                : null,
-                            child: const Text('세션 종료')),
-                        OutlinedButton(
-                            onPressed: !_stopping ? _logout : null,
-                            child: const Text('로그아웃')),
-                        OutlinedButton(
-                            onPressed: !_stopping
-                                ? () => _stop('RESET', reset: true)
-                                : null,
-                            child: const Text('Reset / 새 generation')),
-                        OutlinedButton(
-                            onPressed: !_current && !_failed && !_stopping
-                                ? () {
-                                    setState(() {
-                                      _epoch++;
-                                      _current = true;
-                                    });
-                                  }
-                                : null,
-                            child: const Text('새 세션')),
-                        OutlinedButton(
-                            onPressed: !_stopping ? _exitPage : null,
-                            child: const Text('페이지 종료'))
-                      ]),
-                      Text('실제 청취: $_heard'),
-                      Wrap(children: [
-                        for (final answer in [
-                          'LEFT',
-                          'CENTER',
-                          'RIGHT',
-                          '구분 안 됨'
-                        ])
-                          TextButton(
-                              onPressed: () => setState(
-                                  () => _heard = 'USER_REPORTED $answer'),
-                              child: Text('들린 방향: $answer'))
-                      ]),
-                      ..._log.map(Text.new)
-                    ]))));
+    return ActionSpeechScope(
+        speech: _priority,
+        child: Scaffold(
+            appBar: AppBar(
+                title: Text(widget.nativeStereoOnly
+                    ? 'Android Stereo Cue + TTS · 검증'
+                    : 'LOCAL Spatial Audio · 검증 전용')),
+            body: SingleChildScrollView(
+                child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                              '로컬 생성 테스트 음원. 실제 버스·거리·출입문·Head Tracking 정보가 아닙니다.'),
+                          const Text(
+                              '헤드폰 좌우 채널을 확인하세요. 자동 재생 없음. TTS는 공간화되지 않습니다.'),
+                          Text(widget.nativeStereoOnly
+                              ? 'Stereo 채널: LEFT=L, CENTER=L/R 동일, RIGHT=R. 3D 정면·거리 검증 아님.'
+                              : '좌표: listener=(0,0,0), 정면=-Z, 오른쪽=+X, 위=+Y; LEFT=(-1,0,-1), CENTER=(0,0,-1), RIGHT=(1,0,-1). 테스트 임의 단위.'),
+                          Text(
+                              'epoch=$_epoch · generation=$_generation · current=$_current'),
+                          Text(
+                              'Engine: ${_probe['phase']} · context=${_probe['contextState']} · active=${_probe['active']} · run=${_probe['runId']}'),
+                          if (_failed)
+                            const Text(
+                                'AUDIO_BLOCKED · 새 음원 금지, reload required'),
+                          for (final mode in (widget.nativeStereoOnly
+                              ? ['STEREO']
+                              : ['STEREO', 'HRTF']))
+                            Wrap(spacing: 8, children: [
+                              for (final direction in [
+                                'CENTER',
+                                'LEFT',
+                                'RIGHT'
+                              ])
+                                DescribedAction.button(
+                                    label: '$mode $direction',
+                                    description:
+                                        '$mode $direction \ubc29\ud5a5 \uc2dc\ud5d8 \uc74c\ud5a5\uc744 \uc7ac\uc0dd\ud569\ub2c8\ub2e4.',
+                                    retapWindowAfterDescription: true,
+                                    child: ElevatedButton(
+                                        onPressed: ready
+                                            ? () => _play(mode, direction)
+                                            : null,
+                                        child: Text('$mode $direction')))
+                            ]),
+                          Text(widget.nativeStereoOnly
+                              ? 'Android Stereo PCM Cue → 한국어 로컬 TTS · HRTF/실기기 청취 미검증'
+                              : '단일 합성 안내: 짧은 HRTF Cue → 기존 일반 TTS (음성 공간화 아님)'),
+                          if (widget.nativeStereoOnly)
+                            ExpansionTile(
+                                title: const Text('Native 출력 경로·TTS 상태'),
+                                children: [Text(jsonEncode(_probe))]),
+                          Wrap(spacing: 8, children: [
+                            for (final direction in TestDirection.values)
+                              DescribedAction.button(
+                                  label:
+                                      '${direction.name.toUpperCase()} Cue → TTS',
+                                  description:
+                                      '${direction.name.toUpperCase()} \ubc29\ud5a5 \uc74c\uc131 \uc548\ub0b4\ub97c \uc2dc\ud5d8\ud569\ub2c8\ub2e4.',
+                                  retapWindowAfterDescription: true,
+                                  child: ElevatedButton(
+                                      onPressed: ready
+                                          ? () => _newGuidance(direction)
+                                          : null,
+                                      child: Text(
+                                          '${direction.name.toUpperCase()} Cue → TTS'))),
+                            DescribedAction.button(
+                                label: '방향 없는 TTS 안내',
+                                description:
+                                    '\uae30\ubcf8 \ubc29\ud5a5 \uc74c\uc131 \uc548\ub0b4\ub97c \uc2dc\ud5d8\ud569\ub2c8\ub2e4.',
+                                retapWindowAfterDescription: true,
+                                child: ElevatedButton(
+                                    onPressed:
+                                        ready ? () => _newGuidance(null) : null,
+                                    child: const Text('방향 없는 TTS 안내'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed: ready && _lastGuidance != null
+                                        ? () => _submitGuidance(_lastGuidance!)
+                                        : null,
+                                    child: const Text('직전 guidanceId 재전송')))
+                          ]),
+                          Wrap(spacing: 8, children: [
+                            DescribedAction.button(
+                                label: 'TTS 원본 출력',
+                                description:
+                                    '\uc2dc\ud5d8 \uc74c\uc131\uc744 \uc7ac\uc0dd\ud558\uc5ec TTS \ucd9c\ub825\uc744 \ud655\uc778\ud569\ub2c8\ub2e4.',
+                                retapWindowAfterDescription: true,
+                                child: ElevatedButton(
+                                    onPressed: ready ? _tts : null,
+                                    child: const Text('TTS 원본 출력'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: ElevatedButton(
+                                    onPressed: ready ? _liveHold : null,
+                                    child: const Text('Live Hold 선점'))),
+                            DiagnosticActionHint(
+                                hint: '진단 음향을 즉시 중지합니다.',
+                                child: OutlinedButton(
+                                    onPressed:
+                                        !_stopping ? () => _stop('STOP') : null,
+                                    child: const Text('STOP'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed: !_stopping
+                                        ? () => _stop('SESSION_END', end: true)
+                                        : null,
+                                    child: const Text('세션 종료'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed: !_stopping ? _logout : null,
+                                    child: const Text('로그아웃'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed: !_stopping
+                                        ? () => _stop('RESET', reset: true)
+                                        : null,
+                                    child: const Text('Reset / 새 generation'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed:
+                                        !_current && !_failed && !_stopping
+                                            ? () {
+                                                setState(() {
+                                                  _epoch++;
+                                                  _current = true;
+                                                });
+                                              }
+                                            : null,
+                                    child: const Text('새 세션'))),
+                            DiagnosticActionHint(
+                                hint: '이 진단 조작을 실행합니다.',
+                                child: OutlinedButton(
+                                    onPressed: !_stopping ? _exitPage : null,
+                                    child: const Text('페이지 종료')))
+                          ]),
+                          Text('실제 청취: $_heard'),
+                          Wrap(children: [
+                            for (final answer in [
+                              'LEFT',
+                              'CENTER',
+                              'RIGHT',
+                              '구분 안 됨'
+                            ])
+                              DiagnosticActionHint(
+                                  hint: '이 진단 조작을 실행합니다.',
+                                  child: TextButton(
+                                      onPressed: () => setState(() =>
+                                          _heard = 'USER_REPORTED $answer'),
+                                      child: Text('들린 방향: $answer')))
+                          ]),
+                          ..._log.map(Text.new)
+                        ])))));
   }
 }

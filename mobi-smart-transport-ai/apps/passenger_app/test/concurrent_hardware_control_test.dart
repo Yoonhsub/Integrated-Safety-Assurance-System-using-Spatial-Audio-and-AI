@@ -2,6 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobi_passenger_app/src/widgets/described_action.dart';
 import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/concurrent_test_control.dart';
 import 'package:mobi_passenger_app/src/features/hardware_bus/concurrent_hardware_test_page.dart';
@@ -152,15 +153,24 @@ void main() {
     await t.pumpAndSettle();
     Future<void> tap(String text) async {
       if (text.startsWith('camera:')) {
-        await t.tap(find.textContaining('2 카메라'));
+        await t.tap(find.textContaining('2 \uce74\uba54\ub77c'));
         await t.pump();
       } else {
-        await t.tap(find.textContaining('1 버스·WT'));
+        await t.tap(find.textContaining('1 \ubc84\uc2a4\xb7WT'));
         await t.pump();
       }
       await t.ensureVisible(find.text(text));
-      await t.tap(find.text(text));
+      final target = text.contains('\uc2dc\uc791')
+          ? find.ancestor(
+              of: find.text(text), matching: find.byType(DescribedAction))
+          : find.text(text);
+      await t.tap(target);
       await t.pump();
+      if (text.contains('\uc2dc\uc791')) {
+        await t.tap(target);
+        await t.pump();
+        tts.said.clear();
+      }
     }
 
     await tap('WT:false');
@@ -229,7 +239,11 @@ void main() {
     await t.tap(find.text('완료'));
     await t.pumpAndSettle();
     await t.ensureVisible(find.text('버스 탐색 시작'));
-    await t.tap(find.text('버스 탐색 시작'));
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
+    await t.pump();
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
     await t.pump();
     await t.tap(find.text('버스 탐색 중지'));
     await t.pump();
@@ -266,7 +280,12 @@ void main() {
     await t.tap(find.text('완료'));
     await t.pumpAndSettle();
     await t.ensureVisible(find.text('버스 탐색 시작'));
-    await t.tap(find.text('버스 탐색 시작'));
+    final startAction = find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction));
+    await t.tap(startAction);
+    await t.pump();
+    await t.tap(startAction);
+    await t.pump();
     for (var i = 0; i < 8; i++) {
       await t.pump();
     }
@@ -277,7 +296,11 @@ void main() {
             .onPressed,
         isNotNull);
     scanner.failStart = false;
-    await t.tap(find.text('버스 탐색 시작'));
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
+    await t.pump();
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
     await t.pump();
     await t.pump();
     expect(scanner.starts, 2);
@@ -311,11 +334,16 @@ void main() {
     await t.tap(find.text('완료'));
     await t.pumpAndSettle();
     await t.ensureVisible(find.text('버스 탐색 시작'));
-    await t.tap(find.text('버스 탐색 시작'));
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
+    await t.pump();
+    await t.tap(find.ancestor(
+        of: find.text('버스 탐색 시작'), matching: find.byType(DescribedAction)));
     await t.pump();
     await t.ensureVisible(find.byType(SwitchListTile));
     await t.tap(find.byType(SwitchListTile));
     await t.pump();
+    tts.said.clear();
     scanner.stream.add(signal(mac));
     for (var i = 0; i < 5; i++) {
       await t.pump();

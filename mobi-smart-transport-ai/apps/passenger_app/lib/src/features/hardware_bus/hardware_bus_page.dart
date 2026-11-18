@@ -8,6 +8,10 @@ import 'package:mobi_mobile_sensors/mobi_mobile_sensors.dart';
 import 'continuous_beacon_scanner.dart';
 import 'wit_sensor_panel.dart';
 
+import 'diagnostic_action_hint.dart';
+
+import '../../widgets/described_action.dart';
+
 const beaconA = 'C3:00:00:5C:B9:47';
 const beaconB = 'C3:00:00:5C:B9:48';
 
@@ -257,24 +261,33 @@ class _HardwareBusPageState extends State<HardwareBusPage>
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton(
-                  onPressed: _running || _busy || _stopping
-                      ? null
-                      : _requestPermissions,
-                  child: const Text('권한 허용'),
-                ),
-                FilledButton(
-                  onPressed: _running || _busy || _stopping
-                      ? null
-                      : () => _start(duration: const Duration(minutes: 5)),
-                  child: const Text('버스 탐색 시작 (5분)'),
-                ),
-                OutlinedButton(
-                  onPressed: _running
-                      ? () => unawaited(_stop('사용자가 스캔을 중지했습니다.'))
-                      : null,
-                  child: const Text('중지'),
-                ),
+                DiagnosticActionHint(
+                    hint: '이 진단 조작을 실행합니다.',
+                    child: OutlinedButton(
+                      onPressed: _running || _busy || _stopping
+                          ? null
+                          : _requestPermissions,
+                      child: const Text('권한 허용'),
+                    )),
+                DescribedAction.button(
+                    label: '버스 탐색 시작 (5분)',
+                    description:
+                        '5 \ubd84 \ub3d9\uc548 \uc8fc\ubcc0 \ube44\ucf58\uc744 \uac80\uc0c9\ud569\ub2c8\ub2e4.',
+                    retapWindowAfterDescription: true,
+                    child: FilledButton(
+                      onPressed: _running || _busy || _stopping
+                          ? null
+                          : () => _start(duration: const Duration(minutes: 5)),
+                      child: const Text('버스 탐색 시작 (5분)'),
+                    )),
+                DiagnosticActionHint(
+                    hint: '이 진단 조작을 실행합니다.',
+                    child: OutlinedButton(
+                      onPressed: _running
+                          ? () => unawaited(_stop('사용자가 스캔을 중지했습니다.'))
+                          : null,
+                      child: const Text('중지'),
+                    )),
               ],
             ),
             if (_running && _endsAt != null)
@@ -306,13 +319,16 @@ class _HardwareBusPageState extends State<HardwareBusPage>
                 ),
               ],
             ),
-            SwitchListTile(
-              title: const Text('정지 비콘 수동 방향 보정 모드'),
-              subtitle:
-                  const Text('켜짐: 선택한 실제 비콘을 바라보고 보정. 꺼짐: 왼쪽→정면→오른쪽 시뮬레이션.'),
-              value: _stationaryBeacon,
-              onChanged: (value) => setState(() => _stationaryBeacon = value),
-            ),
+            DiagnosticActionHint(
+                hint: '현재 진단 설정을 켜거나 끔니다.',
+                child: SwitchListTile(
+                  title: const Text('정지 비콘 수동 방향 보정 모드'),
+                  subtitle: const Text(
+                      '켜짐: 선택한 실제 비콘을 바라보고 보정. 꺼짐: 왼쪽→정면→오른쪽 시뮬레이션.'),
+                  value: _stationaryBeacon,
+                  onChanged: (value) =>
+                      setState(() => _stationaryBeacon = value),
+                )),
             WitSensorPanel(
               key: const ValueKey('wit-sensor-panel'),
               ensureReady: _ready,

@@ -439,17 +439,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                         child: CameraPreview(_camera!))
                     : null,
               ),
-              DescribedAction.button(
-                  label: '인식 프레임 확인',
-                  description: '객체가 검출된 프레임을 별도 화면에서 확인합니다.',
-                  immediate: false,
-                  child: OutlinedButton(
-                      onPressed: () {
-                        final page = _DetectedFramesPage(_history);
-                        Navigator.of(context).push(
-                            MaterialPageRoute<void>(builder: (_) => page));
-                      },
-                      child: const Text('인식 프레임 확인'))),
+              DetectedFrameReviewButton(history: _history),
               if (item != null && item.boxes.isNotEmpty)
                 Card(
                     child: Padding(
@@ -651,6 +641,28 @@ class DetectedFrameHistory extends ValueNotifier<List<DetectedFrame>> {
   }
 
   void clear() => value = const [];
+}
+
+class DetectedFrameReviewButton extends StatelessWidget {
+  const DetectedFrameReviewButton({super.key, required this.history});
+
+  final DetectedFrameHistory history;
+
+  @override
+  Widget build(BuildContext context) => DescribedAction.button(
+        label: '인식 프레임 확인',
+        description: '객체가 검출된 프레임을 별도 화면에서 확인합니다.',
+        immediate: false,
+        child: OutlinedButton(
+          onPressed: () {
+            final page = _DetectedFramesPage(history);
+            Navigator.of(
+              context,
+            ).push(MaterialPageRoute<void>(builder: (_) => page));
+          },
+          child: const Text('인식 프레임 확인'),
+        ),
+      );
 }
 
 class _DetectedFramesPage extends StatelessWidget {
