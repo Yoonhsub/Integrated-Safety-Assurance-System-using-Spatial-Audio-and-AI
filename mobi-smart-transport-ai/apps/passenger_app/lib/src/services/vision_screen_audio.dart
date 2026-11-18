@@ -6,6 +6,7 @@ import 'session_guidance_audio.dart';
 import 'spatial_verification_engine.dart';
 import 'speech_priority_coordinator.dart';
 import 'head_tracking_direction.dart';
+import '../features/hardware_bus/beacon_tone_interval.dart';
 
 /// Camera-only information adapter. No SafetyInterpreter, Backend write,
 /// guidanceEligible change, object tracking, distance or world direction.
@@ -24,8 +25,10 @@ class VisionScreenAudio extends ChangeNotifier {
     this.prioritizeByDistance = false,
     this.sceneMode = false,
     this.pingOnly = false,
+    int? initialBeaconRssi,
   })  : headTracking = headTracking ?? sharedHeadTrackingState,
         horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
+        _targetBeaconRssi = initialBeaconRssi,
         _now = nowMicros ?? (() => _clock.elapsedMicroseconds) {
     if (!identical(priority.engine, engine)) {
       throw ArgumentError('Audio owner mismatch');
@@ -81,6 +84,15 @@ class VisionScreenAudio extends ChangeNotifier {
       _doorAnchorLocked = false,
       _disposed = false;
   bool get doorAnchorLocked => _doorAnchorLocked;
+  int? _targetBeaconRssi;
+  int? get targetBeaconRssi => _targetBeaconRssi;
+  void updateBeaconRssi(int? rssi) {
+    if (_targetBeaconRssi == rssi) return;
+    _targetBeaconRssi = rssi;
+    if (!_disposed) {
+      _notify();
+    }
+  }
   int _revision = 0, admitted = 0, completed = 0, skippedBusy = 0;
   int _streakCount = 0;
   String status = '카메라 화면 음향 시연 OFF';
@@ -744,7 +756,10 @@ class VisionScreenAudio extends ChangeNotifier {
       _invalidateHeadTracking('장착·센서 조건 무효');
       return;
     }
-    const anchorPingInterval = Duration(milliseconds: 1200);
+    final pingIntervalMs = _targetBeaconRssi != null
+        ? beaconToneIntervalMs(_targetBeaconRssi!)
+        : 1200;
+    final anchorPingInterval = Duration(milliseconds: pingIntervalMs);
     if (_lastStarted != null &&
         _now() - _lastStarted! < anchorPingInterval.inMicroseconds) {
       return;
@@ -825,6 +840,8 @@ class VisionScreenAudio extends ChangeNotifier {
       'axesAlignmentVerified': mountCalibration.axesAlignmentVerified,
       'correctedAngleDegrees': correctedAngle,
       'lockedReferenceYawDegrees': headTracking.snapshot.referenceYaw,
+      if (_targetBeaconRssi != null) 'targetBeaconRssi': _targetBeaconRssi,
+      'anchorPingIntervalMs': pingIntervalMs,
       'coordinateFrame': 'world-door-anchor',
       'provenance': DirectionalGuidance.screenProvenance,
       'guidanceEligible': false,

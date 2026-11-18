@@ -35,7 +35,9 @@ class LocalVisionPage extends StatefulWidget {
       this.bundledModel = false,
       this.previewPriority,
       this.previewEngine,
-      this.previewScope = 'camera-preview'});
+      this.previewScope = 'camera-preview',
+      this.targetBeaconRssi,
+      this.beaconRssiStream});
   final DartVisionProducerClient? producer;
   final V3AgentApiClient? remoteApi;
   final String? ownerUid;
@@ -50,6 +52,8 @@ class LocalVisionPage extends StatefulWidget {
   final SpeechPriorityCoordinator? previewPriority;
   final SpatialVerificationEngine? previewEngine;
   final String previewScope;
+  final int? targetBeaconRssi;
+  final Stream<int?>? beaconRssiStream;
   @override
   State<LocalVisionPage> createState() => _LocalVisionPageState();
 }
@@ -65,6 +69,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   final _runTime = Stopwatch();
   late final FramePump _pump;
   VisionScreenAudio? _previewAudio;
+  StreamSubscription<int?>? _beaconRssiSubscription;
   final _history = DetectedFrameHistory();
   bool get _automaticPreviewAudio =>
       widget.remoteApi != null && widget.onResult != null;
@@ -150,6 +155,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           minimumInterval: const Duration(seconds: 8),
           requireDoorInBus: false,
           prioritizeByDistance: true,
+          initialBeaconRssi: widget.targetBeaconRssi,
           isCurrent: () =>
               mounted &&
               !_disposing &&
@@ -157,6 +163,9 @@ class _LocalVisionPageState extends State<LocalVisionPage>
               !_pump.lost &&
               widget.sessionCurrent?.call() != false);
     }
+    _beaconRssiSubscription = widget.beaconRssiStream?.listen((rssi) {
+      _previewAudio?.updateBeaconRssi(rssi);
+    });
     _pump.addListener(_changed);
     if (widget.bundledModel) unawaited(_loadBundledModel());
   }
@@ -418,10 +427,25 @@ class _LocalVisionPageState extends State<LocalVisionPage>
   }
 
   @override
+  void didUpdateWidget(covariant LocalVisionPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.targetBeaconRssi != oldWidget.targetBeaconRssi) {
+      _previewAudio?.updateBeaconRssi(widget.targetBeaconRssi);
+    }
+    if (widget.beaconRssiStream != oldWidget.beaconRssiStream) {
+      unawaited(_beaconRssiSubscription?.cancel());
+      _beaconRssiSubscription = widget.beaconRssiStream?.listen((rssi) {
+        _previewAudio?.updateBeaconRssi(rssi);
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _disposing = true;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_authSubscription?.cancel());
+    unawaited(_beaconRssiSubscription?.cancel());
     _pump.removeListener(_changed);
     _history.dispose();
     _previewAudio?.dispose(); // Retire UI callbacks before any lease release.
