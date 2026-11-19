@@ -700,13 +700,20 @@ def _run_converse(
                 route_arrivals = [
                     item
                     for item in arrivals_res.arrivals
-                    if item.routeNo == route_no or item.routeId == route_id
+                    if item.routeNo == route_no and (not route_id or item.routeId == route_id)
                 ]
                 fallback_source = arrivals_res.fallbackSource
                 if route_arrivals:
-                    first = min(item.arrivalMinutes for item in route_arrivals)
+                    first = min(
+                        route_arrivals,
+                        key=lambda item: item.arrivalSeconds if item.arrivalSeconds is not None else item.arrivalMinutes * 60,
+                    )
                     source_label = "실시간" if arrivals_res.fallbackSource == FallbackSource.PUBLIC_API else arrivals_res.fallbackSource.value
-                    message = f"{stop_name} 기준 {route_no}번 첫 번째 버스는 {source_label} 기준 약 {first}분 뒤 도착 예정입니다."
+                    message = f"{stop_name} 기준 {route_no}번 첫 번째 버스는 {source_label} 기준 약 {first.arrivalMinutes}분 뒤 도착 예정입니다."
+                    if first.remainingStops == 0:
+                        message += " 남은 정류장은 0개입니다."
+                    elif first.remainingStops is not None:
+                        message += f" 현재 {first.remainingStops}개 정류장 전입니다."
                 else:
                     status = get_service_status_tool(
                         route_no=route_no,

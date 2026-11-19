@@ -328,13 +328,8 @@ class LiveBusArrivalsProvider:
             remaining_stops = item.get("staOrd")
             if remaining_stops is None:
                 remaining_stops = item.get("arrprevstationcnt")  # TAGO key
-            if remaining_stops is not None:
-                try:
-                    remaining_stops = int(remaining_stops)
-                    if remaining_stops < 0:
-                        remaining_stops = None
-                except (TypeError, ValueError):
-                    remaining_stops = None
+            count_text = str(remaining_stops).strip()
+            remaining_stops = int(count_text) if count_text.isascii() and count_text.isdecimal() and len(count_text) <= 9 else None
 
             # 저상버스 — 미상은 False로 흡수 (README §4 정책)
             # 서울 BIS busType1 → TAGO vehicletp (명세 미확정, 활성화 후 조정)

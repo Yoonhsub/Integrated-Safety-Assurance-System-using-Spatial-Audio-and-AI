@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,6 +76,25 @@ def test_agent_rule_fallback_wake_route_arrival_select_flow() -> None:
     state = client.get("/guidance/state", params={"sessionId": "s1"}).json()
     assert state["targetBusId"] == "BUS_502_TERMINAL"
     assert state["geofenceArmed"] is False
+
+
+@pytest.mark.parametrize(("count", "suffix"), [(4, " 현재 4개 정류장 전입니다."), (0, " 남은 정류장은 0개입니다."), (None, "")])
+def test_selected_bus_chat_arrival_uses_same_candidate(monkeypatch, count, suffix):
+    from app.schemas.v3 import FallbackSource
+
+    _seed_waiting_session()
+    def arrivals(*, route_id, route_no, **kwargs):
+        def row(minutes, stops, identifier, seconds=None):
+            return SimpleNamespace(routeNo=route_no, routeId=identifier, arrivalMinutes=minutes, arrivalSeconds=seconds, remainingStops=stops)
+
+        return SimpleNamespace(fallbackSource=FallbackSource.PUBLIC_API, arrivals=[
+            row(1, 1, "other-direction"), row(15, 9, route_id, 925), row(15, count, route_id, 900),
+        ])
+
+    monkeypatch.setattr(v3_agent, "get_arrivals_tool", arrivals)
+    reply = _say("s1", "이 버스 언제 와?").json()
+    assert reply["intent"] == "QUERY_ARRIVAL"
+    assert reply["message"].endswith("약 15분 뒤 도착 예정입니다." + suffix)
 
 
 def test_agent_destination_correction_and_change_are_session_safe() -> None:
