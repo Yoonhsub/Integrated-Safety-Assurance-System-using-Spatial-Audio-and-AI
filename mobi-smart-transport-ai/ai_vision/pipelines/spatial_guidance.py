@@ -49,6 +49,10 @@ OBSTACLE_MEDIUM_AREA_THRESHOLD = 0.02
 OBSTACLE_NEAR_AREA_THRESHOLD = 0.08
 OBSTACLE_CLASS_IDS = ("parked_pm", "pole", "tree_trunk")
 
+# 버스 문 단독 감지 시(부모 버스 차체가 화각 밖으로 벗어나 미검출될 때) 사용하는 상대 거리 임계값이다.
+DOOR_MEDIUM_AREA_THRESHOLD = 0.015
+DOOR_NEAR_AREA_THRESHOLD = 0.06
+
 # 이전 프레임보다 25% 이상 커지거나 20% 이상 작아질 때만 움직임으로 안내한다.
 # 작은 detector 흔들림으로 접근/이탈 안내가 반복되는 일을 줄이기 위한 여유값이다.
 APPROACHING_AREA_RATIO = 1.25
@@ -183,11 +187,14 @@ def interpret_bus_guidance(
 def interpret_bus_door_guidance(
     current: VisionResult,
     previous: VisionResult | None = None,
+    *,
+    require_door_in_bus: bool = False,
 ) -> SpatialGuidance | None:
     """현재 프레임의 신뢰 가능한 버스 문을 승차 위치 안내 후보로 만든다.
 
-    문 방향은 문 bbox로 판단한다. 반면 상대 거리·접근 상태는 문을 포함하는 버스
-    차체의 크기로 판단한다. 문 자체는 작아 화면 거리 단계에 적합하지 않기 때문이다.
+    문 방향은 문 bbox로 판단한다. 부모 버스 차체가 함께 검출되면 차체 크기로
+    거리·접근 상태를 판단하며, 근접 정차 등으로 차체 없이 문만 단독 검출된 경우
+    ``require_door_in_bus``가 False이면 문 자체 면적 임계값으로 판단한다.
     """
     doors = sorted(
         (detection for detection in current.detections if detection.class_id == "bus_door"),
@@ -196,19 +203,36 @@ def interpret_bus_door_guidance(
     )
     for door in doors:
         current_bus = _parent_bus(door, current)
-        if current_bus is None:
+        if current_bus is not None:
+            previous_bus = _largest_detection(previous, "bus")
+            current_bus_area = _area(current_bus)
+            previous_bus_area = _area(previous_bus) if previous_bus is not None else None
+            return SpatialGuidance(
+                frame_id=current.frame_id,
+                class_id=door.class_id,
+                direction=_direction(door),
+                relative_distance=_relative_distance(current_bus_area),
+                motion=_motion(current_bus_area, previous_bus_area),
+                confidence=door.score,
+                normalized_area=_area(door),
+            )
+        if require_door_in_bus:
             continue
-        previous_bus = _largest_detection(previous, "bus")
-        current_bus_area = _area(current_bus)
-        previous_bus_area = _area(previous_bus) if previous_bus is not None else None
+        door_area = _area(door)
+        previous_door = _largest_detection(previous, "bus_door") if previous is not None else None
+        previous_door_area = _area(previous_door) if previous_door is not None else None
         return SpatialGuidance(
             frame_id=current.frame_id,
             class_id=door.class_id,
             direction=_direction(door),
-            relative_distance=_relative_distance(current_bus_area),
-            motion=_motion(current_bus_area, previous_bus_area),
+            relative_distance=_relative_distance(
+                door_area,
+                medium_threshold=DOOR_MEDIUM_AREA_THRESHOLD,
+                near_threshold=DOOR_NEAR_AREA_THRESHOLD,
+            ),
+            motion=_motion(door_area, previous_door_area),
             confidence=door.score,
-            normalized_area=_area(door),
+            normalized_area=door_area,
         )
     return None
 

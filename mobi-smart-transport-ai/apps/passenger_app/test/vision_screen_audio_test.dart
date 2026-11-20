@@ -12,6 +12,7 @@ import 'package:mobi_passenger_app/src/services/native_directional_cue_output.da
 import 'package:mobi_passenger_app/src/services/spatial_verification_engine.dart';
 import 'package:mobi_passenger_app/src/services/speech_priority_coordinator.dart';
 import 'package:mobi_passenger_app/src/widgets/vision_screen_audio_panel.dart';
+import 'package:mobi_passenger_app/src/features/hardware_bus/beacon_tone_interval.dart';
 import 'local_vision_test.dart' as camera;
 import 'native_android_audio_test.dart' as native;
 import 'vision_observation_tts_test.dart' as speech;
@@ -991,6 +992,359 @@ void main() {
       priority.dispose();
     });
   }
+
+  testWidgets(
+      'standalone bus_door without parent bus is admitted when requireDoorInBus is false and still yields to same-rank obstacle',
+      (t) async {
+    final port = native.Port(), tts = speech.FakeTts();
+    final engine =
+        SpatialVerificationEngine(NativeDirectionalCueOutput(port: port), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        requireDoorInBus: false,
+        confirmationFrames: 3,
+        prioritizeByDistance: true,
+        nowMicros: () => now);
+    a.setEnabled(true);
+    for (var i = 1; i <= 3; i++) {
+      now = i * 1000;
+      a.observe(
+          detection(now, boxes: const [
+            LocalBox('bus_door', .92, .4, .2, .2, .35),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 1);
+    expect(a.diagnostic['classId'], 'bus_door');
+    expect(port.active?['direction'], 'CENTER');
+
+    port.finish();
+    await flush(t);
+    tts.finish();
+    await flush(t);
+
+    for (var i = 4; i <= 6; i++) {
+      now = i * 1000;
+      a.observe(
+          detection(now, boxes: const [
+            LocalBox('bus_door', .92, .4, .2, .2, .35),
+            LocalBox('pole', .88, .1, .2, .2, .45),
+          ]).toDetectionResult(),
+          age: Duration.zero);
+      await flush(t);
+    }
+    expect(a.admitted, 2);
+    expect(a.diagnostic['classId'], 'pole');
+    expect(port.active?['direction'], 'LEFT');
+
+    await a.stop();
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
+  testWidgets(
+      'off-center bus_door on headMountedCamera locks referenceYaw to door world azimuth',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 70,
+        confirmationFrames: 1,
+        requireDoorInBus: false,
+        nowMicros: () => now);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 30,
+        filteredYaw: 30,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setEnabled(true);
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isTrue);
+
+    a.observe(
+        detection(now, boxes: const [
+          LocalBox('bus_door', .92, .7, .2, .2, .4),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(sensor.snapshot.referenceYaw, closeTo(51.0, 1e-6));
+    expect(a.diagnostic['lockedReferenceYawDegrees'], closeTo(51.0, 1e-6));
+    expect(headPort.calls, contains('start'));
+
+    await a.stop();
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
+  testWidgets(
+      'locked door anchor continues emitting spatial HRTF pings when door leaves camera view',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 70,
+        confirmationFrames: 1,
+        requireDoorInBus: false,
+        nowMicros: () => now);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 30,
+        filteredYaw: 30,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setEnabled(true);
+    a.setHeadTrackingEnabled(true);
+
+    // 1. Detect bus_door off-center (+21 deg) -> locks referenceYaw to 51 deg.
+    a.observe(
+        detection(now, boxes: const [
+          LocalBox('bus_door', .92, .7, .2, .2, .4),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.doorAnchorLocked, isTrue);
+    expect(sensor.snapshot.referenceYaw, closeTo(51.0, 1e-6));
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    tts.finish();
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    // 2. User rotates head left to 10 deg; door is no longer visible (empty frame).
+    now = const Duration(seconds: 2).inMicroseconds;
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: sensor.snapshot.referenceYaw,
+        receivedAt: DateTime.now().toUtc()));
+    final startsBefore = headPort.calls.where((c) => c == 'start').length;
+
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+
+    expect(headPort.calls.where((c) => c == 'start').length, startsBefore + 1);
+    expect(a.diagnostic['doorAnchorTracking'], isTrue);
+    expect(a.diagnostic['correctedAngleDegrees'], closeTo(41.0, 1e-6));
+    expect(a.diagnostic['screenDirection'], 'RIGHT');
+
+    await a.stop();
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
+  testWidgets(
+      'locked door anchor HRTF ping interval speeds up as beacon RSSI increases',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    var now = 0;
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 70,
+        confirmationFrames: 1,
+        requireDoorInBus: false,
+        initialBeaconRssi: -85,
+        nowMicros: () => now);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 30,
+        filteredYaw: 30,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    a.setEnabled(true);
+    a.setHeadTrackingEnabled(true);
+
+    // 1. Detect bus_door -> lock referenceYaw
+    a.observe(
+        detection(now, boxes: const [
+          LocalBox('bus_door', .92, .7, .2, .2, .4),
+        ]).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(a.doorAnchorLocked, isTrue);
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    tts.finish();
+    await flush(t);
+
+    // 2. Head turns away, empty frame at now = 2.0s. Initial RSSI is -85 dBm -> 1400ms interval.
+    now = const Duration(seconds: 2).inMicroseconds;
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: sensor.snapshot.referenceYaw,
+        receivedAt: DateTime.now().toUtc()));
+    var starts = headPort.calls.where((c) => c == 'start').length;
+
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls.where((c) => c == 'start').length, starts + 1);
+    expect(a.diagnostic['targetBeaconRssi'], -85);
+    expect(a.diagnostic['anchorPingIntervalMs'], 1400);
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    // 3. Frame at 1000ms later (now = 3.0s < 2.0s + 1400ms) -> suppressed by 1400ms interval.
+    now = const Duration(milliseconds: 3000).inMicroseconds;
+    starts = headPort.calls.where((c) => c == 'start').length;
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls.where((c) => c == 'start').length, starts);
+
+    // 4. Passenger gets close to the door: RSSI improves to -45 dBm -> 220ms interval!
+    a.updateBeaconRssi(-45);
+    expect(a.targetBeaconRssi, -45);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: sensor.snapshot.referenceYaw,
+        receivedAt: DateTime.now().toUtc()));
+
+    // Frame at now = 3.45s (now - 2.0s = 1450ms > 220ms) -> emits ping!
+    now = const Duration(milliseconds: 3450).inMicroseconds;
+    starts = headPort.calls.where((c) => c == 'start').length;
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls.where((c) => c == 'start').length, starts + 1);
+    expect(a.diagnostic['targetBeaconRssi'], -45);
+    expect(a.diagnostic['anchorPingIntervalMs'], 220);
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    // 5. Another frame 100ms later (now = 3.55s < 3.45s + 220ms) -> suppressed by 220ms interval.
+    now = const Duration(milliseconds: 3550).inMicroseconds;
+    starts = headPort.calls.where((c) => c == 'start').length;
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls.where((c) => c == 'start').length, starts);
+
+    // 6. Frame at now = 3.70s (250ms > 220ms) -> emits ping!
+    now = const Duration(milliseconds: 3700).inMicroseconds;
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 10,
+        filteredYaw: 10,
+        referenceYaw: sensor.snapshot.referenceYaw,
+        receivedAt: DateTime.now().toUtc()));
+    starts = headPort.calls.where((c) => c == 'start').length;
+    a.observe(detection(now, boxes: const []).toDetectionResult(),
+        age: Duration.zero);
+    await flush(t);
+    expect(headPort.calls.where((c) => c == 'start').length, starts + 1);
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    expect(a.busy, isFalse);
+
+    await a.stop();
+    await t.pump(const Duration(milliseconds: 600));
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+  });
+
+  testWidgets('setHorizontalFovDegrees dynamically enables and invalidates HRTF calibration',
+      (t) async {
+    final port = native.Port(), headPort = _HeadPort(), tts = speech.FakeTts();
+    final engine = SpatialVerificationEngine(
+        NativeDirectionalCueOutput(port: port, headTrackedPort: headPort), tts);
+    final priority = SpeechPriorityCoordinator(engine);
+    final sensor = HeadTrackingState();
+    final a = VisionScreenAudio(
+        priority: priority,
+        engine: engine,
+        sessionGeneration: 's',
+        isCurrent: () => true,
+        headTracking: sensor,
+        horizontalFovDegrees: 0);
+    sensor.publish(HeadTrackingSnapshot(
+        status: HeadTrackingStatus.ready,
+        rawYaw: 0,
+        filteredYaw: 0,
+        referenceYaw: 0,
+        receivedAt: DateTime.now().toUtc()));
+    a.setHeadTrackingMount(HeadTrackingCameraMount.headMountedCamera);
+    a.setMountAlignment(verified: true, cameraAxisOffsetDegrees: 0);
+    expect(a.hasCameraCalibration, isFalse);
+
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isFalse);
+
+    a.setHorizontalFovDegrees(68.4);
+    expect(a.hasCameraCalibration, isTrue);
+    expect(a.horizontalFovDegrees, closeTo(68.4, 1e-6));
+
+    a.setHeadTrackingEnabled(true);
+    expect(a.headTrackingEnabled, isTrue);
+
+    a.setHorizontalFovDegrees(0);
+    expect(a.hasCameraCalibration, isFalse);
+    expect(a.headTrackingEnabled, isFalse);
+    expect(a.status, contains('카메라 수평 화각 미확인'));
+
+    await a.stop();
+    await flush(t);
+    a.dispose();
+    await engine.dispose();
+    priority.dispose();
+    expect(t.takeException(), isNull);
+  });
 }
 
 class _PreviewLifetime extends StatefulWidget {

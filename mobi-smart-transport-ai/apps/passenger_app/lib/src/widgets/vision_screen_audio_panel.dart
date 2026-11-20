@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/head_tracking_direction.dart';
 import '../services/vision_screen_audio.dart';
 import '../services/vision_scene_summary.dart';
+import '../features/hardware_bus/beacon_tone_interval.dart';
 
 import '../features/hardware_bus/diagnostic_action_hint.dart';
 
@@ -237,7 +238,7 @@ class VisionScreenAudioPanel extends StatelessWidget {
                         title: const Text('Head Tracking HRTF 핑'),
                         subtitle: Text(
                           audio.hasCameraCalibration
-                              ? '기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
+                              ? '수평 화각 ${audio.horizontalFovDegrees.toStringAsFixed(1)}° · 기본 OFF · 장착/축 정렬/FOV/READY/정면 보정 모두 필요'
                               : '카메라 수평 화각 미확인 · 화면 기준 Cue 유지',
                         ),
                         value: audio.headTrackingEnabled,
@@ -249,6 +250,10 @@ class VisionScreenAudioPanel extends StatelessWidget {
                   Text(
                     '센서: ${audio.headTrackingSnapshot.status.name} · 원본 ${audio.headTrackingSnapshot.rawYaw?.toStringAsFixed(1) ?? '-'}° · 필터 ${audio.headTrackingSnapshot.filteredYaw?.toStringAsFixed(1) ?? '-'}° · 기준 ${audio.headTrackingSnapshot.referenceYaw?.toStringAsFixed(1) ?? '-'}°',
                   ),
+                  if (audio.doorAnchorLocked || audio.targetBeaconRssi != null)
+                    Text(
+                      '비컨: ${audio.targetBeaconRssi != null ? '${audio.targetBeaconRssi} dBm' : '미수신'} · 문 기준점 핑 주기: ${audio.targetBeaconRssi != null ? '${beaconToneIntervalMs(audio.targetBeaconRssi!)}ms' : '1200ms'}',
+                    ),
                   Wrap(
                     spacing: 8,
                     children: [
@@ -291,7 +296,8 @@ class VisionScreenAudioPanel extends StatelessWidget {
                             'bbox: ${d['bbox']} · 중심 x: ${d['screenCenterX']}'),
                         if (d['cameraAngleDegrees'] != null)
                           Text(
-                            '카메라 각 ${d['cameraAngleDegrees']}° · 보정 각 ${d['correctedAngleDegrees']}°',
+                            '카메라 각 ${d['cameraAngleDegrees']}° · 보정 각 ${d['correctedAngleDegrees']}°'
+                            '${d['lockedReferenceYawDegrees'] != null ? ' · 문 기준 잠금 ${d['lockedReferenceYawDegrees']}°' : ''}',
                           ),
                         Text('${d['provenance']} · guidanceEligible=false'),
                       ],

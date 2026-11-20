@@ -81,6 +81,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   bool _connecting = false, _connected = false, _closing = false;
   bool _disposed = false;
   bool _listeningCheck = false;
+  bool _publishing = false;
   String _status = '센서 전원을 켜고 제조사 앱의 연결을 끊어주세요.';
 
   bool _current(int generation) =>
@@ -99,14 +100,31 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   }
 
   void _publish(HeadTrackingStatus status, {String? message}) {
-    sharedHeadTrackingState.publish(HeadTrackingSnapshot(
-      status: status,
-      rawYaw: _latest?.z,
-      filteredYaw: _filteredYaw,
-      referenceYaw: _reference,
-      receivedAt: _sampleReceivedAt,
-      message: message ?? _status,
-    ));
+    _publishing = true;
+    try {
+      sharedHeadTrackingState.publish(HeadTrackingSnapshot(
+        status: status,
+        rawYaw: _latest?.z,
+        filteredYaw: _filteredYaw,
+        referenceYaw: _reference,
+        receivedAt: _sampleReceivedAt,
+        message: message ?? _status,
+      ));
+    } finally {
+      _publishing = false;
+    }
+  }
+
+  void _onSharedHeadTrackingChanged() {
+    if (_publishing || _disposed || !_connected) return;
+    final snap = sharedHeadTrackingState.snapshot;
+    if (snap.status == HeadTrackingStatus.ready &&
+        snap.referenceYaw != null &&
+        snap.referenceYaw != _reference) {
+      _reference = snap.referenceYaw;
+      if (snap.message.isNotEmpty) _status = snap.message;
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -115,6 +133,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
     _settings =
         widget.settingsStore ?? SharedPreferencesHardwareTestSettingsStore();
     if (widget.allowConfiguration) unawaited(_loadSettings());
+    sharedHeadTrackingState.addListener(_onSharedHeadTrackingChanged);
     WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(
       const Duration(milliseconds: 150),
@@ -647,6 +666,7 @@ class _WitSensorPanelState extends State<WitSensorPanel>
   void dispose() {
     _disposed = true;
     _ticker?.cancel();
+    sharedHeadTrackingState.removeListener(_onSharedHeadTrackingChanged);
     WidgetsBinding.instance.removeObserver(this);
     if (_connecting ||
         _connected ||

@@ -161,7 +161,8 @@ class HeadTrackingState extends ChangeNotifier {
   /// Locks a target reference only for a verified head-mounted camera.
   /// [cameraCapturedAt] must identify the same timestamp as the paired sensor
   /// sample. Callers must supply a time-aligned sample, not the latest unrelated
-  /// BLE packet. No live producer currently calls this API.
+  /// BLE packet. Called by `VisionScreenAudio` when `bus_door` is confirmed on
+  /// a verified head-mounted camera.
   ///
   /// Positive camera angle and measured axis offset point right. Fixed-world
   /// cameras use a different reference frame and must not use this formula.
@@ -258,4 +259,15 @@ double? headTrackedAngleForMount({
   }
   final headRight = relativeAngle(sensor.filteredYaw!, sensor.referenceYaw!);
   return relativeAngle(alignedCameraAngle, headRight);
+}
+
+/// Returns the azimuth (in degrees, positive right) of a previously locked
+/// world-frame target ([HeadTrackingSnapshot.referenceYaw]) relative to the
+/// user's current head yaw ([HeadTrackingSnapshot.filteredYaw]).
+double? lockedTargetAzimuthForHead({
+  required HeadTrackingSnapshot sensor,
+  required DateTime now,
+}) {
+  if (!sensor.usable(now)) return null;
+  return relativeAngle(sensor.referenceYaw!, sensor.filteredYaw!);
 }

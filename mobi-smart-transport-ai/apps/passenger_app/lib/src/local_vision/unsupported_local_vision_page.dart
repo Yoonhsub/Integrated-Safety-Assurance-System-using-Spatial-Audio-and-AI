@@ -20,7 +20,9 @@ class LocalVisionPage extends StatelessWidget {
       bool bundledModel = false,
       SpeechPriorityCoordinator? previewPriority,
       SpatialVerificationEngine? previewEngine,
-      String previewScope = 'camera-preview'});
+      String previewScope = 'camera-preview',
+      int? targetBeaconRssi,
+      Stream<int?>? beaconRssiStream});
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('휴대폰 로컬 Vision')),

@@ -2,11 +2,14 @@ package com.mobi.passenger
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.location.LocationManager
+import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.atan
 
 open class HardwareBusActivity : FlutterActivity() {
     private var tone: ToneTestEngine? = null
@@ -26,6 +29,49 @@ open class HardwareBusActivity : FlutterActivity() {
         "granted" to granted(),
         "locationEnabled" to locationEnabled()
     )
+    private fun queryCameraHorizontalFov(cameraName: String?, lensDirection: String?): Map<String, Any?> {
+        return try {
+            val manager = getSystemService(CAMERA_SERVICE) as CameraManager
+            val cameraIds = manager.cameraIdList
+            if (cameraIds.isEmpty()) {
+                return mapOf("horizontalFovDegrees" to null, "reason" to "No cameras available")
+            }
+            val targetFacing = if (lensDirection == "front") {
+                CameraCharacteristics.LENS_FACING_FRONT
+            } else {
+                CameraCharacteristics.LENS_FACING_BACK
+            }
+            val cameraId = cameraName?.takeIf { it.isNotBlank() && cameraIds.contains(it) }
+                ?: cameraIds.firstOrNull { id ->
+                    manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == targetFacing
+                }
+                ?: cameraIds.firstOrNull()
+                ?: return mapOf("horizontalFovDegrees" to null, "reason" to "Camera ID unavailable")
+            val characteristics = manager.getCameraCharacteristics(cameraId)
+            val physicalSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                ?: return mapOf("horizontalFovDegrees" to null, "reason" to "Physical sensor size unavailable")
+            val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                ?: return mapOf("horizontalFovDegrees" to null, "reason" to "Focal lengths unavailable")
+            val focalLength = focalLengths.firstOrNull { it > 0f }
+                ?: return mapOf("horizontalFovDegrees" to null, "reason" to "Valid focal length unavailable")
+            if (physicalSize.width <= 0f) {
+                return mapOf("horizontalFovDegrees" to null, "reason" to "Invalid sensor width")
+            }
+            val fovDegrees = Math.toDegrees(2.0 * atan((physicalSize.width / (2.0 * focalLength)).toDouble()))
+            if (!fovDegrees.isFinite() || fovDegrees <= 1.0 || fovDegrees >= 179.0) {
+                return mapOf("horizontalFovDegrees" to null, "reason" to "Calculated FOV out of bounds")
+            }
+            mapOf(
+                "horizontalFovDegrees" to fovDegrees,
+                "cameraId" to cameraId,
+                "sensorWidthMm" to physicalSize.width.toDouble(),
+                "sensorHeightMm" to physicalSize.height.toDouble(),
+                "focalLengthMm" to focalLength.toDouble()
+            )
+        } catch (e: Exception) {
+            mapOf("horizontalFovDegrees" to null, "reason" to (e.message ?: e::class.java.simpleName))
+        }
+    }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         tone = ToneTestEngine(this)
@@ -65,6 +111,16 @@ open class HardwareBusActivity : FlutterActivity() {
                         pending = result
                         requestPermissions(permissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.toTypedArray(), 7001)
                     }
+                }
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobi.passenger/camera-hardware").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getCameraFov" -> {
+                    val cameraName = call.argument<String>("cameraName")
+                    val lensDirection = call.argument<String>("lensDirection")
+                    result.success(queryCameraHorizontalFov(cameraName, lensDirection))
                 }
                 else -> result.notImplemented()
             }
