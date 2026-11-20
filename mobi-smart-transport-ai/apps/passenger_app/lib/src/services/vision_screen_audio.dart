@@ -25,6 +25,7 @@ class VisionScreenAudio extends ChangeNotifier {
     this.prioritizeByDistance = false,
     this.sceneMode = false,
     this.pingOnly = false,
+    this.ccwPositiveYaw = false,
     int? initialBeaconRssi,
   })  : headTracking = headTracking ?? sharedHeadTrackingState,
         horizontalFovDegrees = horizontalFovDegrees ?? _configuredFov,
@@ -57,7 +58,7 @@ class VisionScreenAudio extends ChangeNotifier {
   final int confirmationFrames;
   final bool requireDoorInBus;
   final bool prioritizeByDistance;
-  final bool sceneMode, pingOnly;
+  final bool sceneMode, pingOnly, ccwPositiveYaw;
   late final VisionSceneSummaryTracker _sceneTracker;
   Timer? _sceneTimer;
   DateTime? lastSceneReceivedAt;
@@ -636,6 +637,7 @@ class VisionScreenAudio extends ChangeNotifier {
           horizontalFovDegrees: horizontalFovDegrees,
           cameraCapturedAt: headTracking.snapshot.receivedAt!,
           now: DateTime.now().toUtc(),
+          ccwPositiveYaw: ccwPositiveYaw,
         );
         if (lockedReferenceYaw != null) {
           _doorAnchorLocked = true;
@@ -646,6 +648,7 @@ class VisionScreenAudio extends ChangeNotifier {
         sensor: headTracking.snapshot,
         now: DateTime.now().toUtc(),
         calibration: mountCalibration,
+        ccwPositiveYaw: ccwPositiveYaw,
       );
       if (correctedAngle == null) {
         _invalidateHeadTracking('장착·센서 조건 무효');
@@ -751,6 +754,7 @@ class VisionScreenAudio extends ChangeNotifier {
     final correctedAngle = lockedTargetAzimuthForHead(
       sensor: headTracking.snapshot,
       now: DateTime.now().toUtc(),
+      ccwPositiveYaw: ccwPositiveYaw,
     );
     if (correctedAngle == null) {
       _invalidateHeadTracking('장착·센서 조건 무효');

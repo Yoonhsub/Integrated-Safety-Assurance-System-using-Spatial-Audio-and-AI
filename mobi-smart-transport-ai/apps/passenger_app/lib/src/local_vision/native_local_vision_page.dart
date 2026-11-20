@@ -155,6 +155,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
           minimumInterval: const Duration(seconds: 8),
           requireDoorInBus: false,
           prioritizeByDistance: true,
+          ccwPositiveYaw: true,
           initialBeaconRssi: widget.targetBeaconRssi,
           isCurrent: () =>
               mounted &&
@@ -491,7 +492,11 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                           icon: const Icon(Icons.videocam_off_outlined),
                           label: const Text('카메라 중지')),
                     ]))),
-            body: ListView(padding: const EdgeInsets.all(16), children: [
+            body: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
               Semantics(
                 liveRegion: true,
                 child: Text(
@@ -627,7 +632,7 @@ class _LocalVisionPageState extends State<LocalVisionPage>
                           '처리 FPS ${_runTime.elapsedMilliseconds == 0 ? '0' : (_pump.processed * 1000 / _runTime.elapsedMilliseconds).toStringAsFixed(1)} · 앱 RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MiB'),
                       const Text('실기기 성능·발열·bbox 정합성 확인이 필요합니다.'),
                     ]),
-            ])));
+            ]))));
   }
 }
 

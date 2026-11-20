@@ -173,6 +173,7 @@ class HeadTrackingState extends ChangeNotifier {
     required double horizontalFovDegrees,
     required DateTime cameraCapturedAt,
     DateTime? now,
+    bool ccwPositiveYaw = false,
   }) {
     final checkedAt = (now ?? DateTime.now()).toUtc();
     final sensor = _snapshot;
@@ -191,7 +192,10 @@ class HeadTrackingState extends ChangeNotifier {
       cameraAngle,
       -(calibration.cameraAxisOffsetDegrees!),
     );
-    final newRef = relativeAngle(sensor.filteredYaw!, -alignedAngle);
+    final newRef = relativeAngle(
+      sensor.filteredYaw!,
+      ccwPositiveYaw ? alignedAngle : -alignedAngle,
+    );
     publish(
       HeadTrackingSnapshot(
         status: sensor.status,
@@ -238,6 +242,7 @@ double? headTrackedAngleForMount({
   required HeadTrackingSnapshot sensor,
   required DateTime now,
   required HeadTrackingMountCalibration calibration,
+  bool ccwPositiveYaw = false,
 }) {
   if (!cameraAngle.isFinite || !sensor.usable(now) || !calibration.verified) {
     return null;
@@ -257,7 +262,9 @@ double? headTrackedAngleForMount({
   if (calibration.mount != HeadTrackingCameraMount.fixedWorldCamera) {
     return null;
   }
-  final headRight = relativeAngle(sensor.filteredYaw!, sensor.referenceYaw!);
+  final headRight = ccwPositiveYaw
+      ? relativeAngle(sensor.referenceYaw!, sensor.filteredYaw!)
+      : relativeAngle(sensor.filteredYaw!, sensor.referenceYaw!);
   return relativeAngle(alignedCameraAngle, headRight);
 }
 
@@ -267,7 +274,10 @@ double? headTrackedAngleForMount({
 double? lockedTargetAzimuthForHead({
   required HeadTrackingSnapshot sensor,
   required DateTime now,
+  bool ccwPositiveYaw = false,
 }) {
   if (!sensor.usable(now)) return null;
-  return relativeAngle(sensor.referenceYaw!, sensor.filteredYaw!);
+  return ccwPositiveYaw
+      ? relativeAngle(sensor.filteredYaw!, sensor.referenceYaw!)
+      : relativeAngle(sensor.referenceYaw!, sensor.filteredYaw!);
 }

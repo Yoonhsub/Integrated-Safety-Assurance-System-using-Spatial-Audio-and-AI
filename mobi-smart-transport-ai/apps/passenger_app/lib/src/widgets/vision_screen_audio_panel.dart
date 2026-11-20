@@ -23,46 +23,10 @@ class VisionScreenAudioPanel extends StatelessWidget {
   final bool automaticallyEnabled;
 
   Future<void> _recordMeasuredOffset(BuildContext context) async {
-    final controller = TextEditingController();
     final value = await showDialog<double>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('실물 축 정렬 측정값'),
-        content: TextField(
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(
-            signed: true,
-            decimal: true,
-          ),
-          decoration: const InputDecoration(
-            labelText: '카메라 축 오프셋 (도)',
-            helperText: '실제 장착 축을 측정한 경우에만 입력',
-          ),
-        ),
-        actions: [
-          DiagnosticActionHint(
-              hint: '이 진단 조작을 실행합니다.',
-              child: TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('취소'),
-              )),
-          DiagnosticActionHint(
-              hint: '이 진단 조작을 실행합니다.',
-              child: FilledButton(
-                onPressed: () {
-                  final parsed = double.tryParse(controller.text.trim());
-                  if (parsed != null &&
-                      parsed.isFinite &&
-                      parsed.abs() <= 180) {
-                    Navigator.pop(context, parsed);
-                  }
-                },
-                child: const Text('측정 확인'),
-              )),
-        ],
-      ),
+      builder: (context) => const _OffsetDialog(),
     );
-    controller.dispose();
     if (value != null) {
       audio.setMountAlignment(verified: true, cameraAxisOffsetDegrees: value);
     }
@@ -308,5 +272,59 @@ class VisionScreenAudioPanel extends StatelessWidget {
             ),
           );
         },
+      );
+}
+
+class _OffsetDialog extends StatefulWidget {
+  const _OffsetDialog();
+
+  @override
+  State<_OffsetDialog> createState() => _OffsetDialogState();
+}
+
+class _OffsetDialogState extends State<_OffsetDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('실물 축 정렬 측정값'),
+        content: TextField(
+          controller: _controller,
+          keyboardType: const TextInputType.numberWithOptions(
+            signed: true,
+            decimal: true,
+          ),
+          decoration: const InputDecoration(
+            labelText: '카메라 축 오프셋 (도)',
+            helperText: '실제 장착 축을 측정한 경우에만 입력',
+          ),
+        ),
+        actions: [
+          DiagnosticActionHint(
+              hint: '이 진단 조작을 실행합니다.',
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('취소'),
+              )),
+          DiagnosticActionHint(
+              hint: '이 진단 조작을 실행합니다.',
+              child: FilledButton(
+                onPressed: () {
+                  final parsed = double.tryParse(_controller.text.trim());
+                  if (parsed != null &&
+                      parsed.isFinite &&
+                      parsed.abs() <= 180) {
+                    Navigator.pop(context, parsed);
+                  }
+                },
+                child: const Text('측정 확인'),
+              )),
+        ],
       );
 }
